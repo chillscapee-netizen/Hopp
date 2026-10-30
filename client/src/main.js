@@ -2205,7 +2205,10 @@ function renderInline(text, out) {
 }
 
 function linkNode(href) {
-  const a = el("a", "msg-link", href);
+  // Invites read as what they are, not as a long address.
+  const invite = shortInviteCode(href) !== null || /^(?:hopp|strom):\/\//i.test(href);
+  const a = el("a", invite ? "msg-link msg-invite-link" : "msg-link", invite ? "Server invite" : href);
+  if (invite) a.title = href;
   a.href = href;
   a.addEventListener("click", (e) => {
     e.preventDefault();
@@ -2311,6 +2314,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
         if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 400) scroller.scrollTop = scroller.scrollHeight;
       });
       li.append(img);
+    } else if (isInviteOnly(m.text)) {
+      // Just an invite: the card below says it all.
     } else {
       const body = messageText(m.text);
       if (m.edited_at) {
@@ -6612,3 +6617,9 @@ $("update-pill").addEventListener("click", async () => {
 
 setTimeout(checkForUpdate, 8000);
 setInterval(checkForUpdate, 4 * 3600 * 1000);
+
+/** A message that is nothing but one invite link. */
+function isInviteOnly(text) {
+  const t = text.trim();
+  return !/\s/.test(t) && (invitePageCode(t) !== null || /^(?:hopp|strom):\/\/[A-Za-z0-9]{6,16}\/?$/i.test(t));
+}
