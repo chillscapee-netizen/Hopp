@@ -583,6 +583,15 @@ export class StromServer extends DurableObject<Env> {
         if (!done) messages.shift();
         return this.send(ws, { type: "older_history", channel, messages, done });
       }
+      case "leave_server": {
+        if (owner) return this.error(ws, "You own this server, so you can't leave it.");
+        this.sql.exec("DELETE FROM accounts WHERE key = ?", s.key!);
+        this.send(ws, { type: "left" });
+        ws.serializeAttachment({ stage: "removed" } satisfies Session);
+        this.broadcast({ type: "user_left", session_id: user.session_id }, ws);
+        ws.close(1000, "left");
+        return;
+      }
       case "delete_message": {
         const channel = Number(msg.channel);
         const id = Number(msg.id);

@@ -628,6 +628,17 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         error("That person isn't connected anymore.");
                     }
                 }
+                ClientMsg::LeaveServer => {
+                    if is_owner {
+                        error("You own this server, so you can't leave it.");
+                    } else {
+                        st.clients.remove(&session_id);
+                        st.accounts.remove(&my_key);
+                        st.storage.save_accounts(&st.accounts);
+                        let _ = tx.send(ServerMsg::Left);
+                        st.broadcast(&ServerMsg::UserLeft { session_id });
+                    }
+                }
                 ClientMsg::Unban { public_key } if is_owner => {
                     st.bans.retain(|b| b.public_key != public_key);
                     st.storage.save_bans(&st.bans);

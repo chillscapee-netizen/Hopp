@@ -443,6 +443,9 @@ async fn connect(
                 ServerMsg::Typing { channel, session_id } => {
                     let _ = ui.emit("typing", serde_json::json!({ "channel": channel, "session_id": session_id }));
                 }
+                ServerMsg::Left => {
+                    let _ = ui.emit("left", ());
+                }
                 ServerMsg::Kicked { banned } => {
                     let _ = ui.emit("kicked", banned);
                 }
@@ -660,6 +663,11 @@ fn edit_message(state: State<'_, AppState>, channel: ChannelId, id: u64, text: S
 #[tauri::command]
 fn react(state: State<'_, AppState>, channel: ChannelId, id: u64, emoji: String, on: bool) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::React { channel, id, emoji, on }))
+}
+
+#[tauri::command]
+fn leave_server(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::LeaveServer))
 }
 
 #[tauri::command]
@@ -1088,6 +1096,7 @@ fn main() {
             edit_message,
             react,
             load_older,
+            leave_server,
             create_channel,
             delete_channel,
             set_loopback,

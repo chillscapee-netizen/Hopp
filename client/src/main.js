@@ -1245,7 +1245,9 @@ function openServerMenu(server, x, y) {
         : { label: "Connect", icon: "link", action: () => connectTo(server) },
       ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
       "sep",
-      { label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) },
+      ...(active && isOwner()
+        ? [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
+        : [{ label: "Leave server", icon: "logout", danger: true, action: () => leaveServer(server) }]),
     ],
     x,
     y,
@@ -1542,6 +1544,12 @@ listen("bans", (e) => renderBanList(e.payload));
 
 listen("disconnected", () => {
   const server = activeServer();
+  // We just left this server on purpose.
+  if (!server && state.justLeft) {
+    state.justLeft = false;
+    renderAll();
+    return;
+  }
   const voice = myVoice();
   playSound("disconnect");
   state.activeId = null;
@@ -5327,4 +5335,40 @@ $("quick-input").addEventListener("keydown", (e) => {
 });
 $("quick").addEventListener("mousedown", (e) => {
   if (e.target === $("quick")) closeQuick();
+});
+
+// ---------- leaving a server ----------
+
+async function leaveServer(server) {
+  const ok = await confirmDialog({
+    title: `Leave ${server.label}`,
+    text: "You'll need a new invite to come back.",
+    ok: "Leave server",
+  });
+  if (!ok) return;
+  // Leaving is done by the server, so connect first if we aren't there.
+  if (server.id !== state.activeId && !(await connectTo(server))) {
+    // It can't be reached: at least take it off your list.
+    removeServer(server);
+    return;
+  }
+  if (isOwner()) {
+    toast("You own this server, so you can't leave it. You can remove it from your list.", true);
+    return;
+  }
+  state.leaving = server.id;
+  invoke("leave_server").catch(() => {
+    state.leaving = null;
+    removeServer(server);
+  });
+}
+
+listen("left", () => {
+  const server = serverById(state.leaving) ?? activeServer();
+  state.leaving = null;
+  if (!server) return;
+  state.justLeft = true;
+  setTimeout(() => (state.justLeft = false), 3000);
+  removeServer(server);
+  toast(`You left ${server.label}.`);
 });

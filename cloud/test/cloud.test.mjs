@@ -440,3 +440,17 @@ test("replies, edits, reactions and older messages", async () => {
   assert.equal(older.done, true);
   for (const c of [owner, bob, carol]) c.close();
 });
+
+test("leaving a server for good", async () => {
+  const { id, owner, invite } = await newServer();
+  owner.send({ type: "leave_server" });
+  assert.match(await errorOf(owner), /own this server/);
+  const key = newKey();
+  const bob = await join(id, "bob", { invite, key });
+  bob.send({ type: "leave_server" });
+  assert.equal((await bob.waitFor((m) => m.type === "left")).type, "left");
+  await owner.waitFor((m) => m.type === "user_left" && m.session_id === bob.id);
+  // Coming back needs an invite again.
+  assert.match(await loginError(id, "bob", { key }), /invite/);
+  owner.close();
+});

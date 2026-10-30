@@ -635,3 +635,16 @@ fn edits_and_reactions_survive_a_restart() {
     let older = storage.load_before(GENERAL, 2, 10).unwrap();
     assert_eq!(older[0].text, "one, edited");
 }
+
+#[tokio::test]
+async fn leaving_needs_a_new_invite_to_come_back() {
+    let mut server = start_server().await;
+    server.admin.send(ClientMsg::LeaveServer).await;
+    assert!(server.admin.error().await.contains("own this server"));
+
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let alice_id = alice.session_id;
+    alice.send(ClientMsg::LeaveServer).await;
+    alice.wait_for(|m| matches!(m, ServerMsg::Left)).await;
+    server.admin.wait_for(|m| matches!(m, ServerMsg::UserLeft { session_id } if *session_id == alice_id)).await;
+}

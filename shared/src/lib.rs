@@ -230,6 +230,8 @@ pub enum ClientMsg {
     /// Cloud servers: where peers in our voice channel can reach us directly
     /// ("ip:port"). `public` comes from STUN; `local` are addresses on our own network.
     VoiceEndpoint { public: Option<String>, local: Vec<String> },
+    /// Leave for good: you need a new invite to come back. Not for the owner.
+    LeaveServer,
     Ping,
 }
 
@@ -279,6 +281,8 @@ pub enum ServerMsg {
     Typing { channel: ChannelId, session_id: SessionId },
     /// Sent to a user right before the server drops them.
     Kicked { banned: bool },
+    /// You left the server (after `LeaveServer`).
+    Left,
     InviteCreated { invite: Invite },
     Invites { invites: Vec<Invite> },
     Bans { bans: Vec<Ban> },
