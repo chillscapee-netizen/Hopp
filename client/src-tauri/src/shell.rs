@@ -18,6 +18,7 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 pub struct PendingLink(pub Mutex<Option<String>>);
 
 pub fn show_main(app: &AppHandle) {
+    SHOWN.store(true, Ordering::Relaxed);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -40,10 +41,16 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
 
     // Started with Windows: stay in the notification area until opened.
     if std::env::args().any(|a| a == "--minimized") {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
-        }
+        STARTED_HIDDEN.store(true, Ordering::Relaxed);
     }
+    // The page shows the window once it has its size; if the page can't, show it anyway.
+    let late = handle.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if !SHOWN.load(Ordering::Relaxed) && !STARTED_HIDDEN.load(Ordering::Relaxed) {
+            show_main(&late);
+        }
+    });
 
     // Links: registered for this user (no admin needed), opened in the running app.
     #[cfg(any(windows, target_os = "linux"))]
@@ -101,10 +108,112 @@ pub fn quit(app: &AppHandle) {
 
 /// Closing the main window hides it: voice and notifications carry on in the background.
 pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        if window.label() == "main" && !QUITTING.load(Ordering::Relaxed) {
-            api.prevent_close();
-            let _ = window.hide();
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            if window.label() == "main" && !QUITTING.load(Ordering::Relaxed) {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        }
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) if window.label() == "main" => remember_bounds(window),
+        _ => {}
+    }
+}
+
+// ---------- the window: small for logging in, full size for the app ----------
+
+/// True while the small login window is showing (its size isn't remembered).
+static COMPACT: AtomicBool = AtomicBool::new(true);
+/// The window has been shown at least once (it starts hidden, to appear at the right size).
+static SHOWN: AtomicBool = AtomicBool::new(false);
+static STARTED_HIDDEN: AtomicBool = AtomicBool::new(false);
+static LAST_SAVE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Bounds {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    maximized: bool,
+}
+
+fn bounds_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("window.json"))
+}
+
+/// Remembers where the full-size window is, a couple of times a second at most.
+fn remember_bounds(window: &tauri::Window) {
+    if COMPACT.load(Ordering::Relaxed) || window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    {
+        let mut last = LAST_SAVE.lock().unwrap();
+        if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400)) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let maximized = window.is_maximized().unwrap_or(false);
+    let previous = bounds_path(window.app_handle()).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Bounds>(&b).ok());
+    // Maximized: keep the size it goes back to.
+    let bounds = match (maximized, previous) {
+        (true, Some(p)) => Bounds { maximized: true, ..p },
+        _ => {
+            let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
+            Bounds { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized }
+        }
+    };
+    if let Some(path) = bounds_path(window.app_handle()) {
+        let _ = std::fs::write(path, serde_json::to_vec(&bounds).unwrap_or_default());
+    }
+}
+
+fn reveal(window: &tauri::WebviewWindow) {
+    if !SHOWN.swap(true, Ordering::Relaxed) && STARTED_HIDDEN.load(Ordering::Relaxed) {
+        return;
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// The small window for logging in or making an account; `height` fits what's in it.
+#[tauri::command]
+pub fn window_compact(app: AppHandle, height: f64) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    COMPACT.store(true, Ordering::Relaxed);
+    let _ = w.unmaximize();
+    let _ = w.set_min_size(None::<tauri::LogicalSize<f64>>);
+    let _ = w.set_resizable(false);
+    let _ = w.set_maximizable(false);
+    let _ = w.set_size(tauri::LogicalSize::new(480.0, height.clamp(560.0, 900.0)));
+    let _ = w.center();
+    reveal(&w);
+}
+
+/// The full app window, where it was last time.
+#[tauri::command]
+pub fn window_full(app: AppHandle) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    if !COMPACT.swap(false, Ordering::Relaxed) {
+        return reveal(&w);
+    }
+    let _ = w.set_resizable(true);
+    let _ = w.set_maximizable(true);
+    let _ = w.set_min_size(Some(tauri::LogicalSize::new(940.0, 560.0)));
+    let saved = bounds_path(&app).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Bounds>(&b).ok());
+    match saved {
+        Some(b) => {
+            let _ = w.set_size(tauri::PhysicalSize::new(b.width.max(940), b.height.max(560)));
+            let _ = w.set_position(tauri::PhysicalPosition::new(b.x, b.y));
+            if b.maximized {
+                let _ = w.maximize();
+            }
+        }
+        None => {
+            let _ = w.set_size(tauri::LogicalSize::new(1280.0, 800.0));
+            let _ = w.center();
         }
     }
+    reveal(&w);
 }

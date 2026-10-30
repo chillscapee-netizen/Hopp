@@ -11,10 +11,12 @@
     "windows": [
       {
         "title": "Hopp",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 940,
-        "minHeight": 560,
+        "width": 480,
+        "height": 600,
+        "resizable": false,
+        "maximizable": false,
+        "center": true,
+        "visible": false,
         "decorations": false
       }
     ],

@@ -2516,3 +2516,45 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .pin-date { margin-left: auto; color: var(--faint); font-size: 12px; white-space: nowrap; }
 .pin-text { font-size: 14px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .pins-empty { padding: 18px 8px; color: var(--faint); font-size: 13.5px; text-align: center; }
+
+/* ---------- the small login window and the start ---------- */
+.shell.locked .auth { padding: 0; place-items: center stretch; overflow: hidden; background: var(--main); }
+.shell.locked .auth-card { width: 100%; box-sizing: border-box; border: none; border-radius: 0; box-shadow: none; }
+.shell.locked { grid-template-columns: minmax(0, 1fr); }
+.shell.locked #win-max, .shell.locked .backup-pill { display: none; }
+.splash { display: grid; justify-items: center; padding: 40px 0 34px; }
+.splash[hidden] { display: none; }
+.splash-stage { position: relative; display: grid; justify-items: center; height: 110px; }
+.splash-bunny {
+  display: grid; place-items: center;
+  width: 72px; height: 72px;
+  margin-top: 30px;
+  border-radius: 20px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  color: var(--green);
+  transform-origin: 50% 100%;
+  animation: hop 0.9s cubic-bezier(0.3, 0, 0.5, 1) infinite;
+}
+.splash-bunny .i { width: 40px; height: 40px; }
+.splash-shadow {
+  position: absolute; bottom: 2px;
+  width: 54px; height: 8px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.45);
+  animation: hop-shadow 0.9s cubic-bezier(0.3, 0, 0.5, 1) infinite;
+}
+@keyframes hop {
+  0%, 100% { transform: translateY(0) scale(1.12, 0.86); }
+  12% { transform: translateY(0) scale(0.94, 1.08); }
+  45% { transform: translateY(-30px) scale(1, 1) rotate(-4deg); }
+  75% { transform: translateY(-2px) scale(0.97, 1.04) rotate(2deg); }
+  86% { transform: translateY(0) scale(1.1, 0.9); }
+}
+@keyframes hop-shadow {
+  0%, 100%, 86% { transform: scale(1); opacity: 0.9; }
+  45% { transform: scale(0.55); opacity: 0.35; }
+}
+.splash-name { margin: 16px 0 4px; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+.splash-text { margin: 0; color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { .splash-bunny, .splash-shadow { animation: none; } }

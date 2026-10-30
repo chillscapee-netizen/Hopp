@@ -1132,12 +1132,6 @@ fn main() {
         // Must come first: a second copy hands its link to this one and quits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                // Size and place only: starting hidden (with Windows) is decided by the app.
-                .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
-                .build(),
-        )
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -1203,6 +1197,8 @@ fn main() {
             fetch_profile,
             autostart_enabled,
             set_autostart,
+            shell::window_compact,
+            shell::window_full,
             update_server,
             set_muted,
             set_deafened,

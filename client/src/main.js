@@ -348,18 +348,45 @@ let accountExists = false;
 
 function showAuth(mode) {
   $("shell").classList.add("locked");
+  $("splash").hidden = true;
   if (mode !== "recover") authReturn = mode;
   authMode = mode;
   for (const [m, id] of Object.entries(AUTH_PANES)) $(id).hidden = m !== mode;
   $("topbar-title").textContent = "Hopp";
   const focus = AUTH_FOCUS[mode];
   if (focus) setTimeout(() => $(focus).focus(), 0);
+  fitAuthWindow();
 }
+
+/** The login window is just as big as what's in it. */
+function fitAuthWindow() {
+  // Not a frame callback: those wait while the window is still hidden.
+  setTimeout(() => {
+    if (!$("shell").classList.contains("locked")) return;
+    // Tall enough for the whole form (never a scrollbar), and never tiny.
+    const pane = [...$("auth-card").children].find((c) => !c.hidden);
+    const card = getComputedStyle($("auth-card"));
+    const content = (pane?.scrollHeight ?? 0) + parseFloat(card.paddingTop) + parseFloat(card.paddingBottom);
+    const height = Math.max(600, content + document.querySelector(".topbar").offsetHeight);
+    invoke("window_compact", { height }).catch(() => {});
+  }, 0);
+}
+// Errors and hints appearing in the form change its height.
+new ResizeObserver(() => fitAuthWindow()).observe($("auth-card"));
 
 async function boot() {
   applyVoicePrefs();
+  // A moment of hopping bunny while Hopp gets ready.
+  $("shell").classList.add("locked");
+  $("splash").hidden = false;
+  $("splash-text").textContent = "Starting…";
+  for (const id of Object.values(AUTH_PANES)) $(id).hidden = true;
+  fitAuthWindow();
+  const shown = new Promise((r) => setTimeout(r, 900));
   // Also logs in by itself when "Keep me logged in" was chosen.
   const status = await invoke("account_status");
+  if (status.logged_in) $("splash-text").textContent = `Welcome back, ${status.name}`;
+  await shown;
   accountExists = status.exists;
   if (status.logged_in) return enterApp();
   $("to-login-row").hidden = !status.exists;
@@ -376,6 +403,7 @@ async function enterApp() {
   state.account = { name: status.name, publicKey: status.public_key, backedUp: status.backed_up };
   accountExists = true;
   $("shell").classList.remove("locked");
+  invoke("window_full").catch(() => {});
   $("settings-name").value = status.name;
   $("remember-toggle").checked = status.remembered;
   renderBackupState();
@@ -3700,6 +3728,8 @@ $("autostart").addEventListener("change", async (e) => {
 // Closing the window: keep running in the notification area (like Discord), or quit.
 // Asked once; the answer is kept.
 $("win-close").addEventListener("click", async () => {
+  // Not logged in: nothing to keep running.
+  if (!state.account) return invoke("quit_app");
   let choice = load("closeAction", "");
   if (!choice) {
     const keep = await confirmDialog({
