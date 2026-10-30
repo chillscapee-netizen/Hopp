@@ -186,9 +186,26 @@ pub fn window_compact(app: AppHandle, height: f64) {
     let _ = w.set_min_size(None::<tauri::LogicalSize<f64>>);
     let _ = w.set_resizable(false);
     let _ = w.set_maximizable(false);
-    let _ = w.set_size(tauri::LogicalSize::new(480.0, height.clamp(560.0, 900.0)));
+    // Never taller than the screen (small laptops): the form scrolls instead.
+    let fits = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.work_area().size.height as f64 / m.scale_factor() - 16.0)
+        .unwrap_or(900.0);
+    let _ = w.set_size(tauri::LogicalSize::new(480.0, height.clamp(560.0, 900.0).min(fits.max(400.0))));
     let _ = w.center();
     reveal(&w);
+}
+
+/// Whether the window's title bar would be on one of the screens connected now.
+fn on_a_screen(w: &tauri::WebviewWindow, b: &Bounds) -> bool {
+    let Ok(monitors) = w.available_monitors() else { return false };
+    monitors.iter().any(|m| {
+        let (pos, size) = (m.position(), m.size());
+        let (x, y) = (b.x + 100, b.y + 15);
+        x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
+    })
 }
 
 /// The full app window, where it was last time.
@@ -203,14 +220,15 @@ pub fn window_full(app: AppHandle) {
     let _ = w.set_min_size(Some(tauri::LogicalSize::new(940.0, 560.0)));
     let saved = bounds_path(&app).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Bounds>(&b).ok());
     match saved {
-        Some(b) => {
+        // Only where a screen still is (a second monitor may be gone).
+        Some(b) if on_a_screen(&w, &b) => {
             let _ = w.set_size(tauri::PhysicalSize::new(b.width.max(940), b.height.max(560)));
             let _ = w.set_position(tauri::PhysicalPosition::new(b.x, b.y));
             if b.maximized {
                 let _ = w.maximize();
             }
         }
-        None => {
+        _ => {
             let _ = w.set_size(tauri::LogicalSize::new(1280.0, 800.0));
             let _ = w.center();
         }

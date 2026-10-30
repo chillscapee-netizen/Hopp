@@ -60,6 +60,9 @@ pub enum EngineEvent {
     /// A device was unplugged, failed, or the system default changed while we follow it.
     /// Reopen the devices (`set_devices` with the same choice) to carry on.
     DevicesChanged,
+    /// Peer-to-peer voice: whether we can reach someone directly. Unreachable people
+    /// can't hear us (nor we them) until one of the networks lets the traffic through.
+    PeerReach { session_id: SessionId, reachable: bool },
 }
 
 /// Audio devices by name; `None` means the system default.
@@ -771,6 +774,11 @@ impl Encoder {
 
         while !stop.load(Ordering::Relaxed) {
             self.net.tick();
+            if let Route::Mesh(m) = &self.net.route {
+                for (session_id, reachable) in m.reach_changes() {
+                    let _ = self.events.send(EngineEvent::PeerReach { session_id, reachable });
+                }
+            }
             let chunk = match capture.recv_timeout(Duration::from_millis(200)) {
                 Ok(c) => c,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,

@@ -384,7 +384,19 @@ async function boot() {
   fitAuthWindow();
   const shown = new Promise((r) => setTimeout(r, 900));
   // Also logs in by itself when "Keep me logged in" was chosen.
-  const status = await invoke("account_status");
+  let status;
+  try {
+    status = await invoke("account_status");
+  } catch (err) {
+    $("splash-text").textContent = `Hopp couldn't start: ${friendlyError(err)}`;
+    const retry = el("button", "btn sm splash-retry", "Try again");
+    retry.addEventListener("click", () => {
+      retry.remove();
+      boot();
+    });
+    $("splash").append(retry);
+    return;
+  }
   if (status.logged_in) $("splash-text").textContent = `Welcome back, ${status.name}`;
   await shown;
   accountExists = status.exists;
@@ -1481,6 +1493,7 @@ listen("roster", (e) => {
     else renderOverview();
   }
   if (before !== null && myVoice() === null) {
+    state.unreachable.clear();
     state.speaking.clear();
     state.latency = null;
   }
@@ -1516,6 +1529,14 @@ listen("voice", (e) => {
   } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
     playSound("muted");
     toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "peer_reach") {
+    if (ev.reachable) state.unreachable.delete(ev.session_id);
+    else {
+      state.unreachable.add(ev.session_id);
+      const name = userName(ev.session_id) ?? "Someone";
+      toast(`Can't connect to ${name} directly, so you can't hear each other. Their network or yours is blocking it; a different network (or turning off a VPN) usually helps.`, true);
+    }
+    renderSidebar();
   }
 });
 
@@ -1932,6 +1953,11 @@ function userRow(u, className, size, sub) {
     row.append(nameLine);
   }
   // Voice details (muted, deafened, your volume for them) belong in the voice channel.
+  if (className === "voice-user" && state.unreachable.has(u.session_id)) {
+    const warn = icon("signal", "xs unreachable");
+    warn.dataset.tip = "Can't connect directly: you can't hear each other";
+    row.append(warn);
+  }
   const flags = member ? null : flagsFor(u);
   const vol = prefs.userVolumes[u.name];
   if (flags) row.append(flags);
@@ -3947,6 +3973,10 @@ listen("account", (e) => {
     case "presence": {
       const f = state.friends.get(m.key);
       if (f) Object.assign(f, { status: m.status, activity: m.activity });
+      if (state.call?.peer === m.key && m.status === "offline") {
+        toast(`${f?.display_name ?? "Your friend"} went offline. The call ended.`);
+        endCall("remote");
+      }
       break;
     }
     case "username_check":
@@ -4672,7 +4702,27 @@ function renderDmView(keepScroll) {
       input.style.height = "auto";
       input.style.height = `${input.scrollHeight}px`;
     });
-    box.append(input);
+    const row = el("div", "composer-row");
+    const emoji = el("button", "composer-icon");
+    emoji.type = "button";
+    emoji.dataset.tip = "Emoji";
+    emoji.append(icon("smile"));
+    emoji.addEventListener("mousedown", (e) => e.preventDefault());
+    emoji.addEventListener("click", () => {
+      if (!$("emoji-picker").hidden) return closePopovers();
+      openEmojiPicker(
+        emoji,
+        (e) => {
+          const at = input.selectionStart ?? input.value.length;
+          input.value = input.value.slice(0, at) + e + input.value.slice(input.selectionEnd ?? at);
+          input.focus();
+          input.setSelectionRange(at + e.length, at + e.length);
+        },
+        (gif) => sendDm(peer, { value: gif.url, style: {} }),
+      );
+    });
+    row.append(input, emoji);
+    box.append(row);
     const lock = el("p", "dm-lock");
     lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
     form.append(box);
@@ -4708,7 +4758,15 @@ function renderDmView(keepScroll) {
       headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
-    li.append(m.text === null ? el("div", "msg-text unreadable", "This message can't be read.") : messageText(m.text));
+    if (m.text !== null && GIF_URL.test(m.text.trim())) {
+      const img = el("img", "msg-gif");
+      img.src = m.text.trim();
+      img.alt = "GIF";
+      img.loading = "lazy";
+      li.append(img);
+    } else {
+      li.append(m.text === null ? el("div", "msg-text unreadable", "This message can't be read.") : messageText(m.text));
+    }
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
     items.push(li);
     prev = m;
@@ -5369,7 +5427,7 @@ function openEmojiPicker(anchor, onEmoji, onGif) {
   const h = pop.offsetHeight;
   if (onGif) {
     // Above the message box, its right edge lined up with the box.
-    const box = $("composer").querySelector(".composer-box").getBoundingClientRect();
+    const box = (anchor.closest(".composer-box") ?? $("composer").querySelector(".composer-box")).getBoundingClientRect();
     placePopover(pop, box.right - w, box.top - h - 8);
   } else {
     placePopover(pop, r.right - w, r.top - h - 8);
@@ -6257,6 +6315,7 @@ function callClock(c) {
 function callStatusText(c) {
   if (c.status === "ringing") return c.role === "caller" ? "Calling…" : "Incoming call…";
   if (c.status === "connecting") return "Connecting…";
+  if (c.unreachable) return "Can't connect directly…";
   return `In call · ${callClock(c)}`;
 }
 
@@ -6326,6 +6385,10 @@ listen("call-voice", (e) => {
   } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
     playSound("muted");
     toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "peer_reach" && state.call) {
+    state.call.unreachable = !ev.reachable;
+    if (!ev.reachable) toast(`Can't connect to ${personFor(state.call.peer).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
+    renderCall();
   }
 });
 
@@ -6496,3 +6559,6 @@ listen("server-deleted", () => {
   else state.notice = { kind: "error", server: null, text: `${server.label} was deleted by its owner.` };
   renderAll();
 });
+
+/** People in our voice channel we can't reach peer to peer. */
+state.unreachable = new Set();

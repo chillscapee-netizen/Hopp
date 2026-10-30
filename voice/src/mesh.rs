@@ -36,6 +36,8 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(200);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// A path we haven't heard on for this long is dropped and probing starts over.
 const PATH_TIMEOUT: Duration = Duration::from_secs(5);
+/// A peer we haven't reached in this long is reported as unreachable (their network blocks direct voice).
+const UNREACHABLE_AFTER: Duration = Duration::from_secs(8);
 
 /// Asks a STUN server which public address `socket` appears from.
 /// Must run before anything else reads from the socket.
@@ -166,6 +168,10 @@ struct Link {
     last_heard: Option<Instant>,
     last_ping: Option<Instant>,
     rtt_ms: Option<u32>,
+    /// Since when we've been without a path.
+    searching_since: Instant,
+    /// What we last told the app: reachable or not.
+    reported: Option<bool>,
 }
 
 /// Everyone in our voice channel and how to reach them.
@@ -199,6 +205,8 @@ impl Mesh {
             last_heard: None,
             last_ping: None,
             rtt_ms: None,
+            searching_since: Instant::now(),
+            reported: None,
         });
         link.candidates = candidates;
         // Probe the new addresses right away.
@@ -226,6 +234,7 @@ impl Mesh {
             if link.path.is_some() && link.last_heard.is_some_and(|t| now - t > PATH_TIMEOUT) {
                 tracing::info!("lost the direct path to a peer; probing again");
                 link.path = None;
+                link.searching_since = now;
             }
             let interval = if link.path.is_some() { KEEPALIVE_INTERVAL } else { PROBE_INTERVAL };
             if link.last_ping.is_some_and(|t| now - t < interval) {
@@ -250,6 +259,27 @@ impl Mesh {
         link.path = Some(from);
         link.last_heard = Some(Instant::now());
         true
+    }
+
+    /// Peers whose reachability changed since last asked: a path means reachable,
+    /// none after a while means their network or ours blocks direct voice.
+    pub fn reach_changes(&self) -> Vec<(SessionId, bool)> {
+        let now = Instant::now();
+        let mut out = Vec::new();
+        for (&id, link) in self.links.lock().unwrap().iter_mut() {
+            let state = if link.path.is_some() {
+                Some(true)
+            } else if now - link.searching_since > UNREACHABLE_AFTER {
+                Some(false)
+            } else {
+                None
+            };
+            if state.is_some() && state != link.reported {
+                link.reported = state;
+                out.push((id, state == Some(true)));
+            }
+        }
+        out
     }
 
     /// Records a ping round trip; returns the slowest round trip among peers, for the UI.
@@ -311,6 +341,17 @@ mod tests {
         assert_eq!(b.paths().len(), 1);
         // Strangers are ignored.
         assert!(!a.heard(2, "127.0.0.1:6000".parse().unwrap()));
+    }
+
+    #[test]
+    fn reachability_is_reported_once_per_change() {
+        let mesh = Mesh::new(2, &[1u8; 32]);
+        mesh.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec!["127.0.0.1:5000".into()] });
+        // Still searching: nothing to say yet.
+        assert!(mesh.reach_changes().is_empty());
+        assert!(mesh.heard(1, "127.0.0.1:5000".parse().unwrap()));
+        assert_eq!(mesh.reach_changes(), vec![(1, true)]);
+        assert!(mesh.reach_changes().is_empty());
     }
 }
 
