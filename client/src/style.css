@@ -2580,3 +2580,22 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .gif-option:hover { outline: 2px solid var(--text-2); outline-offset: -2px; }
 .gif-credit { padding: 10px 0 2px; color: var(--faint); font-size: 11px; text-align: center; }
 .msg-gif { display: block; max-width: min(320px, 100%); max-height: 260px; margin: 4px 0 2px; border-radius: 8px; }
+
+/* ---------- the rail: Home and Add stay put, servers scroll between them ---------- */
+.rail { overflow: hidden; }
+.server-list {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  margin: -4px 0;
+  padding: 4px 0 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.server-list::-webkit-scrollbar { display: none; }
+/* A soft fade on the side that has more to scroll to. */
+.server-list.more-up { mask-image: linear-gradient(transparent, #000 28px); }
+.server-list.more-down { mask-image: linear-gradient(#000 calc(100% - 28px), transparent); }
+.server-list.more-up.more-down { mask-image: linear-gradient(transparent, #000 28px, #000 calc(100% - 28px), transparent); }

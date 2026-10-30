@@ -970,7 +970,17 @@ function renderRail() {
   $("server-list").replaceChildren(
     ...prefs.rail.map((item) => (item.folder ? railFolder(item) : railServer(serverById(item.id)))),
   );
+  updateRailFade();
 }
+
+/** Fades the server list toward Home or Add when there are more servers that way. */
+function updateRailFade() {
+  const list = $("server-list");
+  list.classList.toggle("more-up", list.scrollTop > 2);
+  list.classList.toggle("more-down", list.scrollTop + list.clientHeight < list.scrollHeight - 2);
+}
+$("server-list").addEventListener("scroll", updateRailFade, { passive: true });
+window.addEventListener("resize", updateRailFade);
 
 // ---------- dragging ----------
 
