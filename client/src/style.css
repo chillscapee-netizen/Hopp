@@ -2623,3 +2623,42 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .update-pill[hidden] { display: none; }
 .msg-invite-link { font-weight: 600; }
 .msg-invite-link::before { content: "↗ "; }
+
+/* ---------- invites in chat ---------- */
+.invite-embed { max-width: 440px; margin-top: 6px; }
+.invite-card {
+  position: relative;
+  display: grid; gap: 12px;
+  padding: 16px;
+  overflow: hidden;
+  background: var(--side-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+/* The server's picture, blurred and faint, behind the card. */
+.invite-card.has-art::before {
+  content: "";
+  position: absolute; inset: -40px;
+  background: var(--invite-art) center / cover;
+  filter: blur(36px) saturate(1.2);
+  opacity: 0.22;
+  pointer-events: none;
+}
+.invite-card > * { position: relative; }
+.invite-card-kicker { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.invite-card-row { display: flex; align-items: center; gap: 14px; }
+.invite-card-icon { flex: none; width: 56px; height: 56px; border-radius: 16px; font-size: 20px; }
+.invite-card-icon img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.invite-card-icon.dead { display: grid; place-items: center; background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.invite-card-text { flex: 1; display: grid; gap: 4px; min-width: 0; }
+.invite-card-text strong { color: var(--text); font-size: 17px; font-weight: 700; }
+.invite-card-text span { color: var(--muted); font-size: 13.5px; }
+.invite-sub { color: var(--muted); font-size: 13px; }
+.invite-join { flex: none; min-width: 84px; height: 38px; font-weight: 700; }
+.invite-join.go { background: #2f9e64; border-color: #2f9e64; color: #fff; }
+.invite-join.go:hover { background: #33b06f; }
+.invite-join.joined { opacity: 0.7; }
+.invite-card.loading { display: flex; align-items: center; gap: 14px; height: 106px; }
+.invite-skel-icon { width: 56px; height: 56px; border-radius: 16px; }
+.invite-skel-text { flex: 1; height: 14px; max-width: 180px; }
+.invite-card.invalid { display: flex; align-items: center; gap: 14px; }

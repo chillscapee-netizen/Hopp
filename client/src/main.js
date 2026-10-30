@@ -257,8 +257,24 @@ const INVITE_LINK = /\b(?:hopp|strom):\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
 /** Our invite page links: https://<Hopp Cloud>/i/CODE. */
 function invitePageCode(input) {
   const m = input.trim().match(/^https:\/\/([^/\s]+)\/i\/([A-Za-z0-9]{6,16})\/?$/i);
-  const host = prefs.cloudUrl.replace(/^wss?:\/\//, "").split("/")[0].toLowerCase();
-  return m && m[1].toLowerCase() === host ? m[2].toUpperCase() : null;
+  if (!m) return null;
+  const host = m[1].toLowerCase();
+  const ours = prefs.cloudUrl.replace(/^wss?:\/\//, "").split("/")[0].toLowerCase();
+  // Hopp Cloud, now or at an earlier address.
+  return host === ours || /^(hopp|strom)[a-z0-9-]*\.(hoppchat|strom-chat)\.workers\.dev$/.test(host) ? m[2].toUpperCase() : null;
+}
+
+/** What an invite link points at: { code } for Hopp Cloud, { address, code } for a server someone runs. */
+function inviteTarget(link) {
+  const code = shortInviteCode(link);
+  if (code) return { code };
+  const m = link.trim().match(/^(?:hopp|strom):\/\/cloud\/[A-Za-z0-9]+\/([A-Za-z0-9]{6,16})\/?$/i);
+  if (m) return { code: m[1].toUpperCase() };
+  if (/^(?:hopp|strom):\/\//i.test(link)) {
+    const { address, invite } = parseInvite(link);
+    if (address && invite) return { address, code: invite };
+  }
+  return null;
 }
 
 /** The code of a short Hopp Cloud invite ("hopp://K7P2QX9M" or https://…/i/K7P2QX9M), or null. */
@@ -2325,9 +2341,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
       }
       li.append(body);
     }
-    for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => !/^https?:/i.test(l) || invitePageCode(l)).slice(0, 3))) {
-      const code = shortInviteCode(link);
-      if (code) li.append(inviteEmbed(code, link));
+    for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) {
+      li.append(inviteEmbed(link));
     }
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
@@ -2342,35 +2357,71 @@ function renderMessages(keepScrollUnlessAtBottom) {
 }
 
 /** An invite posted in chat, shown as a card with the server's name, picture and a Join button. */
-function inviteEmbed(code, link) {
+/** An invite in chat: a card with the server, who invited you and a Join button. */
+function inviteEmbed(link) {
+  const target = inviteTarget(link);
   const slot = el("div", "invite-embed");
-  slot.append(...skeleton("invite-card loading", ["50%"]));
-  invitePreview(code).then(
+  const loading = el("div", "invite-card loading");
+  loading.append(el("span", "skeleton invite-skel-icon"), el("span", "skeleton invite-skel-text"));
+  slot.append(loading);
+  const show = (card) => {
+    const scroller = $("scroller");
+    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    slot.replaceChildren(card);
+    if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+  };
+  // A server someone runs: no preview, just where it is.
+  if (target.address) {
+    const known = prefs.servers.find((x) => x.address === target.address);
+    show(inviteCardView({ name: target.address, icon: null, sub: "A server someone runs on their own computer", kicker: "Server invite" }, known, link));
+    return slot;
+  }
+  invitePreview(target.code).then(
     (p) => {
-      const scroller = $("scroller");
-      const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
-      const { card, row } = inviteCard(p, "You've been invited to join a server");
-      const known = prefs.servers.find((s) => s.address === `cloud:${p.server_id}`);
-      const here = known && known.id === state.activeId;
-      const btn = el("button", "btn sm " + (here ? "" : "primary"), here ? "Joined" : known ? "Open" : "Join");
-      btn.disabled = here;
-      btn.addEventListener("click", () => followInvite(link));
-      row.append(btn);
-      slot.replaceChildren(card);
-      if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+      const known = prefs.servers.find((x) => x.address === `cloud:${p.server_id}`);
+      show(inviteCardView({ ...p, kicker: p.inviter ? `${p.inviter} invited you to join` : "You've been invited to join" }, known, link));
     },
     () => {
       const card = el("div", "invite-card invalid");
-      card.append(el("span", "invite-card-kicker", "Invite"));
-      const row = el("div", "invite-card-row");
-      const ic = el("span", "invite-icon server-tint");
-      ic.append(icon("x"));
-      row.append(ic, el("div", "invite-card-text", "This invite is invalid or has expired."));
-      card.append(row);
-      slot.replaceChildren(card);
+      const ic = el("span", "invite-card-icon dead");
+      ic.append(icon("link"));
+      const text = el("div", "invite-card-text");
+      text.append(el("strong", "", "Invite expired"), el("span", "", "Ask whoever sent it for a new one."));
+      card.append(ic, text);
+      show(card);
     },
   );
   return slot;
+}
+
+function inviteCardView(p, known, link) {
+  const card = el("div", "invite-card");
+  if (p.icon) card.style.setProperty("--invite-art", `url("${p.icon}")`);
+  card.classList.toggle("has-art", !!p.icon);
+  card.append(el("div", "invite-card-kicker", p.kicker));
+  const row = el("div", "invite-card-row");
+  const pic = serverIcon("invite-card-icon server-tint", p.name ?? "?", p.icon);
+  const text = el("div", "invite-card-text");
+  text.append(el("strong", "ellipsis", p.name ?? "Server"));
+  if (p.members !== undefined) {
+    const counts = el("span", "invite-counts");
+    const on = el("span", "count");
+    on.append(el("i", "count-dot online"), `${p.online} Online`);
+    const all = el("span", "count");
+    all.append(el("i", "count-dot"), `${p.members} ${p.members === 1 ? "Member" : "Members"}`);
+    counts.append(on, all);
+    text.append(counts);
+  } else if (p.sub) {
+    text.append(el("span", "invite-sub", p.sub));
+  }
+  const here = known && known.id === state.activeId;
+  const btn = el("button", "btn invite-join" + (here ? " joined" : known ? "" : " go"), here ? "Joined" : known ? "Open" : "Join");
+  btn.type = "button";
+  btn.disabled = !!here;
+  btn.addEventListener("click", () => followInvite(link));
+  row.append(pic, text, btn);
+  card.append(row);
+  return card;
 }
 
 function renderTyping() {
@@ -4780,8 +4831,13 @@ function renderDmView(keepScroll) {
       img.alt = "GIF";
       img.loading = "lazy";
       li.append(img);
+    } else if (m.text !== null && isInviteOnly(m.text)) {
+      // Just an invite: the card says it all.
     } else {
       li.append(m.text === null ? el("div", "msg-text unreadable", "This message can't be read.") : messageText(m.text));
+    }
+    if (m.text) {
+      for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) li.append(inviteEmbed(link));
     }
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
     items.push(li);
@@ -6621,5 +6677,5 @@ setInterval(checkForUpdate, 4 * 3600 * 1000);
 /** A message that is nothing but one invite link. */
 function isInviteOnly(text) {
   const t = text.trim();
-  return !/\s/.test(t) && (invitePageCode(t) !== null || /^(?:hopp|strom):\/\/[A-Za-z0-9]{6,16}\/?$/i.test(t));
+  return !/\s/.test(t) && inviteTarget(t) !== null;
 }
