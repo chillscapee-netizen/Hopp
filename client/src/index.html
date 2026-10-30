@@ -349,6 +349,31 @@
   </dialog>
 
   <!-- ---------- create channel ---------- -->
+  <dialog id="channel-edit-dialog" class="modal">
+    <form id="channel-edit-form" method="dialog">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2>Edit channel</h2>
+        <p id="channel-edit-sub" class="modal-sub"></p>
+        <label class="field">
+          <span class="field-label">Channel name</span>
+          <span class="input-icon">
+            <svg id="channel-edit-icon" class="i sm"><use href="#i-hash"/></svg>
+            <input id="channel-edit-name" maxlength="32" required autocomplete="off">
+          </span>
+        </label>
+        <label id="channel-edit-topic-field" class="field">
+          <span class="field-label">Topic</span>
+          <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" class="btn primary">Save changes</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="channel-dialog" class="modal">
     <form id="channel-form" method="dialog">
       <div class="modal-body">

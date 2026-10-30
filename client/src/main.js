@@ -1723,7 +1723,10 @@ function renderSidebar() {
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
-    if (owner) row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
+    if (owner) {
+      row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
+      draggableChannel(row, ch);
+    }
     items.push(row);
   }
   if (textChannels().length === 0) items.push(el("div", "empty-channels", "No text channels"));
@@ -1737,7 +1740,10 @@ function renderSidebar() {
     row.dataset.tip = ch.id === mine ? "You're here" : `Join ${ch.name}`;
     row.append(icon("volume"), el("span", "ellipsis", ch.name));
     row.addEventListener("click", () => joinVoice(ch.id));
-    if (owner) row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
+    if (owner) {
+      row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
+      draggableChannel(row, ch);
+    }
     const users = r.users.filter((u) => u.voice_channel === ch.id).sort(byName);
     const list = el("ul", "voice-users");
     list.append(...users.map((u) => userRow(u, "voice-user", "s24")));
@@ -1765,7 +1771,15 @@ function openTextChannel(id) {
 function openChannelMenu(ch, e) {
   e.preventDefault();
   e.stopPropagation();
-  openMenu([{ label: "Delete channel", icon: "trash", danger: true, action: () => deleteChannel(ch) }], e.clientX, e.clientY);
+  openMenu(
+    [
+      { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
+      "sep",
+      { label: "Delete channel", icon: "trash", danger: true, action: () => deleteChannel(ch) },
+    ],
+    e.clientX,
+    e.clientY,
+  );
 }
 
 async function deleteChannel(ch) {
@@ -1878,7 +1892,9 @@ function renderChannelView() {
   const r = state.roster;
   const view = state.view;
   $("chat-channel").textContent = view === null ? "No text channels" : channelName(view);
-  $("chat-topic").textContent = `${r.users.length} online`;
+  const topic = view === null ? null : channel(view)?.topic;
+  $("chat-topic").textContent = topic || `${r.users.length} online`;
+  $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
   $("chat-input").placeholder = `Message #${channelName(view)}`;
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
@@ -2094,7 +2110,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
   badge.append(icon("hash"));
-  welcome.append(badge, el("h1", "", `Welcome to #${name}!`), el("p", "", `This is the start of the #${name} channel.`));
+  welcome.append(badge, el("h1", "", `Welcome to #${name}!`), el("p", "", channel(state.view)?.topic || `This is the start of the #${name} channel.`));
   if (msgs.length === 0 && isOwner()) {
     const actions = el("div", "welcome-actions");
     const invite = el("button", "btn primary sm", "Invite people");
@@ -5372,3 +5388,67 @@ listen("left", () => {
   removeServer(server);
   toast(`You left ${server.label}.`);
 });
+
+// ---------- editing and moving channels (owner) ----------
+
+var editingChannel = null;
+
+function openChannelEdit(ch) {
+  editingChannel = ch;
+  const text = ch.kind === "text";
+  $("channel-edit-sub").textContent = `in ${activeServer()?.label ?? state.roster.server_name}`;
+  $("channel-edit-icon").innerHTML = `<use href="#i-${text ? "hash" : "volume"}"/>`;
+  $("channel-edit-name").value = ch.name;
+  $("channel-edit-topic").value = ch.topic ?? "";
+  $("channel-edit-topic-field").hidden = !text;
+  openModal($("channel-edit-dialog"));
+  $("channel-edit-name").focus();
+  $("channel-edit-name").select();
+}
+$("channel-edit-name").addEventListener("input", (e) => {
+  if (editingChannel?.kind === "text") e.target.value = e.target.value.toLowerCase().replace(/\s/g, "-");
+});
+$("channel-edit-form").addEventListener("submit", () => {
+  const name = $("channel-edit-name").value.trim();
+  const topic = $("channel-edit-topic").value.trim();
+  if (!editingChannel || !name) return;
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "")) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null });
+});
+
+/** Drag a channel above or below another of the same kind. */
+var channelDrag = null;
+function draggableChannel(row, ch) {
+  row.draggable = true;
+  row.addEventListener("dragstart", (e) => {
+    channelDrag = ch;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(ch.id));
+    requestAnimationFrame(() => row.classList.add("dragging"));
+  });
+  row.addEventListener("dragend", () => {
+    channelDrag = null;
+    document.querySelectorAll(".channel-row.dragging, .channel-row.drop-before, .channel-row.drop-after").forEach((n) => n.classList.remove("dragging", "drop-before", "drop-after"));
+  });
+  row.addEventListener("dragover", (e) => {
+    if (!channelDrag || channelDrag.kind !== ch.kind || channelDrag.id === ch.id) return;
+    e.preventDefault();
+    const r = row.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    row.classList.toggle("drop-after", after);
+    row.classList.toggle("drop-before", !after);
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+  row.addEventListener("drop", (e) => {
+    if (!channelDrag || channelDrag.kind !== ch.kind || channelDrag.id === ch.id) return;
+    e.preventDefault();
+    const after = row.classList.contains("drop-after");
+    const order = state.roster.channels.map((c) => c.id).filter((id) => id !== channelDrag.id);
+    order.splice(order.indexOf(ch.id) + (after ? 1 : 0), 0, channelDrag.id);
+    // Show it right away; the server confirms with the new list.
+    const byId = new Map(state.roster.channels.map((c) => [c.id, c]));
+    state.roster.channels = order.map((id) => byId.get(id));
+    renderSidebar();
+    call("reorder_channels", { order });
+  });
+}

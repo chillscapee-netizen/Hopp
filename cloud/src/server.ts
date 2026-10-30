@@ -56,7 +56,8 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string }
+const MAX_TOPIC_LEN = 200;
 interface User {
   session_id: number;
   name: string;
@@ -159,6 +160,10 @@ export class StromServer extends DurableObject<Env> {
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
     `);
+    // Channel order and topics came later too.
+    const channelColumns = new Set(this.sql.exec("PRAGMA table_info(channels)").toArray().map((c) => String(c.name)));
+    if (!channelColumns.has("position")) this.sql.exec("ALTER TABLE channels ADD COLUMN position INTEGER");
+    if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
     const columns = new Set(this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => String(c.name)));
     for (const [name, type] of [["reply_id", "INTEGER"], ["reply_name", "TEXT"], ["reply_key", "TEXT"], ["reply_text", "TEXT"], ["edited_at", "INTEGER"], ["reactions", "TEXT"]]) {
@@ -197,7 +202,14 @@ export class StromServer extends DurableObject<Env> {
   }
 
   private channels(): Channel[] {
-    return this.sql.exec("SELECT id, name, kind FROM channels ORDER BY id").toArray() as unknown as Channel[];
+    return this.sql
+      .exec("SELECT id, name, kind, topic FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .toArray()
+      .map((r) => {
+        const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
+        if (r.topic) c.topic = String(r.topic);
+        return c;
+      });
   }
 
   private channel(id: number): Channel | undefined {
@@ -615,6 +627,27 @@ export class StromServer extends DurableObject<Env> {
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
         if (this.channels().length >= MAX_CHANNELS) return this.error(ws, `A server can have at most ${MAX_CHANNELS} channels.`);
         this.sql.exec("INSERT INTO channels (name, kind) VALUES (?, ?)", name, kind);
+        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+      }
+      case "update_channel": {
+        if (!ownerOnly()) return;
+        const ch = this.channel(Number(msg.channel));
+        if (!ch) return this.error(ws, "That channel doesn't exist.");
+        const name = normalizeChannelName(msg.name, ch.kind);
+        if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
+        const topic = String(msg.topic ?? "").trim();
+        if ([...topic].length > MAX_TOPIC_LEN) return this.error(ws, `Keep the topic under ${MAX_TOPIC_LEN} characters.`);
+        this.sql.exec("UPDATE channels SET name = ?, topic = ? WHERE id = ?", name, topic || null, ch.id);
+        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+      }
+      case "reorder_channels": {
+        if (!ownerOnly()) return;
+        const order = Array.isArray(msg.order) ? msg.order.map(Number) : [];
+        const ids = this.channels().map((c) => c.id);
+        if (order.length !== ids.length || [...order].sort((a, b) => a - b).join() !== [...ids].sort((a, b) => a - b).join()) {
+          return this.error(ws, "The channels changed meanwhile. Try again.");
+        }
+        order.forEach((id: number, i: number) => this.sql.exec("UPDATE channels SET position = ? WHERE id = ?", i, id));
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "delete_channel": {

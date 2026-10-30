@@ -686,6 +686,16 @@ fn create_channel(state: State<'_, AppState>, name: String, kind: ChannelKind) -
 }
 
 #[tauri::command]
+fn update_channel(state: State<'_, AppState>, channel: ChannelId, name: String, topic: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic }))
+}
+
+#[tauri::command]
+fn reorder_channels(state: State<'_, AppState>, order: Vec<ChannelId>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::ReorderChannels { order }))
+}
+
+#[tauri::command]
 fn delete_channel(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::DeleteChannel { channel }))
 }
@@ -1099,6 +1109,8 @@ fn main() {
             leave_server,
             create_channel,
             delete_channel,
+            update_channel,
+            reorder_channels,
             set_loopback,
             local_address,
             invite_preview,

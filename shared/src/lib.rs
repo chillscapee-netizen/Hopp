@@ -31,7 +31,12 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub kind: ChannelKind,
+    /// What the channel is for, shown next to its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
 }
+
+pub const MAX_TOPIC_LEN: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
@@ -209,6 +214,10 @@ pub enum ClientMsg {
     CreateChannel { name: String, kind: ChannelKind },
     /// Owner only.
     DeleteChannel { channel: ChannelId },
+    /// Owner only: a new name and topic (`None` or empty: no topic).
+    UpdateChannel { channel: ChannelId, name: String, #[serde(default)] topic: Option<String> },
+    /// Owner only: every channel id, in the new order.
+    ReorderChannels { order: Vec<ChannelId> },
     /// Allowed for the author and the owner.
     DeleteMessage { channel: ChannelId, id: u64 },
     /// Sent at most every few seconds while the user is typing.

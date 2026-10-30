@@ -454,3 +454,20 @@ test("leaving a server for good", async () => {
   assert.match(await loginError(id, "bob", { key }), /invite/);
   owner.close();
 });
+
+test("the owner renames, describes and reorders channels", async () => {
+  const { id, owner, invite } = await newServer();
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  bob.send({ type: "update_channel", channel: general, name: "x" });
+  assert.match(await errorOf(bob), /owner/i);
+  owner.send({ type: "update_channel", channel: general, name: "Main Chat", topic: " Say hi " });
+  const renamed = (await bob.waitFor((m) => m.type === "channels_updated")).channels.find((c) => c.id === general);
+  assert.deepEqual(renamed, { id: general, name: "main-chat", kind: "text", topic: "Say hi" });
+  const order = owner.welcome.channels.map((c) => c.id).reverse();
+  owner.send({ type: "reorder_channels", order });
+  const moved = (await bob.waitFor((m) => m.type === "channels_updated")).channels.map((c) => c.id);
+  assert.deepEqual(moved, order);
+  owner.close();
+  bob.close();
+});

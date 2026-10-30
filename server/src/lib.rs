@@ -583,7 +583,40 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind });
+                        st.config.channels.push(Channel { id, name, kind, topic: None });
+                        st.channels_changed();
+                    }
+                }
+                ClientMsg::UpdateChannel { channel, name, topic } => {
+                    let kind = st.channel(channel).map(|c| c.kind);
+                    let name = kind.map(|k| normalize_channel_name(&name, k)).unwrap_or_default();
+                    let topic = topic.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+                    if !is_owner {
+                        error("Only the server owner can change channels.");
+                    } else if kind.is_none() {
+                        error("That channel doesn't exist.");
+                    } else if name.is_empty() || name.chars().count() > MAX_NAME_LEN {
+                        error(&format!("Channel names must be 1–{MAX_NAME_LEN} characters."));
+                    } else if topic.as_ref().is_some_and(|t| t.chars().count() > MAX_TOPIC_LEN) {
+                        error(&format!("Keep the topic under {MAX_TOPIC_LEN} characters."));
+                    } else {
+                        let c = st.config.channels.iter_mut().find(|c| c.id == channel).expect("checked above");
+                        c.name = name;
+                        c.topic = topic;
+                        st.channels_changed();
+                    }
+                }
+                ClientMsg::ReorderChannels { order } => {
+                    let mut sorted = order.clone();
+                    sorted.sort_unstable();
+                    let mut ids: Vec<ChannelId> = st.config.channels.iter().map(|c| c.id).collect();
+                    ids.sort_unstable();
+                    if !is_owner {
+                        error("Only the server owner can move channels.");
+                    } else if sorted != ids {
+                        error("The channels changed meanwhile. Try again.");
+                    } else {
+                        st.config.channels.sort_by_key(|c| order.iter().position(|id| *id == c.id));
                         st.channels_changed();
                     }
                 }
