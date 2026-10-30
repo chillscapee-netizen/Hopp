@@ -3598,6 +3598,8 @@ listen("account", (e) => {
       showUsernameCheck(m);
       return;
     case "error":
+      // Read marks are best effort (an older cloud doesn't know them yet).
+      if (m.for === "channel_read") return;
       if (m.for === "friend_request") addFriendResult(m.message, true);
       else if (m.for === "claim_username" || m.for === "check_username") showUsernameError(m.message);
       else toast(m.message, true);
