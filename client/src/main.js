@@ -3560,6 +3560,10 @@ function typing(e) {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k" && state.account) {
+    e.preventDefault();
+    return $("quick").hidden ? openQuick() : closeQuick();
+  }
   if (e.key === "Escape") closePopovers();
   if (!online()) return;
   if (e.ctrlKey && e.key.toLowerCase() === "m") { e.preventDefault(); $("mute-btn").click(); return; }
@@ -5205,3 +5209,122 @@ function clearDraft() {
 }
 
 window.addEventListener("beforeunload", saveDraft);
+
+// ---------- quick switcher (Ctrl+K) ----------
+
+var quick = { items: [], index: 0 };
+
+function openQuick() {
+  closePopovers();
+  $("quick").hidden = false;
+  $("quick-input").value = "";
+  renderQuick();
+  $("quick-input").focus();
+}
+
+function closeQuick() {
+  $("quick").hidden = true;
+}
+
+/** Everything you can jump to: servers, the channels of the server you're in, and friends. */
+function quickTargets() {
+  const out = [];
+  for (const s of prefs.servers) {
+    out.push({
+      kind: "*", name: s.label, sub: displayAddress(s), unread: serverUnread(s), mentions: serverMentions(s),
+      node: () => serverChip(s), go: () => (s.id === state.activeId ? null : connectTo(s)),
+    });
+  }
+  if (online()) {
+    const server = activeServer()?.label ?? "";
+    for (const ch of state.roster.channels) {
+      const text = ch.kind === "text";
+      out.push({
+        kind: "#", name: ch.name, sub: server,
+        unread: text && channelUnread(activeServer()?.address, ch.id), mentions: text ? channelMentions(activeServer()?.address, ch.id) : 0,
+        node: () => icon(text ? "hash" : "volume"), go: () => (text ? openTextChannel(ch.id) : joinVoice(ch.id)),
+      });
+    }
+  }
+  for (const f of state.friends?.values() ?? []) {
+    if (f.state !== "friend") continue;
+    const conv = state.conversations?.get(f.key);
+    out.push({
+      kind: "@", name: f.display_name, sub: f.username ? `@${f.username}` : "", unread: !!conv && conv.last_at > conv.last_read, mentions: 0,
+      last: conv?.last_at ?? 0, node: () => avatar(f.display_name, "s24", undefined, f.avatar), go: () => openDm(f.key),
+    });
+  }
+  return out;
+}
+
+function renderQuick() {
+  let q = $("quick-input").value.trim().toLowerCase();
+  let kind = null;
+  if (/^[#@*]/.test(q)) {
+    kind = q[0];
+    q = q.slice(1).trim();
+  }
+  let items = quickTargets().filter((t) => !kind || t.kind === kind);
+  if (q) {
+    items = items
+      .map((t) => {
+        const name = t.name.toLowerCase();
+        const sub = t.sub.toLowerCase();
+        const score = name.startsWith(q) ? 0 : name.split(/[\s\-_.]+/).some((w) => w.startsWith(q)) ? 1 : name.includes(q) ? 2 : sub.includes(q) ? 3 : -1;
+        return { t, score };
+      })
+      .filter((x) => x.score >= 0)
+      .sort((a, b) => a.score - b.score || a.t.name.localeCompare(b.t.name))
+      .map((x) => x.t);
+  } else {
+    // Nothing typed: what's waiting for you first, then recent conversations and servers.
+    items.sort((a, b) => b.mentions - a.mentions || Number(b.unread) - Number(a.unread) || (b.last ?? 0) - (a.last ?? 0));
+  }
+  quick.items = items.slice(0, 12);
+  quick.index = 0;
+  const rows = quick.items.map((t, i) => {
+    const li = el("li", "quick-item" + (i === 0 ? " active" : "") + (t.unread ? " unread" : ""));
+    const lead = el("span", "quick-icon");
+    lead.append(t.node());
+    li.append(lead, el("span", "quick-name ellipsis", t.name));
+    if (t.sub) li.append(el("span", "quick-sub ellipsis", t.sub));
+    if (t.mentions) li.append(el("span", "count-badge", String(t.mentions)));
+    li.addEventListener("mousemove", () => selectQuick(i));
+    li.addEventListener("click", () => goQuick(i));
+    return li;
+  });
+  if (!rows.length) rows.push(el("li", "quick-empty", "Nothing found."));
+  $("quick-list").replaceChildren(...rows);
+}
+
+function selectQuick(i) {
+  quick.index = i;
+  document.querySelectorAll("#quick-list .quick-item").forEach((n, j) => n.classList.toggle("active", j === i));
+  document.querySelectorAll("#quick-list .quick-item")[i]?.scrollIntoView({ block: "nearest" });
+}
+
+function goQuick(i) {
+  const t = quick.items[i];
+  if (!t) return;
+  closeQuick();
+  t.go();
+}
+
+$("quick-input").addEventListener("input", renderQuick);
+$("quick-input").addEventListener("keydown", (e) => {
+  const n = quick.items.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (n) selectQuick((quick.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    goQuick(quick.index);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeQuick();
+  }
+});
+$("quick").addEventListener("mousedown", (e) => {
+  if (e.target === $("quick")) closeQuick();
+});

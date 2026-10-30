@@ -2321,3 +2321,54 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .msg-failed .i { width: 12px; height: 12px; stroke-width: 3; }
 .msg-failed .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
 .msg-failed .link:hover { text-decoration: underline; }
+
+/* ---------- quick switcher ---------- */
+.quick {
+  position: fixed; inset: 0;
+  z-index: 80;
+  display: grid; justify-items: center; align-items: start;
+  padding-top: 14vh;
+  background: rgb(0 0 0 / 0.55);
+}
+.quick[hidden] { display: none; }
+.quick-box {
+  width: min(560px, calc(100vw - 32px));
+  padding: 16px;
+  background: var(--side);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+#quick-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  background: var(--deep);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 17px;
+}
+#quick-input:focus { border-color: var(--border-focus); }
+.quick-list { max-height: 50vh; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.quick-item {
+  display: flex; align-items: center; gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.quick-item.active { background: var(--active); color: var(--text); }
+.quick-item.unread .quick-name { color: var(--text); font-weight: 700; }
+.quick-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; }
+.quick-icon .i { width: 18px; height: 18px; }
+.quick-icon .server-chip, .quick-icon > * { max-width: 24px; max-height: 24px; }
+.quick-name { min-width: 0; font-size: 15px; font-weight: 500; }
+.quick-sub { min-width: 0; margin-left: 4px; color: var(--faint); font-size: 13px; }
+.quick-item .count-badge { margin-left: auto; }
+.quick-empty { padding: 16px 10px; color: var(--faint); list-style: none; }
+.quick-hint { margin: 12px 2px 0; color: var(--faint); font-size: 12px; }
+.quick-hint b { color: var(--muted); }
