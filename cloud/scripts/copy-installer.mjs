@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-const CLOUD = "https://strom-cloud.strom-chat.workers.dev";
+const CLOUD = "https://hopp.hoppchat.workers.dev";
 const dir = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const bundles = dir("../../target/release/bundle/nsis/");
 const download = dir("../public/download/");
