@@ -1,0 +1,27 @@
+[package]
+name = "strom-voice"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+strom-shared = { path = "../shared" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+argon2 = "0.5"
+bip39 = "2"
+chacha20poly1305 = "0.10"
+cpal = "0.15"
+opus = "0.3"
+nnnoiseless = { version = "0.5", default-features = false }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+sonora = "0.2.0"
+
+[dev-dependencies]
+strom-server = { path = "../server" }

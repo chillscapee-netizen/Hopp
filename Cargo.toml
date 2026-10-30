@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["shared", "server", "voice", "client/src-tauri"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# Audio DSP and password hashing are far too slow unoptimized; our own code stays debuggable.
+[profile.dev.package."*"]
+opt-level = 2

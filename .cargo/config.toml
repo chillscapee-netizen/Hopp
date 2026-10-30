@@ -1,0 +1,3 @@
+[env]
+# libopus bundled by audiopus_sys predates CMake 4's minimum-version policy.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

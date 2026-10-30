@@ -1,0 +1,344 @@
+//! Wire protocol shared by the Ström server and client.
+//!
+//! Control traffic is newline-delimited JSON over TCP. Voice is sent over UDP
+//! as small binary packets carrying one Opus frame each; the server only
+//! relays them and never decodes audio.
+
+use serde::{Deserialize, Serialize};
+
+pub const PROTOCOL_VERSION: u32 = 5;
+pub const DEFAULT_PORT: u16 = 7777;
+
+/// Audio is always 48 kHz mono, sent in 10 ms frames.
+pub const SAMPLE_RATE: u32 = 48_000;
+pub const FRAME_SAMPLES: usize = 480;
+
+pub type SessionId = u32;
+pub type ChannelId = u32;
+
+pub const MAX_NAME_LEN: usize = 32;
+pub const MAX_CHANNELS: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelKind {
+    Text,
+    Voice,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Channel {
+    pub id: ChannelId,
+    pub name: String,
+    pub kind: ChannelKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct User {
+    pub session_id: SessionId,
+    pub name: String,
+    /// `None` while the user is only reading and writing text.
+    pub voice_channel: Option<ChannelId>,
+    pub muted: bool,
+    pub deafened: bool,
+    pub owner: bool,
+}
+
+/// What a client signs to prove it holds the private key for its identity.
+pub fn auth_message(nonce: &[u8]) -> Vec<u8> {
+    let mut msg = b"strom-auth-v1\0".to_vec();
+    msg.extend_from_slice(nonce);
+    msg
+}
+
+pub const MAX_CHAT_LEN: usize = 2000;
+pub const MAX_SERVER_NAME_LEN: usize = 40;
+/// Server pictures are resized by the app, so this is plenty.
+pub const MAX_ICON_LEN: usize = 200_000;
+
+/// Accepts only small inline PNG, JPEG or WebP pictures.
+pub fn valid_icon(icon: &str) -> bool {
+    icon.len() <= MAX_ICON_LEN
+        && ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,"].iter().any(|p| icon.starts_with(p))
+        && icon.split_once(",").is_some_and(|(_, b64)| b64.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/' || c == b'='))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Invite {
+    pub code: String,
+    pub created_at: u64,
+    pub expires_at: Option<u64>,
+    pub max_uses: Option<u32>,
+    pub uses: u32,
+}
+
+impl Invite {
+    pub fn is_usable(&self, now: u64) -> bool {
+        self.expires_at.is_none_or(|t| now < t) && self.max_uses.is_none_or(|m| self.uses < m)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ban {
+    pub public_key: String,
+    pub name: String,
+    pub banned_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatMessage {
+    /// Unique per server, assigned by the server.
+    #[serde(default)]
+    pub id: u64,
+    pub channel: ChannelId,
+    pub sender: SessionId,
+    pub sender_name: String,
+    /// Public key of the author, stable across sessions (session ids are not).
+    #[serde(default)]
+    pub author_key: String,
+    pub text: String,
+    /// Unix time in milliseconds, stamped by the server.
+    pub sent_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMsg {
+    /// `public_key` is the hex-encoded Ed25519 key of the user's Ström-ID.
+    /// `invite` is required the first time someone joins a server.
+    Hello {
+        name: String,
+        protocol_version: u32,
+        public_key: String,
+        #[serde(default)]
+        invite: Option<String>,
+        /// Cloud servers only: create the server with this name, owned by the sender.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        create: Option<String>,
+    },
+    /// Hex-encoded signature over [`auth_message`] of the challenge nonce.
+    Auth { signature: String },
+    JoinVoice { channel: ChannelId },
+    LeaveVoice,
+    SetState { muted: bool, deafened: bool },
+    /// Ask the server to send our own voice back to us, to hear what others hear.
+    SetLoopback { enabled: bool },
+    SendChat { channel: ChannelId, text: String },
+    /// Owner only.
+    CreateChannel { name: String, kind: ChannelKind },
+    /// Owner only.
+    DeleteChannel { channel: ChannelId },
+    /// Allowed for the author and the owner.
+    DeleteMessage { channel: ChannelId, id: u64 },
+    /// Sent at most every few seconds while the user is typing.
+    Typing { channel: ChannelId },
+    /// Owner only: disconnects someone.
+    Kick { session_id: SessionId },
+    /// Owner only: disconnects someone and refuses their Ström-ID from now on.
+    Ban { session_id: SessionId },
+    /// Owner only.
+    Unban { public_key: String },
+    /// Owner only. `None` means no limit.
+    CreateInvite { max_uses: Option<u32>, expires_in_hours: Option<u32> },
+    /// Owner only.
+    RevokeInvite { code: String },
+    /// Owner only: answered with `Invites` and `Bans`.
+    GetServerSettings,
+    /// Owner only: sets the server name and picture (`icon` is a small `data:image/...` URL, or `None` to remove it).
+    UpdateServer { name: String, icon: Option<String> },
+    /// Cloud servers: where peers in our voice channel can reach us directly
+    /// ("ip:port"). `public` comes from STUN; `local` are addresses on our own network.
+    VoiceEndpoint { public: Option<String>, local: Vec<String> },
+    Ping,
+}
+
+/// How to reach someone in our voice channel directly (cloud servers have no voice relay).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PeerEndpoint {
+    pub session_id: SessionId,
+    pub public: Option<String>,
+    pub local: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMsg {
+    /// Hex-encoded random bytes the client must sign.
+    Challenge { nonce: String },
+    Welcome {
+        server_name: String,
+        session_id: SessionId,
+        udp_token: u64,
+        udp_port: u16,
+        channels: Vec<Channel>,
+        users: Vec<User>,
+        /// The server picture as a `data:image/...;base64,` URL, if the owner set one.
+        #[serde(default)]
+        server_icon: Option<String>,
+    },
+    /// The owner renamed the server or changed its picture.
+    ServerUpdated { name: String, icon: Option<String> },
+    /// Cloud servers, after JoinVoice: the channel's voice key (hex, 32 bytes) and
+    /// the endpoints of everyone already in it. Voice then goes peer to peer.
+    VoiceSession { channel: ChannelId, key: String, peers: Vec<PeerEndpoint> },
+    /// Cloud servers: someone in our voice channel told us where to reach them.
+    VoicePeer { peer: PeerEndpoint },
+    UserJoined { user: User },
+    UserUpdated { user: User },
+    UserLeft { session_id: SessionId },
+    ChannelsUpdated { channels: Vec<Channel> },
+    Chat { message: ChatMessage },
+    /// Recent messages of a text channel, oldest first. Sent for every text channel after login.
+    ChatHistory { channel: ChannelId, messages: Vec<ChatMessage> },
+    MessageDeleted { channel: ChannelId, id: u64 },
+    Typing { channel: ChannelId, session_id: SessionId },
+    /// Sent to a user right before the server drops them.
+    Kicked { banned: bool },
+    InviteCreated { invite: Invite },
+    Invites { invites: Vec<Invite> },
+    Bans { bans: Vec<Ban> },
+    Error { message: String },
+    Pong,
+}
+
+pub fn encode_line<T: Serialize>(msg: &T) -> Vec<u8> {
+    let mut buf = serde_json::to_vec(msg).expect("protocol types always serialize");
+    buf.push(b'\n');
+    buf
+}
+
+/// UDP packet kinds.
+const KIND_VOICE: u8 = 0;
+const KIND_PING: u8 = 1;
+
+/// Client -> server header: kind, session id, token, sequence number.
+pub const CLIENT_HEADER: usize = 1 + 4 + 8 + 4;
+/// Server -> client header: kind, sender session id, sequence number.
+pub const SERVER_HEADER: usize = 1 + 4 + 4;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClientPacket<'a> {
+    /// Keeps the NAT mapping open and tells the server our UDP address. The
+    /// server echoes it back unchanged, so `nonce` lets the client time the round trip.
+    Ping { session_id: SessionId, token: u64, nonce: u32 },
+    Voice { session_id: SessionId, token: u64, seq: u32, opus: &'a [u8] },
+}
+
+impl<'a> ClientPacket<'a> {
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.clear();
+        match *self {
+            ClientPacket::Ping { session_id, token, nonce } => {
+                out.push(KIND_PING);
+                out.extend_from_slice(&session_id.to_be_bytes());
+                out.extend_from_slice(&token.to_be_bytes());
+                out.extend_from_slice(&nonce.to_be_bytes());
+            }
+            ClientPacket::Voice { session_id, token, seq, opus } => {
+                out.push(KIND_VOICE);
+                out.extend_from_slice(&session_id.to_be_bytes());
+                out.extend_from_slice(&token.to_be_bytes());
+                out.extend_from_slice(&seq.to_be_bytes());
+                out.extend_from_slice(opus);
+            }
+        }
+    }
+
+    pub fn parse(buf: &'a [u8]) -> Option<Self> {
+        if buf.len() < CLIENT_HEADER {
+            return None;
+        }
+        let session_id = u32::from_be_bytes(buf[1..5].try_into().ok()?);
+        let token = u64::from_be_bytes(buf[5..13].try_into().ok()?);
+        let seq = u32::from_be_bytes(buf[13..17].try_into().ok()?);
+        match buf[0] {
+            KIND_PING => Some(ClientPacket::Ping { session_id, token, nonce: seq }),
+            KIND_VOICE if buf.len() > CLIENT_HEADER => Some(ClientPacket::Voice {
+                session_id,
+                token,
+                seq,
+                opus: &buf[CLIENT_HEADER..],
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerVoice<'a> {
+    pub sender: SessionId,
+    pub seq: u32,
+    pub opus: &'a [u8],
+}
+
+impl<'a> ServerVoice<'a> {
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.clear();
+        out.push(KIND_VOICE);
+        out.extend_from_slice(&self.sender.to_be_bytes());
+        out.extend_from_slice(&self.seq.to_be_bytes());
+        out.extend_from_slice(self.opus);
+    }
+
+    pub fn parse(buf: &'a [u8]) -> Option<Self> {
+        if buf.len() <= SERVER_HEADER || buf[0] != KIND_VOICE {
+            return None;
+        }
+        Some(ServerVoice {
+            sender: u32::from_be_bytes(buf[1..5].try_into().ok()?),
+            seq: u32::from_be_bytes(buf[5..9].try_into().ok()?),
+            opus: &buf[SERVER_HEADER..],
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_voice_roundtrip() {
+        let pkt = ClientPacket::Voice { session_id: 7, token: 0xdead_beef, seq: 42, opus: &[1, 2, 3] };
+        let mut buf = Vec::new();
+        pkt.write(&mut buf);
+        assert_eq!(ClientPacket::parse(&buf), Some(pkt));
+    }
+
+    #[test]
+    fn client_ping_roundtrip() {
+        let pkt = ClientPacket::Ping { session_id: 1, token: 99, nonce: 1234 };
+        let mut buf = Vec::new();
+        pkt.write(&mut buf);
+        assert_eq!(ClientPacket::parse(&buf), Some(pkt));
+    }
+
+    #[test]
+    fn server_voice_roundtrip() {
+        let pkt = ServerVoice { sender: 3, seq: 9, opus: &[9, 8, 7] };
+        let mut buf = Vec::new();
+        pkt.write(&mut buf);
+        assert_eq!(ServerVoice::parse(&buf), Some(pkt));
+    }
+
+    #[test]
+    fn rejects_truncated_packets() {
+        assert_eq!(ClientPacket::parse(&[0, 1, 2]), None);
+        assert_eq!(ServerVoice::parse(&[0, 0, 0, 0, 1, 0, 0, 0, 1]), None);
+    }
+
+    #[test]
+    fn only_small_inline_pictures_are_valid_icons() {
+        assert!(valid_icon("data:image/png;base64,iVBORw0KGgo="));
+        assert!(valid_icon("data:image/webp;base64,UklGR+/="));
+        assert!(!valid_icon("https://example.com/icon.png"), "no remote pictures");
+        assert!(!valid_icon("data:image/svg+xml;base64,PHN2Zz4="), "no SVG: it can carry scripts");
+        assert!(!valid_icon("data:image/png;base64,<script>"));
+        assert!(!valid_icon(&format!("data:image/png;base64,{}", "A".repeat(MAX_ICON_LEN))));
+    }
+
+    #[test]
+    fn control_messages_are_tagged_json() {
+        let line = encode_line(&ClientMsg::JoinVoice { channel: 2 });
+        assert_eq!(line, b"{\"type\":\"join_voice\",\"channel\":2}\n");
+    }
+}
