@@ -5721,22 +5721,28 @@ $("quick").addEventListener("mousedown", (e) => {
 // ---------- leaving a server ----------
 
 async function leaveServer(server) {
+  // Whether it's yours is only certain once connected, so connect first.
+  if (server.id !== state.activeId && !(await connectTo(server))) {
+    const remove = await confirmDialog({
+      title: `Can't reach ${server.label}`,
+      text: "Remove it from your list instead? If it comes back, you'll need an invite to rejoin.",
+      ok: "Remove from list",
+    });
+    if (remove) removeServer(server);
+    return;
+  }
+  // Your own server: owners delete instead of leaving.
+  if (isOwner()) {
+    if (isCloud(server)) deleteServer(server);
+    else toast("You host this server, so you can't leave it. You can remove it from your list.", true);
+    return;
+  }
   const ok = await confirmDialog({
     title: `Leave ${server.label}`,
     text: "You'll need a new invite to come back.",
     ok: "Leave server",
   });
   if (!ok) return;
-  // Leaving is done by the server, so connect first if we aren't there.
-  if (server.id !== state.activeId && !(await connectTo(server))) {
-    // It can't be reached: at least take it off your list.
-    removeServer(server);
-    return;
-  }
-  if (isOwner()) {
-    toast("You own this server, so you can't leave it. You can remove it from your list.", true);
-    return;
-  }
   state.leaving = server.id;
   invoke("leave_server").catch(() => {
     state.leaving = null;
