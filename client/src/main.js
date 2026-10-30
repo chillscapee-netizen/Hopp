@@ -222,6 +222,7 @@ function friendlyError(raw) {
   if (/10061|refused/i.test(s)) return "The server isn't answering. Check that it's running and that the address is right.";
   if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check the address and that port 7777 is open.";
   if (/resolve|11001|no such host/i.test(s)) return "Couldn't find a server at that address.";
+  if (/unknown message type/i.test(s)) return "This server doesn't have that yet. It needs an update from its owner.";
   const versions = s.match(/protocol (d+), the app speaks (d+)/i);
   if (versions) {
     return Number(versions[1]) > Number(versions[2])
@@ -1594,9 +1595,9 @@ listen("server-error", (e) => {
   const text = String(e.payload);
   // A message the server refused: mark it, so it can be sent again.
   const sending = state.outbox.findLast((o) => !o.failed && Date.now() - o.at < 5000);
-  if (sending && /message|too fast|characters|channel/i.test(text)) failOutbox(sending, text);
+  if (sending && !/unknown message type/i.test(text) && /message|too fast|characters|channel/i.test(text)) failOutbox(sending, text);
   if (/from somewhere else/i.test(text)) state.replaced = true;
-  toast(text, true);
+  toast(friendlyError(text), true);
 });
 listen("voice-state", (e) => {
   state.voiceState = e.payload;
