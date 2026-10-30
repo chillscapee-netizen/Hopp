@@ -26,6 +26,8 @@ const INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
 const MAX_LOCAL_ENDPOINTS = 4;
 const MAX_REACTIONS = 20;
+/** Peer-to-peer voice: each person sends to every other, so keep channels small. */
+const MAX_VOICE_PEERS = 10;
 const REPLY_PREVIEW_LEN = 120;
 const OLDER_PAGE = 50;
 
@@ -484,6 +486,8 @@ export class StromServer extends DurableObject<Env> {
         const ch = this.channel(Number(msg.channel));
         if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
         const others = this.voiceMembers(ch.id).filter(([other]) => other !== ws);
+        // Everyone sends to everyone directly, so a channel can only hold so many.
+        if (others.length >= MAX_VOICE_PEERS) return this.error(ws, `${ch.name} is full (${MAX_VOICE_PEERS} people). Try another voice channel.`);
         // A fresh key whenever a channel fills up again, so people who left can't listen in later.
         let key = this.meta(`voice_key:${ch.id}`);
         if (!key || others.length === 0) {
