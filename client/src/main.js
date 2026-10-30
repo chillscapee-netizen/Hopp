@@ -350,6 +350,9 @@ async function enterApp() {
   $("remember-toggle").checked = status.remembered;
   renderBackupState();
   renderAll();
+  // Started from a strom:// link (or one arrived while logged out): follow it now.
+  const link = await invoke("take_pending_link");
+  if (link) openLink(link);
 }
 
 function setBusy(btn, busy, label) {
@@ -2469,11 +2472,14 @@ function renderBanList(bans) {
 
 // ---------- confirm ----------
 
-function confirmDialog({ title, text, ok }) {
+function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
   const dialog = $("confirm-dialog");
   $("confirm-title").textContent = title;
   $("confirm-text").textContent = text;
   $("confirm-ok").textContent = ok;
+  $("confirm-cancel").textContent = cancel;
+  $("confirm-ok").classList.toggle("danger", danger);
+  $("confirm-ok").classList.toggle("primary", !danger);
   openModal(dialog);
   return new Promise((resolve) => {
     const done = (value) => {
@@ -3268,7 +3274,42 @@ window.addEventListener("keydown", (e) => {
 const appWindow = window.__TAURI__.window?.getCurrentWindow();
 $("win-min").addEventListener("click", () => appWindow?.minimize());
 $("win-max").addEventListener("click", () => appWindow?.toggleMaximize());
-$("win-close").addEventListener("click", () => appWindow?.close());
+// Closing the window: keep running in the notification area (like Discord), or quit.
+// Asked once; the answer is kept.
+$("win-close").addEventListener("click", async () => {
+  let choice = load("closeAction", "");
+  if (!choice) {
+    const keep = await confirmDialog({
+      title: "Keep Ström running?",
+      text: "Ström can keep running in the notification area when you close the window, so you stay in voice and still get messages. Open it again from the icon by the clock.",
+      ok: "Keep running",
+      cancel: "Quit Ström",
+      danger: false,
+    });
+    choice = keep ? "tray" : "quit";
+    save("closeAction", choice);
+  }
+  if (choice === "quit") invoke("quit_app");
+  else appWindow?.close();
+});
+
+// The notification-area icon's menu.
+listen("tray-action", (e) => {
+  if (e.payload === "mute") $("mute-btn").click();
+  else if (e.payload === "deafen") setDeafened(!state.deafened);
+});
+
+// strom:// links from outside (a browser, another app, or what Ström was started with).
+async function openLink(url) {
+  if (!state.account || !/^strom:\/\//i.test(url)) return;
+  closePopovers();
+  await followInvite(url);
+}
+listen("open-url", async (e) => {
+  // Handled here; don't handle it again from the pending slot.
+  await invoke("take_pending_link");
+  openLink(String(e.payload));
+});
 $("topbar-title").parentElement.addEventListener("dblclick", (e) => {
   if (!e.target.closest(".window-controls")) appWindow?.toggleMaximize();
 });

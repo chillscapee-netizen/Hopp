@@ -9,7 +9,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 strom-shared = { path = "../../shared" }
 strom-voice = { path = "../../voice" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
@@ -19,6 +19,9 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
+tauri-plugin-single-instance = { version = "2.5.5", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.6.3"
+tauri-plugin-window-state = "2.5.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security"] }

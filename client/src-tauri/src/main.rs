@@ -10,6 +10,7 @@ use serde::Serialize;
 
 mod hello;
 mod ptt;
+mod shell;
 
 const HELLO_VALID_FOR: Duration = Duration::from_secs(180);
 use strom_shared::{ChannelId, ChannelKind, ClientMsg, PeerEndpoint, ServerMsg, SessionId};
@@ -724,6 +725,17 @@ async fn test_output(state: State<'_, AppState>) -> CmdResult {
     strom_voice::play_test_sound(output, volume).map_err(|e| format!("audio: {e:#}"))
 }
 
+/// The `strom://` link the app was opened with, once.
+#[tauri::command]
+fn take_pending_link(links: State<'_, shell::PendingLink>) -> Option<String> {
+    links.0.lock().unwrap().take()
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    shell::quit(&app);
+}
+
 #[tauri::command]
 fn set_mic_monitor(state: State<'_, AppState>, on: bool) {
     state.audio.set_monitor(on);
@@ -889,9 +901,16 @@ async fn set_devices(state: State<'_, AppState>, input: Option<String>, output: 
 fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
     tauri::Builder::default()
+        // Must come first: a second copy hands its link to this one and quits.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .manage(shell::PendingLink::default())
+        .on_window_event(shell::on_window_event)
         .setup(|app| {
+            shell::setup(app)?;
             let path = app.path().app_data_dir()?.join("identity.json");
             let state = app.state::<AppState>();
             let _ = state.identity_path.set(path);
@@ -936,6 +955,8 @@ fn main() {
             record_ptt_key,
             cancel_ptt_recording,
             set_ptt_release_delay,
+            take_pending_link,
+            quit_app,
             test_output,
             set_vad_threshold,
             set_auto_sensitivity,
