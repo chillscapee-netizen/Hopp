@@ -4170,7 +4170,7 @@ function mergeSync(remote) {
   prefs.rail = rail;
   prefs.removedServers = removed;
   if (remote.notify) {
-    prefs.notify = { servers: { ...remote.notify.servers }, channels: { ...remote.notify.channels } };
+    prefs.notify = { servers: { ...remote.notify.servers }, channels: { ...remote.notify.channels }, dms: { ...remote.notify.dms } };
     save("notify", JSON.stringify(prefs.notify));
   }
   save("servers", JSON.stringify(prefs.servers));
@@ -4233,7 +4233,7 @@ function personFor(key) {
 
 function unreadDms() {
   let n = 0;
-  for (const c of state.conversations.values()) if (c.last_at > c.last_read) n++;
+  for (const [peer, c] of state.conversations) if (c.last_at > c.last_read && !dmMuted(peer)) n++;
   return n;
 }
 
@@ -4305,7 +4305,7 @@ function onDmEvent(m) {
 
 function notifyDm(peer, text) {
   const who = personFor(peer);
-  if (state.me?.status === "dnd") return;
+  if (state.me?.status === "dnd" || dmMuted(peer)) return;
   playSound("message");
   desktopNotify(who, text ?? "Sent you a message", `dm:${peer}`);
 }
@@ -4415,13 +4415,19 @@ function dmSidebarRows() {
       const p = personFor(peer);
       const b = el("button", "server-row dm-row");
       b.classList.toggle("active", state.openDm === peer);
-      b.classList.toggle("unread", conv.last_at > conv.last_read);
+      const muted = dmMuted(peer);
+      b.classList.toggle("unread", conv.last_at > conv.last_read && !muted);
+      b.classList.toggle("muted", muted);
       const text = el("span", "row-text");
       text.append(el("span", "row-title ellipsis", p.display_name));
       if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
       b.append(personAvatar(p, "", p.state === "friend"), text);
-      if (conv.last_at > conv.last_read) b.append(el("span", "count-badge", "1"));
+      if (conv.last_at > conv.last_read && !muted) b.append(el("span", "count-badge", "1"));
       b.addEventListener("click", () => openDm(peer));
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openMenu([{ label: muted ? "Unmute conversation" : "Mute conversation", icon: "bell", action: () => setDmMuted(peer, !muted) }], e.clientX, e.clientY);
+      });
       return b;
     });
   if (!rows.length) return [];
@@ -5603,4 +5609,16 @@ async function openExternal(href) {
     } catch {}
   }
   openUrl(href);
+}
+
+function dmMuted(peer) {
+  return !!prefs.notify.dms?.[peer];
+}
+
+function setDmMuted(peer, muted) {
+  prefs.notify.dms ??= {};
+  if (muted) prefs.notify.dms[peer] = true;
+  else delete prefs.notify.dms[peer];
+  saveNotify();
+  renderAll();
 }

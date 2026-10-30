@@ -2419,3 +2419,5 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 }
 .link-trust { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 13.5px; cursor: pointer; }
 .link-trust b { color: var(--text-2); }
+.dm-row.muted { opacity: 0.5; }
+.dm-row.muted:hover, .dm-row.muted.active { opacity: 0.85; }
