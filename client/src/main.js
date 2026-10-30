@@ -104,6 +104,8 @@ const state = {
   reads: new Map(),
   /** Channels whose very first message is loaded. */
   olderDone: new Set(),
+  /** Messages on their way: { nonce, channel, text, replyTo, reply, at, failed, why }. */
+  outbox: [],
   loadingOlder: false,
   /** The message being answered ({ id, channel, name }) or edited ({ id, channel }). */
   replyTo: null,
@@ -1297,6 +1299,7 @@ window.addEventListener("online", () => {
 });
 
 async function connectTo(server, create, reconnecting) {
+  saveDraft();
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
   if (state.activeId) await call("disconnect");
@@ -1314,6 +1317,7 @@ async function connectTo(server, create, reconnecting) {
   state.chats.clear();
   state.olderDone.clear();
   state.loadingOlder = false;
+  state.outbox = [];
   state.replyTo = null;
   state.editing = null;
   state.latency = null;
@@ -1421,6 +1425,7 @@ listen("roster", (e) => {
   state.pendingView = undefined;
   if (!textChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
   forgetDeletedChannels();
+  if (draftKey() !== state.draftAt) restoreDraft();
   applyUserVolumes();
   renderAll();
 });
@@ -1447,6 +1452,10 @@ listen("voice", (e) => {
 
 listen("chat", (e) => {
   const m = e.payload;
+  if (m.author_key === state.account?.publicKey) {
+    const i = state.outbox.findIndex((o) => o.channel === m.channel && o.text === m.text && !o.failed);
+    if (i >= 0) state.outbox.splice(i, 1);
+  }
   if (!state.chats.has(m.channel)) state.chats.set(m.channel, []);
   state.chats.get(m.channel).push(m);
   state.typing.get(m.channel)?.delete(m.sender);
@@ -1554,6 +1563,9 @@ listen("disconnected", () => {
 
 listen("server-error", (e) => {
   const text = String(e.payload);
+  // A message the server refused: mark it, so it can be sent again.
+  const sending = state.outbox.findLast((o) => !o.failed && Date.now() - o.at < 5000);
+  if (sending && /message|too fast|characters|channel/i.test(text)) failOutbox(sending, text);
   if (/from somewhere else/i.test(text)) state.replaced = true;
   toast(text, true);
 });
@@ -1731,10 +1743,12 @@ function renderSidebar() {
 
 function openTextChannel(id) {
   if (state.view !== id) {
+    saveDraft();
     setReply(null);
     state.editing = null;
   }
   state.view = id;
+  restoreDraft();
   renderSidebar();
   renderChannelView();
   $("chat-input").focus();
@@ -2127,6 +2141,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     items.push(li);
     prev = m;
   }
+  for (const o of state.outbox.filter((x) => x.channel === state.view)) items.push(outboxItem(o));
   $("messages").replaceChildren(...items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
   markViewedRead();
@@ -2719,14 +2734,8 @@ chatInput.addEventListener("keydown", (e) => {
     composeMentions.clear();
     state.newSince = null;
     autosize();
-    invoke("send_chat", { channel: state.view, text, replyTo }).catch((err) => {
-      // Give the text back rather than lose it.
-      if (!chatInput.value) {
-        chatInput.value = plainText(text);
-        autosize();
-      }
-      toast(friendlyError(err), true);
-    });
+    clearDraft();
+    sendChat(state.view, text, replyTo);
   }
 });
 function autosize() {
@@ -5098,3 +5107,101 @@ function loadOlder() {
 $("scroller").addEventListener("scroll", () => {
   if ($("scroller").scrollTop < 400) loadOlder();
 });
+
+// ---------- sending: pending, failed, retry ----------
+
+function sendChat(channel, text, replyTo) {
+  const answered = replyTo ? state.chats.get(channel)?.find((m) => m.id === replyTo) : null;
+  const o = {
+    nonce: crypto.randomUUID(), channel, text, replyTo, at: Date.now(), failed: false, why: "",
+    reply: answered ? { id: answered.id, sender_name: answered.sender_name, author_key: answered.author_key, text: answered.text } : null,
+  };
+  state.outbox.push(o);
+  if (channel === state.view) renderMessages(false);
+  invoke("send_chat", { channel, text, replyTo }).catch((err) => failOutbox(o, friendlyError(err)));
+  // No answer at all: the connection is gone.
+  setTimeout(() => {
+    if (state.outbox.includes(o) && !o.failed) failOutbox(o, "Not sent. Check your connection.");
+  }, 10_000);
+}
+
+function failOutbox(o, why) {
+  o.failed = true;
+  o.why = why;
+  if (o.channel === state.view) renderMessages(true);
+}
+
+function outboxItem(o) {
+  const li = el("li", "msg first " + (o.failed ? "failed" : "pending"));
+  if (o.reply) li.append(replyLine(o.reply));
+  const head = el("div", "msg-head");
+  const name = state.account?.name ?? "";
+  const author = el("span", "msg-author", name);
+  author.style.color = `hsl(${hue(name)} 22% 80%)`;
+  head.append(author, el("span", "msg-time", o.failed ? "Not sent" : "Sending…"));
+  li.append(avatar(name, "s40", undefined, state.me?.avatar ?? null), head, messageText(o.text));
+  if (o.failed) {
+    const row = el("div", "msg-failed");
+    const retry = el("button", "link", "Retry");
+    retry.type = "button";
+    retry.addEventListener("click", () => {
+      state.outbox.splice(state.outbox.indexOf(o), 1);
+      sendChat(o.channel, o.text, o.replyTo);
+    });
+    const drop = el("button", "link", "Delete");
+    drop.type = "button";
+    drop.addEventListener("click", () => {
+      state.outbox.splice(state.outbox.indexOf(o), 1);
+      renderMessages(true);
+    });
+    row.append(icon("x", "xs"), el("span", "", o.why || "Couldn't send this message."), retry, drop);
+    li.append(row);
+  }
+  return li;
+}
+
+// ---------- drafts: what you were writing stays per channel ----------
+
+var drafts = (() => {
+  try {
+    return new Map(Object.entries(JSON.parse(localStorage.getItem("drafts") ?? "{}")));
+  } catch {
+    return new Map();
+  }
+})();
+
+function draftKey() {
+  const address = currentServer()?.address;
+  return address && state.view !== null ? `${address}|${state.view}` : null;
+}
+
+function persistDrafts() {
+  try {
+    localStorage.setItem("drafts", JSON.stringify(Object.fromEntries([...drafts].slice(-50))));
+  } catch {}
+}
+
+function saveDraft() {
+  const key = draftKey();
+  if (!key) return;
+  const text = chatInput.value;
+  if (text.trim()) drafts.set(key, { text, mentions: [...composeMentions] });
+  else drafts.delete(key);
+  persistDrafts();
+}
+
+function restoreDraft() {
+  state.draftAt = draftKey();
+  const d = drafts.get(draftKey());
+  chatInput.value = d?.text ?? "";
+  composeMentions.clear();
+  for (const [label, key] of d?.mentions ?? []) composeMentions.set(label, key);
+  autosize();
+}
+
+function clearDraft() {
+  const key = draftKey();
+  if (key && drafts.delete(key)) persistDrafts();
+}
+
+window.addEventListener("beforeunload", saveDraft);

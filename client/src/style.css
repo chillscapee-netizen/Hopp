@@ -2317,3 +2317,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   cursor: pointer;
 }
 .emoji-option:hover { background: var(--active); }
+.msg-failed { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.msg-failed .i { width: 12px; height: 12px; stroke-width: 3; }
+.msg-failed .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
+.msg-failed .link:hover { text-decoration: underline; }
