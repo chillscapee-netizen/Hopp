@@ -884,6 +884,25 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
     Ok(body)
 }
 
+/// A newer Hopp, if there is one: its version and what's new.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> CmdResult<Option<serde_json::Value>> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(update.map(|u| serde_json::json!({ "version": u.version, "notes": u.body })))
+}
+
+/// Downloads the newer Hopp (checking its signature), installs it and restarts.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> CmdResult {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let Some(update) = update else { return Err("You already have the newest Hopp.".into()) };
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| format!("Couldn't update: {e}"))?;
+    shell::prepare_quit();
+    app.restart();
+}
+
 #[tauri::command]
 fn autostart_enabled(app: AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
@@ -1159,6 +1178,7 @@ fn main() {
         // Must come first: a second copy hands its link to this one and quits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -1225,6 +1245,8 @@ fn main() {
             fetch_profile,
             gif_search,
             autostart_enabled,
+            check_update,
+            install_update,
             set_autostart,
             shell::window_compact,
             shell::window_full,

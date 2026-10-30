@@ -2604,3 +2604,20 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .shell.locked .auth { overflow-y: auto; }
 .splash-retry { margin-top: 14px; }
 .voice-user .unreachable { flex: none; margin-left: auto; color: var(--yellow); }
+
+.update-pill {
+  position: absolute; right: 150px; top: 50%;
+  height: 22px;
+  padding: 0 10px;
+  transform: translateY(-50%);
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 50%, transparent);
+  border-radius: 11px;
+  color: var(--green);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.update-pill:hover { background: color-mix(in srgb, var(--green) 24%, transparent); }
+.update-pill[hidden] { display: none; }

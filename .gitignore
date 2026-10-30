@@ -4,3 +4,4 @@ dist/
 strom-data/
 .wrangler/
 cloud/public/download/
+cloud/public/update/

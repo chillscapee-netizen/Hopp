@@ -6573,3 +6573,42 @@ listen("server-deleted", () => {
 
 /** People in our voice channel we can't reach peer to peer. */
 state.unreachable = new Set();
+
+// ---------- updates ----------
+//
+// Hopp looks for a newer version at start and every few hours. Updates are
+// signed; anything not signed with Hopp's key is refused.
+
+var updateFound = null;
+
+async function checkForUpdate() {
+  try {
+    updateFound = await invoke("check_update");
+  } catch {
+    updateFound = null;
+  }
+  const pill = $("update-pill");
+  pill.hidden = !updateFound;
+  if (updateFound) {
+    pill.textContent = "Update ready: restart";
+    pill.dataset.tip = `Hopp ${updateFound.version} is ready. Click to restart into it.`;
+  }
+}
+
+$("update-pill").addEventListener("click", async () => {
+  const pill = $("update-pill");
+  if (state.call || myVoice() !== null) {
+    const ok = await confirmDialog({ title: "Restart to update?", text: "You'll leave voice for a moment while Hopp restarts.", ok: "Restart", danger: false });
+    if (!ok) return;
+  }
+  pill.disabled = true;
+  pill.textContent = "Updating…";
+  invoke("install_update").catch((err) => {
+    pill.disabled = false;
+    pill.textContent = "Update ready: restart";
+    toast(friendlyError(err), true);
+  });
+});
+
+setTimeout(checkForUpdate, 8000);
+setInterval(checkForUpdate, 4 * 3600 * 1000);

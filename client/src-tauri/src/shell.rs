@@ -13,6 +13,11 @@ use tauri_plugin_deep_link::DeepLinkExt;
 /// Set when the user really quits; otherwise closing the window only hides it.
 static QUITTING: AtomicBool = AtomicBool::new(false);
 
+/// Lets the window close for real (quitting, or restarting into an update).
+pub fn prepare_quit() {
+    QUITTING.store(true, Ordering::Relaxed);
+}
+
 /// A link the app was started with, kept until the page is ready to handle it.
 #[derive(Default)]
 pub struct PendingLink(pub Mutex<Option<String>>);
