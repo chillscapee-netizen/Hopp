@@ -24,7 +24,7 @@ const METER_MAX_DB = 0;
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
 const DEFAULT_PORT = 7777;
 /** Where Hopp Cloud runs (see cloud/). For local development, `npx wrangler dev` serves ws://127.0.0.1:8787. */
-const DEFAULT_CLOUD_URL = "wss://hopp.hoppchat.workers.dev";
+const DEFAULT_CLOUD_URL = "wss://hopp-cloud.hoppchat.workers.dev";
 const TYPING_SEND_MS = 2500;
 const TYPING_SHOW_MS = 6000;
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
@@ -47,7 +47,7 @@ const prefs = {
   servers: loadJson("servers", []),
   // The rail's order and folders; see normalizeRail.
   rail: loadJson("rail", []),
-  cloudUrl: load("cloudUrl", DEFAULT_CLOUD_URL).replace(/strom-cloud\.strom-chat\.workers\.dev/, "hopp.hoppchat.workers.dev"),
+  cloudUrl: load("cloudUrl", DEFAULT_CLOUD_URL).replace(/strom-cloud\.strom-chat\.workers\.dev/, "hopp-cloud.hoppchat.workers.dev"),
   mode: load("mode", "voice_activity"),
   threshold: Number(load("vad", "-50")),
   noise: load("noise", "1") === "1",

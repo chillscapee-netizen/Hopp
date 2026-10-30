@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use strom_shared::{ChannelKind, ClientMsg, ServerMsg};
 use strom_voice::{AccountLink, Identity, StoredIdentity};
 
-const DEFAULT_CLOUD: &str = "wss://hopp.hoppchat.workers.dev";
+const DEFAULT_CLOUD: &str = "wss://hopp-cloud.hoppchat.workers.dev";
 const PASSWORD: &str = "hoppbot-test-password";
 const STORE: &str = "strom-data/testbot.json";
 
