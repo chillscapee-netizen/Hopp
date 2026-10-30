@@ -1245,6 +1245,11 @@ function openServerMenu(server, x, y) {
         : { label: "Connect", icon: "link", action: () => connectTo(server) },
       ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
       "sep",
+      { heading: "Notifications" },
+      ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
+        label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
+      })),
+      "sep",
       ...(active && isOwner()
         ? [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
         : [{ label: "Leave server", icon: "logout", danger: true, action: () => leaveServer(server) }]),
@@ -1468,8 +1473,8 @@ listen("chat", (e) => {
     renderTyping();
   }
   if (fresh && server) {
-    if (m.author_key !== state.account?.publicKey && mentionsMeIn(m)) {
-      notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channelName(m.channel), text: previewText(m.text) });
+    if (m.author_key !== state.account?.publicKey) {
+      notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channelName(m.channel), text: previewText(m.text), mention: mentionsMeIn(m) });
     }
     renderUnread();
   }
@@ -1723,10 +1728,9 @@ function renderSidebar() {
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
-    if (owner) {
-      row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
-      draggableChannel(row, ch);
-    }
+    row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
+    row.classList.toggle("muted", channelMuted(address, ch.id));
+    if (owner) draggableChannel(row, ch);
     items.push(row);
   }
   if (textChannels().length === 0) items.push(el("div", "empty-channels", "No text channels"));
@@ -1771,11 +1775,19 @@ function openTextChannel(id) {
 function openChannelMenu(ch, e) {
   e.preventDefault();
   e.stopPropagation();
+  const address = activeServer()?.address;
+  const muted = channelMuted(address, ch.id);
   openMenu(
     [
-      { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
-      "sep",
-      { label: "Delete channel", icon: "trash", danger: true, action: () => deleteChannel(ch) },
+      ...(ch.kind === "text" ? [{ label: muted ? "Unmute channel" : "Mute channel", icon: "bell", action: () => setChannelMuted(address, ch.id, !muted) }] : []),
+      ...(isOwner()
+        ? [
+            ...(ch.kind === "text" ? ["sep"] : []),
+            { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
+            "sep",
+            { label: "Delete channel", icon: "trash", danger: true, action: () => deleteChannel(ch) },
+          ]
+        : []),
     ],
     e.clientX,
     e.clientY,
@@ -3716,7 +3728,7 @@ listen("account", (e) => {
       break;
     case "channel_activity": {
       const fresh = mergeRead(m);
-      if (fresh && m.mention) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ?? "Mentioned you" });
+      if (fresh) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ? previewText(m.preview) : "Mentioned you", mention: m.mention });
       renderUnread();
       return;
     }
@@ -4115,6 +4127,8 @@ $("avatar-remove").addEventListener("click", () => accountSend({ type: "set_prof
 // remembered so it doesn't come back from another device.
 
 var syncState = { version: 0, saving: false, dirty: false, timer: null, ready: false };
+/** Notification settings: per server "all", "mentions" (the default) or "none"; muted channels. */
+prefs.notify = loadJson("notify", { servers: {}, channels: {} });
 prefs.removedServers = loadJson("removedServers", {});
 
 function syncDoc() {
@@ -4126,6 +4140,7 @@ function syncDoc() {
       .map((item) => (item.folder ? { folder: item.folder, name: item.name, color: item.color, open: !!item.open, addresses: item.ids.map(addressOf).filter(Boolean) } : { address: addressOf(item.id) }))
       .filter((item) => item.address || item.addresses?.length),
     removed: prefs.removedServers,
+    notify: prefs.notify,
   };
 }
 
@@ -4154,6 +4169,10 @@ function mergeSync(remote) {
   prefs.servers = servers;
   prefs.rail = rail;
   prefs.removedServers = removed;
+  if (remote.notify) {
+    prefs.notify = { servers: { ...remote.notify.servers }, channels: { ...remote.notify.channels } };
+    save("notify", JSON.stringify(prefs.notify));
+  }
   save("servers", JSON.stringify(prefs.servers));
   save("rail", JSON.stringify(prefs.rail));
   save("removedServers", JSON.stringify(prefs.removedServers));
@@ -4683,6 +4702,7 @@ function forgetDeletedChannels() {
 }
 
 function channelUnread(address, channel) {
+  if (channelMuted(address, channel)) return false;
   const r = state.reads.get(readKey(address, channel));
   return !!r && r.last_id > r.read_id;
 }
@@ -4702,7 +4722,8 @@ function serverRows(s) {
 }
 
 function serverUnread(s) {
-  return serverRows(s).some((r) => r.last_id > r.read_id);
+  if (serverLevel(s) === "none") return false;
+  return serverRows(s).some((r) => r.last_id > r.read_id && !channelMuted(s.address, r.channel));
 }
 
 function serverMentions(s) {
@@ -4724,9 +4745,11 @@ function renderUnread() {
 }
 
 /** Someone mentioned you somewhere you aren't looking: a sound and a notification. */
-function notifyMention({ server, channel, author_key, author_name, channel_name, text }) {
+function notifyMention({ server, channel, author_key, author_name, channel_name, text, mention }) {
   const s = prefs.servers.find((x) => x.address === server);
   if (!s || state.me?.status === "dnd") return;
+  const level = serverLevel(s);
+  if (level === "none" || channelMuted(server, channel) || (!mention && level !== "all")) return;
   const looking = s.id === state.activeId && state.view === channel && document.hasFocus();
   if (looking) return;
   playSound("message");
@@ -5451,4 +5474,34 @@ function draggableChannel(row, ch) {
     renderSidebar();
     call("reorder_channels", { order });
   });
+}
+
+// ---------- notification settings ----------
+
+function serverLevel(s) {
+  return prefs.notify.servers[s.address] ?? "mentions";
+}
+
+function channelMuted(address, channel) {
+  return !!prefs.notify.channels[`${address}|${channel}`];
+}
+
+function saveNotify() {
+  save("notify", JSON.stringify(prefs.notify));
+  if (syncState.ready) scheduleSync();
+  renderUnread();
+}
+
+function setServerLevel(s, level) {
+  if (level === "mentions") delete prefs.notify.servers[s.address];
+  else prefs.notify.servers[s.address] = level;
+  saveNotify();
+  toast(level === "all" ? `You'll be notified of every message in ${s.label}.` : level === "none" ? `${s.label} is muted.` : `You'll only be notified when someone mentions you in ${s.label}.`);
+}
+
+function setChannelMuted(address, channel, muted) {
+  const key = `${address}|${channel}`;
+  if (muted) prefs.notify.channels[key] = true;
+  else delete prefs.notify.channels[key];
+  saveNotify();
 }

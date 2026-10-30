@@ -2391,3 +2391,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 }
 #channel-edit-topic:focus { border-color: var(--border-focus); }
 #chat-topic { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+.channel-row.muted { opacity: 0.45; }
+.channel-row.muted:hover, .channel-row.muted.current { opacity: 0.8; }

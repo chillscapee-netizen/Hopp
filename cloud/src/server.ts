@@ -293,7 +293,7 @@ export class StromServer extends DurableObject<Env> {
     };
     for (const key of keys) {
       const mention = mentioned.has(key) && key !== m.author_key;
-      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview: mention ? preview : null });
+      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview });
       this.ctx.waitUntil(call.catch(() => {}));
     }
   }
