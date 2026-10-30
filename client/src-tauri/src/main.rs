@@ -898,8 +898,87 @@ async fn set_devices(state: State<'_, AppState>, input: Option<String>, output: 
     }
 }
 
+/// Logs go to the terminal and to a file per day in the app's log folder (the last 7 are kept),
+/// for "Copy debug info". Nothing is sent anywhere.
+fn init_logging(app: &tauri::App) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    static GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
+    let filter = || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    let file = app.path().app_log_dir().ok().and_then(|dir| {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("strom")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(dir)
+            .ok()
+    });
+    let registry = tracing_subscriber::registry().with(filter()).with(tracing_subscriber::fmt::layer());
+    match file {
+        Some(file) => {
+            let (writer, guard) = tracing_appender::non_blocking(file);
+            let _ = GUARD.set(guard);
+            let _ = registry.with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(writer)).try_init();
+        }
+        None => {
+            let _ = registry.try_init();
+        }
+    }
+    tracing::info!("Ström {} starting", app.package_info().version);
+}
+
+/// What helps someone fix a problem: version, system, audio devices and the recent log.
+#[tauri::command]
+fn debug_info(app: AppHandle, state: State<'_, AppState>) -> String {
+    let devices = strom_voice::list_devices();
+    let chosen = state.devices.lock().unwrap().clone();
+    let connected = state.conn.lock().unwrap().as_ref().map(|c| (c.udp_addr.is_none(), c.engine.is_some()));
+    let mut out = format!(
+        "Ström {}
+System: {} {}
+Microphone: {:?} (default {:?})
+Speakers: {:?} (default {:?})
+Inputs: {:?}
+Outputs: {:?}
+Connected: {}
+",
+        app.package_info().version,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        chosen.input,
+        devices.default_input,
+        chosen.output,
+        devices.default_output,
+        devices.inputs,
+        devices.outputs,
+        match connected {
+            None => "no".to_string(),
+            Some((cloud, voice)) => format!("yes ({}, voice {})", if cloud { "cloud" } else { "self-hosted" }, if voice { "on" } else { "off" }),
+        },
+    );
+    // The newest log file, last 300 lines.
+    if let Ok(dir) = app.path().app_log_dir() {
+        let newest = std::fs::read_dir(&dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("strom"))
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+        if let Some(text) = newest.and_then(|e| std::fs::read_to_string(e.path()).ok()) {
+            let lines: Vec<&str> = text.lines().collect();
+            out.push_str("
+--- recent log ---
+");
+            out.push_str(&lines[lines.len().saturating_sub(300)..].join("
+"));
+        }
+    }
+    out
+}
+
 fn main() {
-    tracing_subscriber::fmt().with_env_filter("info").init();
     tauri::Builder::default()
         // Must come first: a second copy hands its link to this one and quits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
@@ -910,6 +989,7 @@ fn main() {
         .manage(shell::PendingLink::default())
         .on_window_event(shell::on_window_event)
         .setup(|app| {
+            init_logging(app);
             shell::setup(app)?;
             let path = app.path().app_data_dir()?.join("identity.json");
             let state = app.state::<AppState>();
@@ -956,6 +1036,7 @@ fn main() {
             cancel_ptt_recording,
             set_ptt_release_delay,
             take_pending_link,
+            debug_info,
             quit_app,
             test_output,
             set_vad_threshold,

@@ -566,6 +566,13 @@ async function logout() {
   boot();
 }
 $("logout-btn").addEventListener("click", logout);
+// For helping someone with a problem: version, devices and the recent log, to paste anywhere.
+$("copy-debug").addEventListener("click", async () => {
+  const info = await call("debug_info");
+  if (!info) return;
+  await navigator.clipboard.writeText(info).catch(() => {});
+  toast("Debug info copied. It includes your IP addresses, so only share it with people you trust.");
+});
 
 // ---------- password & recovery in settings ----------
 

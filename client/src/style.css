@@ -1888,3 +1888,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .drag-ghost { border-radius: 16px !important; overflow: hidden; opacity: 0.92; }
 .drop-line { box-shadow: 0 0 8px color-mix(in srgb, var(--green) 60%, transparent); }
 .rail-item.drop-onto .rail-icon { border-radius: 16px; box-shadow: 0 0 0 3px var(--green), 0 0 18px color-mix(in srgb, var(--green) 40%, transparent); }
+
+.settings-tab.subtle { margin-top: auto; color: var(--faint); font-size: 13px; }
+.settings-tab.subtle .i { width: 16px; height: 16px; }
