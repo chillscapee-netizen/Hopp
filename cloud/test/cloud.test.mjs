@@ -403,3 +403,40 @@ test("voice channels hand out a key and connect peers directly", async () => {
   assert.deepEqual(third.peers, []);
   for (const c of [owner, bob, carol]) c.close();
 });
+
+test("replies, edits, reactions and older messages", async () => {
+  const { id, owner, invite } = await newServer();
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+
+  owner.send({ type: "send_chat", channel: general, text: "who is in?" });
+  const question = (await bob.waitFor((m) => m.type === "chat")).message;
+  bob.send({ type: "send_chat", channel: general, text: "me", reply_to: question.id });
+  const answer = (await owner.waitFor((m) => m.type === "chat" && m.message.text === "me")).message;
+  assert.deepEqual(answer.reply, { id: question.id, sender_name: "owner", author_key: owner.key.pub, text: "who is in?" });
+
+  bob.send({ type: "edit_message", channel: general, id: question.id, text: "hacked" });
+  assert.match(await errorOf(bob), /your own/);
+  owner.send({ type: "edit_message", channel: general, id: question.id, text: "who is in tonight?" });
+  const edited = await bob.waitFor((m) => m.type === "message_edited");
+  assert.equal(edited.text, "who is in tonight?");
+
+  bob.send({ type: "react", channel: general, id: question.id, emoji: "👍", on: true });
+  const reacted = await owner.waitFor((m) => m.type === "reactions");
+  assert.deepEqual(reacted.reactions, [{ emoji: "👍", keys: [bob.key.pub] }]);
+  bob.send({ type: "react", channel: general, id: question.id, emoji: "abc", on: true });
+  assert.match(await errorOf(bob), /emoji/);
+
+  const carol = await join(id, "carol", { invite });
+  const history = await carol.waitFor((m) => m.type === "chat_history" && m.channel === general);
+  assert.equal(history.messages[0].text, "who is in tonight?");
+  assert.ok(history.messages[0].edited_at > 0);
+  assert.equal(history.messages[0].reactions.length, 1);
+  assert.equal(history.messages[1].reply.id, question.id);
+
+  carol.send({ type: "load_older", channel: general, before: answer.id });
+  const older = await carol.waitFor((m) => m.type === "older_history");
+  assert.deepEqual(older.messages.map((m) => m.id), [question.id]);
+  assert.equal(older.done, true);
+  for (const c of [owner, bob, carol]) c.close();
+});

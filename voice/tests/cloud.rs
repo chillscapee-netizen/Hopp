@@ -40,7 +40,7 @@ async fn create_invite_join_and_chat_over_websocket() {
     let guest = strom_voice::connect(&url, &guest_id, Some(&code), None).await.unwrap();
 
     let general = owner.roster.channels.iter().find(|c| c.kind == ChannelKind::Text).unwrap().id;
-    guest.control.send(ClientMsg::SendChat { channel: general, text: "hello from Rust".into() });
+    guest.control.send(ClientMsg::SendChat { channel: general, text: "hello from Rust".into(), reply_to: None });
     loop {
         if let Some(ServerMsg::Chat { message }) = owner.events.recv().await {
             assert_eq!((message.text.as_str(), message.sender_name.as_str()), ("hello from Rust", "guest"));

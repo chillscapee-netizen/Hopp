@@ -102,6 +102,72 @@ pub struct ChatMessage {
     pub text: String,
     /// Unix time in milliseconds, stamped by the server.
     pub sent_at: u64,
+    /// The message this one answers, as it looked when answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<Reply>,
+    /// When the author last changed the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<Reaction>,
+}
+
+/// What a reply shows of the message it answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Reply {
+    pub id: u64,
+    pub sender_name: String,
+    pub author_key: String,
+    /// The start of the answered message.
+    pub text: String,
+}
+
+/// One emoji on a message, and the Hopp IDs of everyone who added it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Reaction {
+    pub emoji: String,
+    pub keys: Vec<String>,
+}
+
+pub const MAX_REACTIONS: usize = 20;
+pub const REPLY_PREVIEW_LEN: usize = 120;
+/// Older messages are fetched this many at a time.
+pub const OLDER_PAGE: usize = 50;
+
+/// An emoji (or short emoji sequence): no spaces, no plain letters or digits.
+pub fn valid_emoji(emoji: &str) -> bool {
+    !emoji.is_empty() && emoji.len() <= 32 && emoji.chars().all(|c| !c.is_whitespace() && !c.is_ascii())
+}
+
+/// Adds or removes `key`'s `emoji` on a message. False if the message already has too many kinds.
+pub fn toggle_reaction(reactions: &mut Vec<Reaction>, emoji: &str, key: &str, on: bool) -> bool {
+    match reactions.iter_mut().position(|r| r.emoji == emoji) {
+        Some(i) => {
+            let r = &mut reactions[i];
+            r.keys.retain(|k| k != key);
+            if on {
+                r.keys.push(key.to_string());
+            } else if r.keys.is_empty() {
+                reactions.remove(i);
+            }
+            true
+        }
+        None if !on => true,
+        None if reactions.len() >= MAX_REACTIONS => false,
+        None => {
+            reactions.push(Reaction { emoji: emoji.to_string(), keys: vec![key.to_string()] });
+            true
+        }
+    }
+}
+
+/// The start of a message, for a reply.
+pub fn reply_preview(text: &str) -> String {
+    let mut out: String = text.chars().take(REPLY_PREVIEW_LEN).collect();
+    if text.chars().count() > REPLY_PREVIEW_LEN {
+        out.push('…');
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,7 +192,19 @@ pub enum ClientMsg {
     SetState { muted: bool, deafened: bool },
     /// Ask the server to send our own voice back to us, to hear what others hear.
     SetLoopback { enabled: bool },
-    SendChat { channel: ChannelId, text: String },
+    SendChat {
+        channel: ChannelId,
+        text: String,
+        /// Answers this message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<u64>,
+    },
+    /// The author only.
+    EditMessage { channel: ChannelId, id: u64, text: String },
+    /// Adds (`on`) or removes your reaction.
+    React { channel: ChannelId, id: u64, emoji: String, on: bool },
+    /// Answered with `OlderHistory`: up to [`OLDER_PAGE`] messages before `before`.
+    LoadOlder { channel: ChannelId, before: u64 },
     /// Owner only.
     CreateChannel { name: String, kind: ChannelKind },
     /// Owner only.
@@ -194,6 +272,10 @@ pub enum ServerMsg {
     /// Recent messages of a text channel, oldest first. Sent for every text channel after login.
     ChatHistory { channel: ChannelId, messages: Vec<ChatMessage> },
     MessageDeleted { channel: ChannelId, id: u64 },
+    MessageEdited { channel: ChannelId, id: u64, text: String, edited_at: u64 },
+    Reactions { channel: ChannelId, id: u64, reactions: Vec<Reaction> },
+    /// Older messages, oldest first. `done`: there are none before these.
+    OlderHistory { channel: ChannelId, messages: Vec<ChatMessage>, done: bool },
     Typing { channel: ChannelId, session_id: SessionId },
     /// Sent to a user right before the server drops them.
     Kicked { banned: bool },

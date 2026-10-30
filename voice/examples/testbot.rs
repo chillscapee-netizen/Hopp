@@ -77,14 +77,14 @@ async fn join_server(cloud: String, me: Identity, code: String, link: AccountLin
     dm(&link, &me, &friend, &format!("I'm in {name}! Say \"bot\" in a channel and I'll answer."));
     let general = session.roster.channels.iter().find(|c| c.kind == ChannelKind::Text).map(|c| c.id);
     if let Some(channel) = general {
-        session.control.send(ClientMsg::SendChat { channel, text: "👋 Hi! I'm Hoppbot, a test account. Mention \"bot\" and I'll answer.".into() });
+        session.control.send(ClientMsg::SendChat { channel, text: "👋 Hi! I'm Hoppbot, a test account. Mention \"bot\" and I'll answer.".into(), reply_to: None });
     }
     let my_session = session.roster.me;
     while let Some(msg) = session.events.recv().await {
         if let ServerMsg::Chat { message } = msg {
             if message.sender != my_session && message.text.to_lowercase().contains("bot") {
                 let reply = format!("🐰 Hopp hopp, {}! I heard you.", message.sender_name);
-                session.control.send(ClientMsg::SendChat { channel: message.channel, text: reply });
+                session.control.send(ClientMsg::SendChat { channel: message.channel, text: reply, reply_to: None });
             }
         }
     }

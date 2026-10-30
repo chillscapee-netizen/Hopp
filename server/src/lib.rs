@@ -466,7 +466,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 ClientMsg::SetLoopback { enabled } => {
                     st.clients.get_mut(&session_id).expect("checked above").loopback = enabled;
                 }
-                ClientMsg::SendChat { channel, text } => {
+                ClientMsg::SendChat { channel, text, reply_to } => {
                     let text = text.trim();
                     if !st.channel(channel).is_some_and(|c| c.kind == ChannelKind::Text) {
                         error("That text channel doesn't exist.");
@@ -477,6 +477,10 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.next_message_id;
                         st.next_message_id += 1;
+                        let reply = reply_to.and_then(|rid| {
+                            let m = st.history.get(&channel)?.iter().find(|m| m.id == rid)?;
+                            Some(Reply { id: m.id, sender_name: m.sender_name.clone(), author_key: m.author_key.clone(), text: reply_preview(&m.text) })
+                        });
                         let message = ChatMessage {
                             id,
                             channel,
@@ -485,6 +489,9 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             author_key: my_key,
                             text: text.to_string(),
                             sent_at: now_millis(),
+                            reply,
+                            edited_at: None,
+                            reactions: Vec::new(),
                         };
                         st.post_chat(message);
                     }
@@ -500,6 +507,60 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             st.broadcast(&ServerMsg::MessageDeleted { channel, id });
                         }
                     }
+                }
+                ClientMsg::EditMessage { channel, id, text } => {
+                    let text = text.trim().to_string();
+                    if text.is_empty() || text.chars().count() > MAX_CHAT_LEN {
+                        error(&format!("Messages must be 1–{MAX_CHAT_LEN} characters."));
+                    } else {
+                        let edited = st.history.get_mut(&channel).and_then(|h| h.iter_mut().find(|m| m.id == id)).map(|m| {
+                            if m.author_key != my_key {
+                                return Err("You can only edit your own messages.");
+                            }
+                            m.text = text.clone();
+                            m.edited_at = Some(now_millis());
+                            Ok(m.clone())
+                        });
+                        match edited {
+                            None => error("That message is too old to change."),
+                            Some(Err(why)) => error(why),
+                            Some(Ok(m)) => {
+                                st.storage.append_chat(&m);
+                                st.broadcast(&ServerMsg::MessageEdited { channel, id, text, edited_at: m.edited_at.unwrap_or_default() });
+                            }
+                        }
+                    }
+                }
+                ClientMsg::React { channel, id, emoji, on } => {
+                    if !valid_emoji(&emoji) {
+                        error("That isn't an emoji.");
+                    } else {
+                        let changed = st.history.get_mut(&channel).and_then(|h| h.iter_mut().find(|m| m.id == id)).map(|m| {
+                            if !toggle_reaction(&mut m.reactions, &emoji, &my_key, on) {
+                                return Err("That message has too many different reactions.");
+                            }
+                            Ok(m.clone())
+                        });
+                        match changed {
+                            None => error("That message is too old to react to."),
+                            Some(Err(why)) => error(why),
+                            Some(Ok(m)) => {
+                                st.storage.append_chat(&m);
+                                st.broadcast(&ServerMsg::Reactions { channel, id, reactions: m.reactions });
+                            }
+                        }
+                    }
+                }
+                ClientMsg::LoadOlder { channel, before } => {
+                    let mut messages = st.storage.load_before(channel, before, OLDER_PAGE + 1).unwrap_or_else(|| {
+                        let h = st.history.get(&channel).map(|h| h.iter().filter(|m| m.id < before).cloned().collect::<Vec<_>>()).unwrap_or_default();
+                        h[h.len().saturating_sub(OLDER_PAGE + 1)..].to_vec()
+                    });
+                    let done = messages.len() <= OLDER_PAGE;
+                    if !done {
+                        messages.remove(0);
+                    }
+                    let _ = tx.send(ServerMsg::OlderHistory { channel, messages, done });
                 }
                 ClientMsg::Typing { channel } => {
                     let me = st.clients.get_mut(&session_id).expect("checked above");

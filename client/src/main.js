@@ -102,6 +102,12 @@ const state = {
   view: null, // the text channel being read
   /** Read marks per server channel, by `${address}|${channel}`: { server, channel, read_id, last_id, mentions }. */
   reads: new Map(),
+  /** Channels whose very first message is loaded. */
+  olderDone: new Set(),
+  loadingOlder: false,
+  /** The message being answered ({ id, channel, name }) or edited ({ id, channel }). */
+  replyTo: null,
+  editing: null,
   speaking: new Set(),
   // channel id -> Map(session id -> time it expires)
   typing: new Map(),
@@ -1306,6 +1312,10 @@ async function connectTo(server, create, reconnecting) {
   state.typing.clear();
   state.appliedVolumes.clear();
   state.chats.clear();
+  state.olderDone.clear();
+  state.loadingOlder = false;
+  state.replyTo = null;
+  state.editing = null;
   state.latency = null;
   renderAll();
 
@@ -1447,8 +1457,8 @@ listen("chat", (e) => {
     renderTyping();
   }
   if (fresh && server) {
-    if (m.author_key !== state.account?.publicKey && mentionsMe(m.text)) {
-      notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channelName(m.channel), text: plainText(m.text) });
+    if (m.author_key !== state.account?.publicKey && mentionsMeIn(m)) {
+      notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channelName(m.channel), text: previewText(m.text) });
     }
     renderUnread();
   }
@@ -1457,10 +1467,45 @@ listen("chat", (e) => {
 listen("chat-history", (e) => {
   const { channel: ch, messages } = e.payload;
   state.chats.set(ch, messages);
+  // A short history is the whole channel.
+  if (messages.length < 50) state.olderDone.add(ch);
+  else state.olderDone.delete(ch);
   const server = currentServer();
   if (server) noteHistory(server, ch, messages);
   if (ch === state.view) renderMessages(false);
   renderUnread();
+});
+
+listen("message-edited", (e) => {
+  const { channel: ch, id, text, edited_at } = e.payload;
+  const m = state.chats.get(ch)?.find((x) => x.id === id);
+  if (!m) return;
+  Object.assign(m, { text, edited_at });
+  if (ch === state.view) renderMessages(true);
+});
+
+listen("reactions", (e) => {
+  const { channel: ch, id, reactions } = e.payload;
+  const m = state.chats.get(ch)?.find((x) => x.id === id);
+  if (!m) return;
+  m.reactions = reactions;
+  if (ch === state.view) renderMessages(true);
+});
+
+listen("older-history", (e) => {
+  const { channel: ch, messages, done } = e.payload;
+  state.loadingOlder = false;
+  if (done) state.olderDone.add(ch);
+  const list = state.chats.get(ch) ?? [];
+  const known = new Set(list.map((m) => m.id));
+  state.chats.set(ch, [...messages.filter((m) => !known.has(m.id)), ...list]);
+  if (ch !== state.view) return;
+  // Keep what you were looking at in place while older messages appear above it.
+  const scroller = $("scroller");
+  const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+  renderMessages(true);
+  scroller.scrollTop = scroller.scrollHeight - fromBottom;
+  if (state.jumpTo) jumpToMessage(state.jumpTo);
 });
 
 listen("message-deleted", (e) => {
@@ -1685,6 +1730,10 @@ function renderSidebar() {
 }
 
 function openTextChannel(id) {
+  if (state.view !== id) {
+    setReply(null);
+    state.editing = null;
+  }
   state.view = id;
   renderSidebar();
   renderChannelView();
@@ -1883,35 +1932,102 @@ async function followInvite(link) {
   }
 }
 
-/** Message text with mentions shown as names, web and invite links made clickable; the rest stays plain text. */
+/**
+ * Message text, formatted like other chat apps: **bold**, *italic*, ~~strike~~,
+ * `code`, ```code blocks```, > quotes and ||spoilers||; mentions show as names,
+ * links are clickable. Everything is built as DOM nodes, never as HTML.
+ */
 function messageText(text) {
   const out = el("div", "msg-text");
-  let last = 0;
-  for (const match of text.matchAll(MENTION)) {
-    appendLinks(out, text.slice(last, match.index));
-    const pill = el("span", "mention" + (match[1] === state.account?.publicKey ? " me" : ""), `@${nameForKey(match[1])}`);
-    out.append(pill);
-    last = match.index + match[0].length;
-  }
-  appendLinks(out, text.slice(last));
+  const parts = text.split(/```(?:[a-z0-9+#-]*\n)?([\s\S]*?)```/i);
+  parts.forEach((part, i) => {
+    if (i % 2) {
+      const pre = el("pre", "code-block");
+      pre.append(el("code", "", part.replace(/\n$/, "")));
+      out.append(pre);
+      return;
+    }
+    // Text next to a code block loses the line break that the block itself provides.
+    if (i > 0) part = part.replace(/^\n/, "");
+    if (i < parts.length - 1) part = part.replace(/\n$/, "");
+    renderBlocks(part, out);
+  });
   return out;
 }
 
-function appendLinks(out, text) {
-  let last = 0;
-  for (const match of text.matchAll(LINK_PATTERN)) {
-    out.append(text.slice(last, match.index));
-    const a = el("a", "msg-link", match[0]);
-    a.href = match[0];
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      if (/^(?:hopp|strom):/i.test(match[0])) followInvite(match[0]);
-      else openUrl(match[0]);
-    });
-    out.append(a);
-    last = match.index + match[0].length;
+/** Lines starting with "> " become a quote; the rest is inline text. */
+function renderBlocks(text, out) {
+  const lines = text.split("\n");
+  let plain = [];
+  const flush = () => {
+    if (plain.length) renderInline(plain.join("\n"), out);
+    plain = [];
+  };
+  for (let i = 0; i < lines.length; ) {
+    if (/^>( |$)/.test(lines[i])) {
+      flush();
+      const quote = [];
+      while (i < lines.length && /^>( |$)/.test(lines[i])) quote.push(lines[i++].replace(/^> ?/, ""));
+      const q = el("blockquote", "msg-quote");
+      renderInline(quote.join("\n"), q);
+      out.append(q);
+    } else {
+      plain.push(lines[i++]);
+    }
   }
-  out.append(text.slice(last));
+  flush();
+}
+
+var LINK_ONE = new RegExp(LINK_PATTERN.source, "i");
+var INLINE_RULES = [
+  ["code", /`([^`\n]+)`/],
+  ["mention", /<@([0-9a-f]{64})>/],
+  ["link", LINK_ONE],
+  ["spoiler", /\|\|([\s\S]+?)\|\|/],
+  ["bold", /\*\*([\s\S]+?)\*\*/],
+  ["strike", /~~([\s\S]+?)~~/],
+  ["italic", /\*([^*\s](?:[^*]*[^*\s])?)\*|(?<![\p{L}\p{N}])_([^_\s](?:[^_]*[^_\s])?)_(?![\p{L}\p{N}])/u],
+];
+
+function renderInline(text, out) {
+  while (text) {
+    let best = null;
+    for (const [kind, re] of INLINE_RULES) {
+      const m = re.exec(text);
+      if (m && (!best || m.index < best.m.index)) best = { kind, m };
+    }
+    if (!best) {
+      out.append(text);
+      return;
+    }
+    const { kind, m } = best;
+    out.append(text.slice(0, m.index));
+    const inner = m[1] ?? m[2] ?? "";
+    if (kind === "code") out.append(el("code", "inline-code", inner));
+    else if (kind === "mention") out.append(el("span", "mention" + (inner === state.account?.publicKey ? " me" : ""), `@${nameForKey(inner)}`));
+    else if (kind === "link") out.append(linkNode(m[0]));
+    else {
+      const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : "span", kind === "spoiler" ? "spoiler" : "");
+      if (kind === "spoiler") {
+        node.title = "Spoiler: click to show";
+        node.addEventListener("click", () => node.classList.add("shown"));
+      }
+      renderInline(inner, node);
+      out.append(node);
+    }
+    text = text.slice(m.index + m[0].length);
+  }
+}
+
+function linkNode(href) {
+  const a = el("a", "msg-link", href);
+  a.href = href;
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (/^(?:hopp|strom):/i.test(href)) followInvite(href);
+    else openUrl(href);
+  });
+  return a;
 }
 
 function canDelete(m) {
@@ -1965,13 +2081,13 @@ function renderMessages(keepScrollUnlessAtBottom) {
     welcome.append(actions);
   }
 
-  const items = [welcome];
+  const items = [state.olderDone.has(state.view) ? welcome : olderLoader()];
   let prev = null;
   for (const m of msgs) {
     const day = dayLabel(m.sent_at);
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
-    const grouped = !newDay && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const grouped = !newDay && !m.reply && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
     if (newSince !== null && m.id > newSince && m.author_key !== state.account?.publicKey) {
       const line = el("li", "new-divider");
       line.append(el("span", "", "New"));
@@ -1979,7 +2095,10 @@ function renderMessages(keepScrollUnlessAtBottom) {
       newSince = null;
     }
     const li = el("li", "msg " + (grouped ? "cont" : "first"));
-    if (mentionsMe(m.text) && m.author_key !== state.account?.publicKey) li.classList.add("mentions-me");
+    li.dataset.id = m.id;
+    if (mentionsMeIn(m) && m.author_key !== state.account?.publicKey) li.classList.add("mentions-me");
+    if (state.replyTo?.id === m.id) li.classList.add("replying");
+    if (m.reply) li.append(replyLine(m.reply));
     if (grouped) {
       li.append(el("span", "msg-gutter", clock(m.sent_at)));
     } else {
@@ -1989,20 +2108,22 @@ function renderMessages(keepScrollUnlessAtBottom) {
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
-    li.append(messageText(m.text));
+    if (state.editing?.id === m.id) li.append(messageEditor(m));
+    else {
+      const body = messageText(m.text);
+      if (m.edited_at) {
+        const tag = el("span", "msg-edited", "(edited)");
+        tag.dataset.tip = `Edited ${dayLabel(m.edited_at).toLowerCase()} at ${clock(m.edited_at)}`;
+        body.append(tag);
+      }
+      li.append(body);
+    }
     for (const link of new Set([...m.text.matchAll(INVITE_LINK)].map((x) => x[0]).slice(0, 3))) {
       const code = shortInviteCode(link);
       if (code) li.append(inviteEmbed(code, link));
     }
-    if (canDelete(m)) {
-      const actions = el("div", "msg-actions");
-      const del = el("button", "icon-btn sm danger-hover");
-      del.dataset.tip = "Delete message";
-      del.append(icon("trash", "sm"));
-      del.addEventListener("click", (e) => deleteMessage(m, e.shiftKey));
-      actions.append(del);
-      li.append(actions);
-    }
+    if (m.reactions?.length) li.append(reactionRow(m));
+    li.append(messageActions(m));
     items.push(li);
     prev = m;
   }
@@ -2572,17 +2693,33 @@ const chatInput = $("chat-input");
 let lastTypingSent = 0;
 chatInput.addEventListener("keydown", (e) => {
   if (mentionKeydown(e)) return;
+  if (e.key === "Escape" && state.replyTo) {
+    e.preventDefault();
+    setReply(null);
+    return;
+  }
+  // Up in an empty box edits your last message, like Discord.
+  if (e.key === "ArrowUp" && !chatInput.value && state.view !== null) {
+    const mine = (state.chats.get(state.view) ?? []).findLast((m) => m.author_key === state.account?.publicKey);
+    if (mine) {
+      e.preventDefault();
+      startEdit(mine);
+    }
+    return;
+  }
   // Enter while an input method is composing a character confirms the character, not the message.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
     const text = withMentions(chatInput.value.trim());
     if (!text || state.view === null) return;
+    const replyTo = state.replyTo?.channel === state.view ? state.replyTo.id : null;
+    setReply(null);
     chatInput.value = "";
     lastTypingSent = 0;
     composeMentions.clear();
     state.newSince = null;
     autosize();
-    invoke("send_chat", { channel: state.view, text }).catch((err) => {
+    invoke("send_chat", { channel: state.view, text, replyTo }).catch((err) => {
       // Give the text back rather than lose it.
       if (!chatInput.value) {
         chatInput.value = plainText(text);
@@ -4382,9 +4519,25 @@ function mentionsMe(text) {
   return !!state.account && text.includes(`<@${state.account.publicKey}>`);
 }
 
+/** A message that mentions you or answers one of yours. */
+function mentionsMeIn(m) {
+  return mentionsMe(m.text) || (!!m.reply && m.reply.author_key === state.account?.publicKey);
+}
+
 /** Message text as a person would read it: mentions become @names. */
 function plainText(text) {
   return text.replace(MENTION, (_, key) => `@${nameForKey(key)}`);
+}
+
+/** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
+function previewText(text) {
+  return plainText(text)
+    .replace(/\|\|[\s\S]+?\|\|/g, "(spoiler)")
+    .replace(/```[a-z0-9+#-]*\n?/gi, "")
+    .replace(/^> ?/gm, "")
+    .replace(/\*\*|~~|`|\*|\b_|_\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** The name to show for a Hopp ID: someone here, a friend, someone who wrote, or a fetched profile. */
@@ -4430,7 +4583,7 @@ function noteMessage(address, m) {
   if (m.author_key === state.account?.publicKey) {
     cur.read_id = m.id;
     cur.mentions = 0;
-  } else if (mentionsMe(m.text) && m.id > cur.read_id) {
+  } else if (mentionsMeIn(m) && m.id > cur.read_id) {
     cur.mentions += 1;
   }
   return true;
@@ -4448,7 +4601,7 @@ function noteHistory(server, channel, messages) {
   cur.last_id = Math.max(cur.last_id, last);
   // Self-hosted servers don't tell the account; count mentions here.
   if (!isCloud(server)) {
-    cur.mentions = messages.filter((m) => m.id > cur.read_id && m.author_key !== state.account?.publicKey && mentionsMe(m.text)).length;
+    cur.mentions = messages.filter((m) => m.id > cur.read_id && m.author_key !== state.account?.publicKey && mentionsMeIn(m)).length;
   }
   if (cur.read_id >= cur.last_id) cur.mentions = 0;
 }
@@ -4708,3 +4861,240 @@ function withMentions(text) {
 setInterval(() => {
   if (online() && document.hasFocus()) renderMembers();
 }, PROFILE_FRESH_MS);
+
+// ---------- replies, edits, reactions and older messages ----------
+
+function messageActions(m) {
+  const actions = el("div", "msg-actions");
+  const button = (iconName, tip, onClick, extra = "") => {
+    const b = el("button", "icon-btn sm " + extra);
+    b.dataset.tip = tip;
+    b.append(icon(iconName, "sm"));
+    b.addEventListener("click", onClick);
+    actions.append(b);
+    return b;
+  };
+  button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
+  button("reply", "Reply", () => setReply(m));
+  if (m.author_key === state.account?.publicKey) button("edit", "Edit", () => startEdit(m));
+  if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
+  return actions;
+}
+
+/** "↱ Name: the start of the message", above a reply; click to see the original. */
+function replyLine(r) {
+  const line = el("button", "msg-reply");
+  line.type = "button";
+  line.append(avatar(r.sender_name, "s16", undefined, pictureFor(r.author_key)), el("span", "msg-reply-name", r.sender_name));
+  const preview = el("span", "msg-reply-text ellipsis", previewText(r.text));
+  line.append(preview);
+  line.addEventListener("click", () => jumpToMessage(r.id));
+  return line;
+}
+
+/** Scrolls to a message, loading older ones until it's there. */
+function jumpToMessage(id) {
+  const node = document.querySelector(`#messages .msg[data-id="${id}"]`);
+  if (node) {
+    state.jumpTo = null;
+    node.scrollIntoView({ block: "center", behavior: "smooth" });
+    node.classList.remove("flash");
+    void node.offsetWidth;
+    node.classList.add("flash");
+    return;
+  }
+  if (state.olderDone.has(state.view)) {
+    state.jumpTo = null;
+    toast("That message has been deleted.");
+    return;
+  }
+  state.jumpTo = id;
+  loadOlder();
+}
+
+function setReply(m) {
+  state.replyTo = m ? { id: m.id, channel: m.channel, name: m.sender_name } : null;
+  const bar = $("reply-bar");
+  bar.hidden = !m;
+  if (m) {
+    const text = $("reply-text");
+    text.replaceChildren("Replying to ", el("strong", "", m.sender_name));
+    chatInput.focus();
+  }
+  document.querySelectorAll("#messages .msg.replying").forEach((n) => n.classList.remove("replying"));
+  if (m) document.querySelector(`#messages .msg[data-id="${m.id}"]`)?.classList.add("replying");
+}
+$("reply-cancel").addEventListener("click", () => setReply(null));
+
+function startEdit(m) {
+  state.editing = { id: m.id, channel: m.channel };
+  renderMessages(true);
+  const box = document.querySelector("#messages .msg-editor textarea");
+  if (box) {
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.closest(".msg").scrollIntoView({ block: "nearest" });
+  }
+}
+
+function stopEdit() {
+  state.editing = null;
+  renderMessages(true);
+  chatInput.focus();
+}
+
+/** The message as an editable box: Enter saves, Escape cancels. */
+function messageEditor(m) {
+  const wrap = el("div", "msg-editor");
+  // Mentions are edited as @names and turned back into mentions on saving.
+  const labels = new Map();
+  for (const [, key] of m.text.matchAll(MENTION)) labels.set(`@${nameForKey(key)}`, key);
+  const box = el("textarea");
+  box.value = plainText(m.text);
+  box.rows = 1;
+  box.maxLength = 2000;
+  const fit = () => {
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight}px`;
+  };
+  requestAnimationFrame(fit);
+  box.addEventListener("input", fit);
+  const save = () => {
+    let text = box.value.trim();
+    for (const [label, key] of [...labels].sort((a, b) => b[0].length - a[0].length)) text = text.split(label).join(`<@${key}>`);
+    if (!text) return deleteMessage(m).then(stopEdit);
+    if (text !== m.text) invoke("edit_message", { channel: m.channel, id: m.id, text }).catch((err) => toast(friendlyError(err), true));
+    stopEdit();
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      stopEdit();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      save();
+    }
+  });
+  const hint = el("div", "msg-editor-hint");
+  const cancel = el("button", "link", "cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", stopEdit);
+  const ok = el("button", "link", "save");
+  ok.type = "button";
+  ok.addEventListener("click", save);
+  hint.append("Escape to ", cancel, " · Enter to ", ok);
+  wrap.append(box, hint);
+  return wrap;
+}
+
+function reactionRow(m) {
+  const row = el("div", "reactions");
+  const me = state.account?.publicKey;
+  for (const r of m.reactions) {
+    const mine = r.keys.includes(me);
+    const chip = el("button", "reaction" + (mine ? " mine" : ""));
+    chip.type = "button";
+    chip.append(el("span", "reaction-emoji", r.emoji), el("span", "reaction-count", String(r.keys.length)));
+    const names = r.keys.slice(0, 6).map(nameForKey);
+    chip.dataset.tip = names.join(", ") + (r.keys.length > 6 ? ` and ${r.keys.length - 6} more` : "") + ` reacted with ${r.emoji}`;
+    chip.addEventListener("click", () => react(m, r.emoji, !mine));
+    row.append(chip);
+  }
+  const add = el("button", "reaction add");
+  add.type = "button";
+  add.dataset.tip = "Add reaction";
+  add.append(icon("smile", "sm"));
+  add.addEventListener("click", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
+  row.append(add);
+  return row;
+}
+
+function react(m, emoji, on) {
+  rememberEmoji(emoji);
+  invoke("react", { channel: m.channel, id: m.id, emoji, on }).catch((err) => toast(friendlyError(err), true));
+}
+
+// ---------- emoji picker ----------
+
+var EMOJI = [
+  "👍", "👎", "😂", "🤣", "❤️", "🔥", "🎉", "😮", "😢", "😭", "😡", "🙏", "👀", "💯", "✅", "❌",
+  "😄", "😅", "🙂", "😉", "😎", "🤔", "😬", "🙃", "😍", "🥳", "🤯", "😴", "💀", "🤡", "🫡", "🥲",
+  "👏", "🙌", "🤝", "👋", "💪", "🤞", "✌️", "👌", "🎮", "🏆", "⭐", "✨", "⚡", "🍕", "☕", "🐰",
+];
+
+function recentEmoji() {
+  try {
+    return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string").slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+function rememberEmoji(emoji) {
+  const list = [emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, 8);
+  try {
+    localStorage.setItem("recentEmoji", JSON.stringify(list));
+  } catch {}
+}
+
+function openEmojiPicker(anchor, onPick) {
+  const pop = $("emoji-picker");
+  const section = (title, list) => {
+    const grid = el("div", "emoji-grid");
+    for (const emoji of list) {
+      const b = el("button", "emoji-option", emoji);
+      b.type = "button";
+      b.addEventListener("click", () => {
+        pop.hidden = true;
+        rememberEmoji(emoji);
+        onPick(emoji);
+      });
+      grid.append(b);
+    }
+    return [el("div", "emoji-head", title), grid];
+  };
+  const recent = recentEmoji();
+  pop.replaceChildren(...(recent.length ? section("Recently used", recent) : []), ...section("Emoji", EMOJI));
+  const r = anchor.getBoundingClientRect();
+  placePopover(pop, r.right - 320, r.top - 8 - pop.offsetHeight);
+  if (pop.getBoundingClientRect().top < 8) placePopover(pop, r.right - 320, r.bottom + 8);
+}
+
+$("emoji-btn").addEventListener("click", (e) => {
+  if (!$("emoji-picker").hidden) return closePopovers();
+  openEmojiPicker(e.currentTarget, (emoji) => {
+    const at = chatInput.selectionStart ?? chatInput.value.length;
+    chatInput.value = chatInput.value.slice(0, at) + emoji + chatInput.value.slice(chatInput.selectionEnd ?? at);
+    chatInput.focus();
+    chatInput.setSelectionRange(at + emoji.length, at + emoji.length);
+    autosize();
+  });
+});
+$("emoji-btn").addEventListener("mousedown", (e) => e.preventDefault());
+
+// ---------- older messages ----------
+
+function olderLoader() {
+  return el("li", "older-loader", "Loading older messages…");
+}
+
+function loadOlder() {
+  if (!online() || state.view === null || state.loadingOlder || state.olderDone.has(state.view)) return;
+  const first = state.chats.get(state.view)?.[0];
+  if (!first) return state.olderDone.add(state.view);
+  state.loadingOlder = true;
+  invoke("load_older", { channel: state.view, before: first.id }).catch(() => (state.loadingOlder = false));
+  // A server from before older messages existed doesn't answer: treat the channel as complete.
+  const ch = state.view;
+  setTimeout(() => {
+    if (!state.loadingOlder) return;
+    state.loadingOlder = false;
+    state.olderDone.add(ch);
+    if (ch === state.view) renderMessages(true);
+  }, 6000);
+}
+
+$("scroller").addEventListener("scroll", () => {
+  if ($("scroller").scrollTop < 400) loadOlder();
+});

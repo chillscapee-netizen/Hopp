@@ -2145,3 +2145,175 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .mention-option.active { background: var(--active); color: var(--text); }
 .mention-name { font-weight: 600; }
 .mention-user { margin-left: auto; color: var(--faint); font-size: 13px; }
+
+/* ---------- composer: reply bar and emoji ---------- */
+.composer-box { flex-direction: column; align-items: stretch; justify-content: center; overflow: hidden; }
+.composer-row { display: flex; align-items: center; width: 100%; }
+.composer-row textarea { flex: 1; }
+.composer-icon {
+  flex: none;
+  display: grid; place-items: center;
+  width: 40px; height: 42px;
+  margin-right: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.composer-icon .i { width: 22px; height: 22px; }
+.composer-icon:hover { color: var(--text); }
+.reply-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 16px;
+  background: var(--side);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.reply-bar strong { color: var(--text-2); }
+.reply-bar > span { flex: 1; }
+.reply-cancel {
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  padding: 0;
+  background: var(--elev-2);
+  border: none;
+  border-radius: 50%;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.reply-cancel .i { width: 13px; height: 13px; stroke-width: 2.5; }
+.reply-cancel:hover { background: var(--elev-3); color: var(--text); }
+
+/* ---------- messages: actions, replies, edits, reactions ---------- */
+.msg-actions { gap: 0; }
+.avatar.s16 { width: 16px; height: 16px; font-size: 7px; }
+.msg-reply {
+  position: relative;
+  display: flex; align-items: center; gap: 6px;
+  max-width: 100%;
+  margin: 0 0 2px -2px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+/* The little hook from the reply to the avatar, like Discord. */
+.msg-reply::before {
+  content: "";
+  position: absolute;
+  left: -36px; top: 50%;
+  width: 30px; height: 12px;
+  border-left: 2px solid var(--border-active);
+  border-top: 2px solid var(--border-active);
+  border-top-left-radius: 6px;
+}
+.msg-reply-name { flex: none; color: var(--text-2); font-weight: 600; }
+.msg-reply-text { min-width: 0; }
+.msg-reply:hover .msg-reply-text { color: var(--text-2); }
+.msg.first:has(> .msg-reply) > .avatar { top: 28px; }
+.msg-edited { margin-left: 4px; color: var(--faint); font-size: 11px; white-space: nowrap; cursor: default; }
+.msg.replying { background: color-mix(in srgb, var(--link) 7%, transparent); }
+.msg.replying::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--link); }
+.msg.flash { animation: msg-flash 1.6s ease-out; }
+@keyframes msg-flash { 0%, 30% { background: color-mix(in srgb, var(--link) 16%, transparent); } }
+
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.reaction {
+  display: flex; align-items: center; gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--side);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reaction:hover { border-color: var(--border-active); }
+.reaction.mine { background: color-mix(in srgb, var(--link) 14%, var(--side)); border-color: color-mix(in srgb, var(--link) 55%, transparent); color: #d4e2fa; }
+.reaction-emoji { font-size: 15px; line-height: 1; }
+.reaction.add { padding: 0 6px; color: var(--faint); opacity: 0; transition: opacity 100ms; }
+.reaction.add .i { width: 16px; height: 16px; }
+.msg:hover .reaction.add { opacity: 1; }
+.reaction.add:hover { color: var(--text); }
+
+.msg-editor textarea {
+  width: 100%;
+  margin-top: 2px;
+  padding: 10px 12px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.375;
+  resize: none;
+  overflow: hidden;
+}
+.msg-editor-hint { margin: 4px 0 2px; color: var(--faint); font-size: 12px; }
+.msg-editor-hint .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
+.msg-editor-hint .link:hover { text-decoration: underline; }
+
+/* ---------- formatting ---------- */
+.msg-text strong { color: var(--text); font-weight: 700; }
+.inline-code {
+  padding: 1px 4px;
+  background: var(--deep);
+  border-radius: 4px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.86em;
+}
+.code-block {
+  margin: 4px 0;
+  padding: 8px 10px;
+  max-width: 90%;
+  background: var(--deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.code-block code { font-family: "Cascadia Code", Consolas, monospace; font-size: 13.5px; line-height: 1.45; color: var(--text-2); }
+.msg-quote { margin: 2px 0; padding: 0 0 0 12px; border-left: 4px solid var(--border-active); border-radius: 2px; }
+.spoiler { background: var(--elev-3); color: transparent; border-radius: 4px; cursor: pointer; transition: color 120ms; }
+.spoiler * { visibility: hidden; }
+.spoiler:hover { background: var(--border-focus); }
+.spoiler.shown { background: var(--elev-2); color: inherit; cursor: auto; }
+.spoiler.shown * { visibility: visible; }
+
+.older-loader { padding: 16px; color: var(--faint); font-size: 13px; text-align: center; list-style: none; }
+
+/* ---------- emoji picker ---------- */
+.emoji-picker {
+  position: fixed;
+  z-index: 60;
+  width: 320px;
+  padding: 8px;
+  background: var(--side-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+.emoji-head { padding: 4px 4px 6px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; margin-bottom: 4px; }
+.emoji-option {
+  display: grid; place-items: center;
+  height: 36px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: 22px;
+  cursor: pointer;
+}
+.emoji-option:hover { background: var(--active); }

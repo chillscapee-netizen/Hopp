@@ -41,6 +41,9 @@
     <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2 2l20 20"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.7 17.7 0 0 1-2.9 3.9"/><path d="M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
     <symbol id="i-crown" viewBox="0 0 24 24"><path d="M11.6 3.3a.5.5 0 0 1 .8 0l3 5.6a1 1 0 0 0 1.5.3l4.3-3.7a.5.5 0 0 1 .8.5l-2.8 10.3a1 1 0 0 1-1 .7H5.8a1 1 0 0 1-1-.7L2 6a.5.5 0 0 1 .8-.5l4.3 3.7a1 1 0 0 0 1.5-.3z"/><path d="M5 21h14"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></symbol>
     <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
     <symbol id="i-win-min" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
@@ -231,7 +234,14 @@
             </div>
             <form id="composer" class="composer">
               <div class="composer-box">
-                <textarea id="chat-input" rows="1" maxlength="2000"></textarea>
+                <div id="reply-bar" class="reply-bar" hidden>
+                  <span id="reply-text" class="ellipsis"></span>
+                  <button type="button" id="reply-cancel" class="reply-cancel" data-tip="Cancel reply" aria-label="Cancel reply"><svg class="i"><use href="#i-x"/></svg></button>
+                </div>
+                <div class="composer-row">
+                  <textarea id="chat-input" rows="1" maxlength="2000"></textarea>
+                  <button type="button" id="emoji-btn" class="composer-icon" data-tip="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
+                </div>
               </div>
               <div id="typing" class="typing"></div>
             </form>
@@ -900,6 +910,7 @@
   </div>
 
   <div id="server-menu" class="popover menu" hidden></div>
+  <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="tooltip" class="tooltip" hidden></div>
   <div id="toast" class="toast" hidden></div>
 

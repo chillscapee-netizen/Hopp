@@ -428,6 +428,15 @@ async fn connect(
                 ServerMsg::ChatHistory { channel, messages } => {
                     let _ = ui.emit("chat-history", serde_json::json!({ "channel": channel, "messages": messages }));
                 }
+                ServerMsg::MessageEdited { channel, id, text, edited_at } => {
+                    let _ = ui.emit("message-edited", serde_json::json!({ "channel": channel, "id": id, "text": text, "edited_at": edited_at }));
+                }
+                ServerMsg::Reactions { channel, id, reactions } => {
+                    let _ = ui.emit("reactions", serde_json::json!({ "channel": channel, "id": id, "reactions": reactions }));
+                }
+                ServerMsg::OlderHistory { channel, messages, done } => {
+                    let _ = ui.emit("older-history", serde_json::json!({ "channel": channel, "messages": messages, "done": done }));
+                }
                 ServerMsg::MessageDeleted { channel, id } => {
                     let _ = ui.emit("message-deleted", serde_json::json!({ "channel": channel, "id": id }));
                 }
@@ -639,8 +648,23 @@ fn forget_departed_peers(ui: &AppHandle, generation: u64, roster: &Roster) {
 }
 
 #[tauri::command]
-fn send_chat(state: State<'_, AppState>, channel: ChannelId, text: String) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::SendChat { channel, text }))
+fn send_chat(state: State<'_, AppState>, channel: ChannelId, text: String, reply_to: Option<u64>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SendChat { channel, text, reply_to }))
+}
+
+#[tauri::command]
+fn edit_message(state: State<'_, AppState>, channel: ChannelId, id: u64, text: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::EditMessage { channel, id, text }))
+}
+
+#[tauri::command]
+fn react(state: State<'_, AppState>, channel: ChannelId, id: u64, emoji: String, on: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::React { channel, id, emoji, on }))
+}
+
+#[tauri::command]
+fn load_older(state: State<'_, AppState>, channel: ChannelId, before: u64) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::LoadOlder { channel, before }))
 }
 
 #[tauri::command]
@@ -1061,6 +1085,9 @@ fn main() {
             join_voice,
             leave_voice,
             send_chat,
+            edit_message,
+            react,
+            load_older,
             create_channel,
             delete_channel,
             set_loopback,

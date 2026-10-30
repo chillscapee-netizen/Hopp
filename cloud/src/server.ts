@@ -25,6 +25,33 @@ const INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 /** Voice endpoints: "a.b.c.d:port", a few local addresses at most. */
 const ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
 const MAX_LOCAL_ENDPOINTS = 4;
+const MAX_REACTIONS = 20;
+const REPLY_PREVIEW_LEN = 120;
+const OLDER_PAGE = 50;
+
+/** An emoji (or short emoji sequence): no spaces, no plain letters or digits. */
+function validEmoji(emoji: string): boolean {
+  return emoji.length > 0 && new TextEncoder().encode(emoji).length <= 32 && [...emoji].every((c) => c.codePointAt(0)! > 127 && !/\s/u.test(c));
+}
+
+function replyPreview(text: string): string {
+  const chars = [...text];
+  return chars.length > REPLY_PREVIEW_LEN ? chars.slice(0, REPLY_PREVIEW_LEN).join("") + "…" : text;
+}
+
+/** A stored row as the message clients see. */
+function rowToMessage(r: Record<string, any>): ChatMessage {
+  const m: ChatMessage = {
+    id: Number(r.id), channel: Number(r.channel), sender: Number(r.sender), sender_name: String(r.sender_name),
+    author_key: String(r.author_key), text: String(r.text), sent_at: Number(r.sent_at),
+  };
+  if (r.reply_id !== null && r.reply_id !== undefined) {
+    m.reply = { id: Number(r.reply_id), sender_name: String(r.reply_name), author_key: String(r.reply_key), text: String(r.reply_text) };
+  }
+  if (r.edited_at !== null && r.edited_at !== undefined) m.edited_at = Number(r.edited_at);
+  if (r.reactions) m.reactions = JSON.parse(String(r.reactions));
+  return m;
+}
 /** A mention in message text: <@hex key of their Hopp ID>. */
 const MENTION = /<@([0-9a-f]{64})>/g;
 
@@ -39,6 +66,8 @@ interface User {
   owner: boolean;
   public_key: string;
 }
+interface Reply { id: number; sender_name: string; author_key: string; text: string }
+interface Reaction { emoji: string; keys: string[] }
 interface ChatMessage {
   id: number;
   channel: number;
@@ -47,6 +76,9 @@ interface ChatMessage {
   author_key: string;
   text: string;
   sent_at: number;
+  reply?: Reply;
+  edited_at?: number;
+  reactions?: Reaction[];
 }
 interface Invite { code: string; created_at: number; expires_at: number | null; max_uses: number | null; uses: number }
 interface Ban { public_key: string; name: string; banned_at: number }
@@ -127,6 +159,11 @@ export class StromServer extends DurableObject<Env> {
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
     `);
+    // Replies, edits and reactions came later: add their columns to older servers.
+    const columns = new Set(this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => String(c.name)));
+    for (const [name, type] of [["reply_id", "INTEGER"], ["reply_name", "TEXT"], ["reply_key", "TEXT"], ["reply_text", "TEXT"], ["edited_at", "INTEGER"], ["reactions", "TEXT"]]) {
+      if (!columns.has(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
+    }
     // Keep-alive pings are answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
@@ -178,11 +215,17 @@ export class StromServer extends DurableObject<Env> {
     return this.sql.exec("SELECT key AS public_key, name, banned_at FROM bans ORDER BY banned_at").toArray() as unknown as Ban[];
   }
 
-  private history(channel: number): ChatMessage[] {
-    const rows = this.sql
-      .exec("SELECT * FROM messages WHERE channel = ? ORDER BY id DESC LIMIT ?", channel, CHAT_HISTORY)
-      .toArray() as unknown as ChatMessage[];
-    return rows.reverse();
+  private history(channel: number, before = Number.MAX_SAFE_INTEGER, limit = CHAT_HISTORY): ChatMessage[] {
+    return this.sql
+      .exec("SELECT * FROM messages WHERE channel = ? AND id < ? ORDER BY id DESC LIMIT ?", channel, before, limit)
+      .toArray()
+      .map(rowToMessage)
+      .reverse();
+  }
+
+  private message(channel: number, id: number): ChatMessage | null {
+    const row = this.sql.exec("SELECT * FROM messages WHERE channel = ? AND id = ?", channel, id).toArray()[0];
+    return row ? rowToMessage(row) : null;
   }
 
   // ---------- socket helpers ----------
@@ -224,6 +267,7 @@ export class StromServer extends DurableObject<Env> {
       names.set(String(row.key), String(row.name));
     }
     const mentioned = new Set([...m.text.matchAll(MENTION)].map((x) => x[1]));
+    if (m.reply) mentioned.add(m.reply.author_key);
     const preview = m.text.replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`).slice(0, 200);
     const activity = {
       server: `cloud:${serverId}`,
@@ -475,10 +519,16 @@ export class StromServer extends DurableObject<Env> {
         }
         s.tokens -= 1;
         ws.serializeAttachment(s);
+        const answered = msg.reply_to != null ? this.message(ch.id, Number(msg.reply_to)) : null;
+        const reply: Reply | undefined = answered
+          ? { id: answered.id, sender_name: answered.sender_name, author_key: answered.author_key, text: replyPreview(answered.text) }
+          : undefined;
         const row = this.sql
           .exec(
-            "INSERT INTO messages (channel, sender, sender_name, author_key, text, sent_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            `INSERT INTO messages (channel, sender, sender_name, author_key, text, sent_at, reply_id, reply_name, reply_key, reply_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
             ch.id, user.session_id, user.name, s.key!, text, now,
+            reply?.id ?? null, reply?.sender_name ?? null, reply?.author_key ?? null, reply?.text ?? null,
           )
           .one();
         this.sql.exec(
@@ -489,8 +539,49 @@ export class StromServer extends DurableObject<Env> {
           id: Number(row.id), channel: ch.id, sender: user.session_id, sender_name: user.name,
           author_key: s.key!, text, sent_at: now,
         };
+        if (reply) message.reply = reply;
         this.broadcast({ type: "chat", message });
         return this.tellAccounts(message, ch.name);
+      }
+      case "edit_message": {
+        const channel = Number(msg.channel);
+        const id = Number(msg.id);
+        const text = String(msg.text ?? "").trim();
+        if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
+        const m = this.message(channel, id);
+        if (!m) return this.error(ws, "That message no longer exists.");
+        if (m.author_key !== s.key) return this.error(ws, "You can only edit your own messages.");
+        const at = Date.now();
+        this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, id);
+        return this.broadcast({ type: "message_edited", channel, id, text, edited_at: at });
+      }
+      case "react": {
+        const channel = Number(msg.channel);
+        const id = Number(msg.id);
+        const emoji = String(msg.emoji ?? "");
+        if (!validEmoji(emoji)) return this.error(ws, "That isn't an emoji.");
+        const m = this.message(channel, id);
+        if (!m) return this.error(ws, "That message no longer exists.");
+        const reactions = m.reactions ?? [];
+        const on = !!msg.on;
+        const i = reactions.findIndex((r) => r.emoji === emoji);
+        if (i >= 0) {
+          reactions[i].keys = reactions[i].keys.filter((k) => k !== s.key);
+          if (on) reactions[i].keys.push(s.key!);
+          else if (reactions[i].keys.length === 0) reactions.splice(i, 1);
+        } else if (on) {
+          if (reactions.length >= MAX_REACTIONS) return this.error(ws, "That message has too many different reactions.");
+          reactions.push({ emoji, keys: [s.key!] });
+        }
+        this.sql.exec("UPDATE messages SET reactions = ? WHERE id = ?", reactions.length ? JSON.stringify(reactions) : null, id);
+        return this.broadcast({ type: "reactions", channel, id, reactions });
+      }
+      case "load_older": {
+        const channel = Number(msg.channel);
+        const messages = this.history(channel, Number(msg.before), OLDER_PAGE + 1);
+        const done = messages.length <= OLDER_PAGE;
+        if (!done) messages.shift();
+        return this.send(ws, { type: "older_history", channel, messages, done });
       }
       case "delete_message": {
         const channel = Number(msg.channel);

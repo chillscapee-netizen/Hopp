@@ -150,7 +150,7 @@ impl FakeClient {
     }
 
     async fn chat(&mut self, text: &str) -> ChatMessage {
-        self.send(ClientMsg::SendChat { channel: GENERAL, text: text.into() }).await;
+        self.send(ClientMsg::SendChat { channel: GENERAL, text: text.into(), reply_to: None }).await;
         let text = text.to_string();
         match self.wait_for(|m| matches!(m, ServerMsg::Chat { message } if message.text == text)).await {
             ServerMsg::Chat { message } => message,
@@ -388,7 +388,7 @@ async fn chat_reaches_everyone_and_is_replayed_at_login() {
     let mut bob = FakeClient::connect(&server, "bob").await;
     bob.join_voice(GAMING).await;
 
-    alice.send(ClientMsg::SendChat { channel: GENERAL, text: "  hi all  ".into() }).await;
+    alice.send(ClientMsg::SendChat { channel: GENERAL, text: "  hi all  ".into(), reply_to: None }).await;
     let ServerMsg::Chat { message } = bob.wait_for(|m| matches!(m, ServerMsg::Chat { .. })).await else { unreachable!() };
     assert_eq!((message.channel, message.text.as_str(), message.sender_name.as_str()), (GENERAL, "hi all", "alice"));
     assert!(message.id > 0);
@@ -407,9 +407,9 @@ async fn chat_reaches_everyone_and_is_replayed_at_login() {
 async fn rejects_bad_chat() {
     let server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
-    alice.send(ClientMsg::SendChat { channel: GENERAL, text: "x".repeat(MAX_CHAT_LEN + 1) }).await;
+    alice.send(ClientMsg::SendChat { channel: GENERAL, text: "x".repeat(MAX_CHAT_LEN + 1), reply_to: None }).await;
     alice.error().await;
-    alice.send(ClientMsg::SendChat { channel: LOBBY, text: "voice channels have no chat".into() }).await;
+    alice.send(ClientMsg::SendChat { channel: LOBBY, text: "voice channels have no chat".into(), reply_to: None }).await;
     alice.error().await;
 }
 
@@ -418,7 +418,7 @@ async fn chat_floods_are_throttled() {
     let server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
     for i in 0..10 {
-        alice.send(ClientMsg::SendChat { channel: GENERAL, text: format!("spam {i}") }).await;
+        alice.send(ClientMsg::SendChat { channel: GENERAL, text: format!("spam {i}"), reply_to: None }).await;
     }
     assert!(alice.error().await.contains("too fast"));
 }
@@ -567,4 +567,71 @@ async fn owner_renames_the_server_and_sets_a_picture() {
     let late = FakeClient::connect(&server, "late").await;
     let ServerMsg::Welcome { server_name, server_icon, .. } = &late.welcome else { unreachable!() };
     assert_eq!((server_name.as_str(), server_icon.as_deref()), ("The Crew", Some(icon.as_str())));
+}
+
+#[tokio::test]
+async fn replies_edits_and_reactions() {
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let mut bob = FakeClient::connect(&server, "bob").await;
+    let question = alice.chat("who is in?").await;
+
+    bob.send(ClientMsg::SendChat { channel: GENERAL, text: "me".into(), reply_to: Some(question.id) }).await;
+    let ServerMsg::Chat { message: answer } = alice.wait_for(|m| matches!(m, ServerMsg::Chat { message } if message.text == "me")).await else { unreachable!() };
+    let reply = answer.reply.expect("a reply");
+    assert_eq!((reply.id, reply.sender_name.as_str(), reply.text.as_str()), (question.id, "alice", "who is in?"));
+
+    bob.send(ClientMsg::EditMessage { channel: GENERAL, id: question.id, text: "hacked".into() }).await;
+    assert!(bob.error().await.contains("your own"));
+    alice.send(ClientMsg::EditMessage { channel: GENERAL, id: question.id, text: "who is in tonight?".into() }).await;
+    let ServerMsg::MessageEdited { text, edited_at, .. } = bob.wait_for(|m| matches!(m, ServerMsg::MessageEdited { .. })).await else { unreachable!() };
+    assert_eq!(text, "who is in tonight?");
+    assert!(edited_at > 0);
+
+    bob.send(ClientMsg::React { channel: GENERAL, id: question.id, emoji: "👍".into(), on: true }).await;
+    let ServerMsg::Reactions { reactions, .. } = alice.wait_for(|m| matches!(m, ServerMsg::Reactions { .. })).await else { unreachable!() };
+    assert_eq!(reactions.len(), 1);
+    assert_eq!(reactions[0].keys.len(), 1);
+    bob.send(ClientMsg::React { channel: GENERAL, id: question.id, emoji: "abc".into(), on: true }).await;
+    assert!(bob.error().await.contains("emoji"));
+    bob.send(ClientMsg::React { channel: GENERAL, id: question.id, emoji: "👍".into(), on: false }).await;
+    let ServerMsg::Reactions { reactions, .. } = alice.wait_for(|m| matches!(m, ServerMsg::Reactions { .. })).await else { unreachable!() };
+    assert!(reactions.is_empty());
+
+    // Someone arriving later sees the edit.
+    let mut carol = FakeClient::connect(&server, "carol").await;
+    let ServerMsg::ChatHistory { messages, .. } = carol.wait_for(|m| matches!(m, ServerMsg::ChatHistory { channel: GENERAL, .. })).await else { unreachable!() };
+    assert_eq!(messages[0].text, "who is in tonight?");
+    assert!(messages[0].edited_at.is_some());
+}
+
+#[tokio::test]
+async fn older_messages_come_in_pages() {
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        ids.push(alice.chat(&format!("m{i}")).await.id);
+    }
+    alice.send(ClientMsg::LoadOlder { channel: GENERAL, before: ids[2] }).await;
+    let ServerMsg::OlderHistory { messages, done, .. } = alice.wait_for(|m| matches!(m, ServerMsg::OlderHistory { .. })).await else { unreachable!() };
+    assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["m0", "m1"]);
+    assert!(done);
+}
+
+#[test]
+fn edits_and_reactions_survive_a_restart() {
+    let dir = temp_dir("edits");
+    let storage = Storage::at(&dir).unwrap();
+    let mut m = ChatMessage { id: 1, channel: GENERAL, sender: 1, sender_name: "a".into(), author_key: "k".into(), text: "one".into(), sent_at: 1, reply: None, edited_at: None, reactions: vec![] };
+    storage.append_chat(&m);
+    storage.append_chat(&ChatMessage { id: 2, text: "two".into(), ..m.clone() });
+    m.text = "one, edited".into();
+    m.edited_at = Some(5);
+    storage.append_chat(&m);
+    let (loaded, max) = storage.load_chat(GENERAL, 100);
+    assert_eq!(max, 2);
+    assert_eq!(loaded.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["one, edited", "two"]);
+    let older = storage.load_before(GENERAL, 2, 10).unwrap();
+    assert_eq!(older[0].text, "one, edited");
 }

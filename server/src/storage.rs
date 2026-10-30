@@ -3,7 +3,7 @@
 //! Everything is plain JSON in one directory so a server owner can read, back
 //! up or edit it by hand. Chat is append-only JSON lines, one file per channel.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -145,7 +145,14 @@ impl Storage {
         for line in BufReader::new(file).lines().map_while(Result::ok) {
             match serde_json::from_str(&line) {
                 Ok(ChatLine::Message(m)) => {
-                    max_id = max_id.max(m.id);
+                    // An edit or a reaction: the message again, changed (or already dropped as too old).
+                    if m.id <= max_id {
+                        if let Some(old) = out.iter_mut().find(|x| x.id == m.id) {
+                            *old = m;
+                        }
+                        continue;
+                    }
+                    max_id = m.id;
                     if out.len() == keep {
                         out.pop_front();
                     }
@@ -156,6 +163,28 @@ impl Storage {
             }
         }
         (out, max_id)
+    }
+
+    /// Up to `n` messages before `before`, oldest first; `None` when nothing is kept on disk.
+    pub fn load_before(&self, channel: ChannelId, before: u64, n: usize) -> Option<Vec<ChatMessage>> {
+        self.dir.as_ref()?;
+        let mut all = BTreeMap::new();
+        if let Some(file) = self.chat_path(channel).and_then(|p| fs::File::open(p).ok()) {
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                match serde_json::from_str(&line) {
+                    Ok(ChatLine::Message(m)) => {
+                        all.insert(m.id, m);
+                    }
+                    Ok(ChatLine::Delete { delete }) => {
+                        all.remove(&delete);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        let mut out: Vec<ChatMessage> = all.range(..before).rev().take(n).map(|(_, m)| m.clone()).collect();
+        out.reverse();
+        Some(out)
     }
 
     /// Keeps chat files from growing forever: a large file is rewritten with only its newest messages.
