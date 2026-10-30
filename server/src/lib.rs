@@ -688,6 +688,13 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         error("That person isn't connected anymore.");
                     }
                 }
+                ClientMsg::DeleteServer => {
+                    if is_owner {
+                        error("This server runs on a computer, not in Hopp Cloud. To delete it, stop the server program and remove its data folder.");
+                    } else {
+                        error("Only the server owner can do that.");
+                    }
+                }
                 ClientMsg::LeaveServer => {
                     if is_owner {
                         error("You own this server, so you can't leave it.");

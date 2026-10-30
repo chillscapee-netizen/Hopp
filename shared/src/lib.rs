@@ -260,6 +260,8 @@ pub enum ClientMsg {
     VoiceEndpoint { public: Option<String>, local: Vec<String> },
     /// Leave for good: you need a new invite to come back. Not for the owner.
     LeaveServer,
+    /// Owner only: deletes the server, its channels, messages and invites, for everyone.
+    DeleteServer,
     Ping,
 }
 
@@ -313,6 +315,8 @@ pub enum ServerMsg {
     Kicked { banned: bool },
     /// You left the server (after `LeaveServer`).
     Left,
+    /// The owner deleted the server.
+    ServerDeleted,
     InviteCreated { invite: Invite },
     Invites { invites: Vec<Invite> },
     Bans { bans: Vec<Ban> },

@@ -454,6 +454,9 @@ async fn connect(
                 ServerMsg::Left => {
                     let _ = ui.emit("left", ());
                 }
+                ServerMsg::ServerDeleted => {
+                    let _ = ui.emit("server-deleted", ());
+                }
                 ServerMsg::Kicked { banned } => {
                     let _ = ui.emit("kicked", banned);
                 }
@@ -714,6 +717,11 @@ fn edit_message(state: State<'_, AppState>, channel: ChannelId, id: u64, text: S
 #[tauri::command]
 fn react(state: State<'_, AppState>, channel: ChannelId, id: u64, emoji: String, on: bool) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::React { channel, id, emoji, on }))
+}
+
+#[tauri::command]
+fn delete_server(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::DeleteServer))
 }
 
 #[tauri::command]
@@ -1206,6 +1214,7 @@ fn main() {
             call_peer,
             end_call,
             leave_server,
+            delete_server,
             create_channel,
             delete_channel,
             update_channel,

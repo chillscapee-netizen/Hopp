@@ -734,6 +734,24 @@ export class StromServer extends DurableObject<Env> {
         this.send(ws, { type: "invite_created", invite });
         return this.send(ws, { type: "invites", invites: this.invites() });
       }
+      case "delete_server": {
+        if (!ownerOnly()) return;
+        // Invite links stop working everywhere.
+        for (const invite of this.invites()) await inviteIndex(this.env).remove(invite.code);
+        // Everyone connected is told, then let go.
+        for (const other of this.ctx.getWebSockets()) {
+          this.send(other, { type: "server_deleted" });
+          other.serializeAttachment({ stage: "removed" } satisfies Session);
+          try {
+            other.close(1000, "deleted");
+          } catch {
+            // Already closing.
+          }
+        }
+        // Without a name the server no longer exists: nobody can join it again.
+        for (const table of ["messages", "channels", "accounts", "invites", "bans", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
+        return;
+      }
       case "revoke_invite": {
         if (!ownerOnly()) return;
         const code = String(msg.code ?? "");

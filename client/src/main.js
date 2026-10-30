@@ -1297,8 +1297,10 @@ function openServerMenu(server, x, y) {
         label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
       })),
       "sep",
-      ...(active && isOwner()
-        ? [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
+      ...(server.owner || (active && isOwner())
+        ? isCloud(server)
+          ? [{ label: "Delete server", icon: "trash", danger: true, action: () => deleteServer(server) }]
+          : [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
         : [{ label: "Leave server", icon: "logout", danger: true, action: () => leaveServer(server) }]),
     ],
     x,
@@ -1432,6 +1434,11 @@ $("hangup-btn").addEventListener("click", () => call("leave_voice"));
 /** Keeps the saved name and picture in step with the server, for the rail and Home. */
 function rememberServerLook(server, roster) {
   let changed = false;
+  const owner = !!roster.users.find((u) => u.session_id === roster.me)?.owner;
+  if (!!server.owner !== owner) {
+    server.owner = owner;
+    changed = true;
+  }
   if (!server.customLabel && roster.server_name && server.label !== roster.server_name) {
     server.label = roster.server_name;
     changed = true;
@@ -6434,4 +6441,52 @@ $("pins-btn").addEventListener("click", (e) => {
   const r = e.currentTarget.getBoundingClientRect();
   placePopover(pop, r.right - 380, r.bottom + 8);
   call("get_pins", { channel: state.view });
+});
+
+// ---------- deleting a server (owner) ----------
+
+var deletingServer = null;
+
+/** Asks the owner to type the server's name, then deletes it for everyone. */
+function deleteServer(server) {
+  deletingServer = server;
+  $("delete-server-title").textContent = `Delete ${server.label}`;
+  $("delete-server-label").textContent = `Type "${server.label}" to confirm`;
+  $("delete-server-name").value = "";
+  $("delete-server-ok").disabled = true;
+  openModal($("delete-server-dialog"));
+  $("delete-server-name").focus();
+}
+
+$("delete-server-name").addEventListener("input", (e) => {
+  $("delete-server-ok").disabled = e.target.value.trim().toLowerCase() !== (deletingServer?.label ?? "").trim().toLowerCase();
+});
+
+$("delete-server-form").addEventListener("submit", async () => {
+  const server = deletingServer;
+  if (!server || $("delete-server-ok").disabled) return;
+  // Deleting is done by the server itself, so connect first if we aren't there.
+  if (server.id !== state.activeId && !(await connectTo(server))) {
+    toast(`Couldn't reach ${server.label} to delete it. Try again in a moment.`, true);
+    return;
+  }
+  if (!isOwner()) return toast("Only the server owner can delete it.", true);
+  state.deleting = server.id;
+  invoke("delete_server").catch((err) => {
+    state.deleting = null;
+    toast(friendlyError(err), true);
+  });
+});
+
+listen("server-deleted", () => {
+  const server = serverById(state.deleting) ?? activeServer();
+  const mine = state.deleting === server?.id;
+  state.deleting = null;
+  if (!server) return;
+  state.justLeft = true;
+  setTimeout(() => (state.justLeft = false), 3000);
+  removeServer(server);
+  if (mine) toast(`${server.label} was deleted.`);
+  else state.notice = { kind: "error", server: null, text: `${server.label} was deleted by its owner.` };
+  renderAll();
 });

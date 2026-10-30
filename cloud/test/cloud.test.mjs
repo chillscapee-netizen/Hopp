@@ -489,3 +489,16 @@ test("the owner pins messages; everyone can list them", async () => {
   owner.close();
   bob.close();
 });
+
+test("the owner deletes a server for everyone", async () => {
+  const { id, owner, invite } = await newServer();
+  const bob = await join(id, "bob", { invite });
+  bob.send({ type: "delete_server" });
+  assert.match(await errorOf(bob), /owner/i);
+  owner.send({ type: "delete_server" });
+  await bob.waitFor((m) => m.type === "server_deleted");
+  await owner.waitFor((m) => m.type === "server_deleted");
+  // Gone: the invite is dead and nobody can come back.
+  assert.equal((await fetch(`${HTTP}/invite/${invite}`)).status, 404);
+  assert.match(await loginError(id, "owner", { key: owner.key }), /exist/i);
+});

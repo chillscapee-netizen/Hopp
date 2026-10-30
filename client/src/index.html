@@ -701,6 +701,23 @@
     </div>
   </dialog>
 
+  <dialog id="delete-server-dialog" class="modal small">
+    <form id="delete-server-form" method="dialog">
+      <div class="modal-body">
+        <h2 id="delete-server-title">Delete server</h2>
+        <p class="modal-sub">This deletes every channel and message, and removes the server for everyone in it. Invite links stop working. <strong>This can't be undone.</strong></p>
+        <label class="field">
+          <span id="delete-server-label" class="field-label">Type the server name to confirm</span>
+          <input id="delete-server-name" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button id="delete-server-ok" type="submit" class="btn danger" disabled>Delete server</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="confirm-dialog" class="modal small">
     <div class="modal-body">
       <h2 id="confirm-title"></h2>
