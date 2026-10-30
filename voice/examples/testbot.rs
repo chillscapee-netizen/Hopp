@@ -50,6 +50,17 @@ fn dm(link: &AccountLink, me: &Identity, to: &str, text: &str) {
     }
 }
 
+/// Writes in a group conversation: a sealed copy for each member.
+fn group_say(link: &AccountLink, me: &Identity, group: &str, members: &[String], text: &str) {
+    let mut sealed = serde_json::Map::new();
+    for k in members {
+        if let Ok(s) = me.seal_for(k, text.as_bytes()) {
+            sealed.insert(k.clone(), Value::String(s));
+        }
+    }
+    link.send(json!({ "type": "group_send", "group": group, "sealed": sealed, "nonce": "bot" }));
+}
+
 /// Joins a server through its invite, says hello, and answers messages that mention it.
 async fn join_server(cloud: String, me: Identity, code: String, link: AccountLink, friend: String) {
     let http = cloud.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
@@ -120,6 +131,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         let mut tried = 0;
+        // Group conversations we're in, by id: their members.
+        let mut groups: std::collections::HashMap<String, Vec<String>> = welcome["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|g| Some((g["id"].as_str()?.to_string(), g["members"].as_array()?.iter().filter_map(|k| k.as_str().map(String::from)).collect())))
+            .collect();
 
         while let Some(msg) = events.recv().await {
             match msg["type"].as_str().unwrap_or_default() {
@@ -156,6 +174,32 @@ async fn main() -> anyhow::Result<()> {
                             dm(&link, &me, &key, "Hi! I'm Hoppbot 🐰 Write me anything, or send me an invite link and I'll join your server.");
                         }
                         _ => {}
+                    }
+                }
+                "group" => {
+                    let g = &msg["group"];
+                    if let (Some(id), Some(members)) = (g["id"].as_str(), g["members"].as_array()) {
+                        let members: Vec<String> = members.iter().filter_map(|k| k.as_str().map(String::from)).collect();
+                        if !groups.contains_key(id) {
+                            println!("added to group {id}");
+                            group_say(&link, &me, id, &members, "Hi everyone! 🐰 I'm Hoppbot.");
+                        }
+                        groups.insert(id.to_string(), members);
+                    }
+                }
+                "dm" if msg["with"].as_str().is_some_and(|w| w.starts_with("g:")) => {
+                    let id = msg["with"].as_str().unwrap_or_default().to_string();
+                    let message = &msg["message"];
+                    let from = message["from_key"].as_str().unwrap_or_default().to_string();
+                    if from == me.public_key() {
+                        continue;
+                    }
+                    let text = me.open_from(&from, message["sealed"].as_str().unwrap_or_default()).ok().and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                    println!("group message: {text}");
+                    if text.to_lowercase().contains("bot") {
+                        if let Some(members) = groups.get(&id) {
+                            group_say(&link, &me, &id, members, "🐰 Hopp hopp! I heard you.");
+                        }
                     }
                 }
                 "dm" => {
