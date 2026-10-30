@@ -222,6 +222,12 @@ function friendlyError(raw) {
   if (/10061|refused/i.test(s)) return "The server isn't answering. Check that it's running and that the address is right.";
   if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check the address and that port 7777 is open.";
   if (/resolve|11001|no such host/i.test(s)) return "Couldn't find a server at that address.";
+  const versions = s.match(/protocol (d+), the app speaks (d+)/i);
+  if (versions) {
+    return Number(versions[1]) > Number(versions[2])
+      ? "This server needs a newer version of Hopp. Update the app to join it."
+      : "This server runs an older version of Hopp. Ask its owner to update it.";
+  }
   if (/protocol/i.test(s)) return "This server runs a different version of Hopp. Update the server and the app to the same version.";
   if (/using the default devices instead/i.test(s)) return "Your chosen audio device couldn't be opened, so Hopp is using the system default for now.";
   if (/^audio:/i.test(s)) return "Couldn't start audio. Check your input and output devices in User settings.";
