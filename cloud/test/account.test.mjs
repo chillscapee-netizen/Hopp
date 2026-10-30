@@ -243,3 +243,38 @@ test("profiles: name, bio and picture reach friends", async () => {
   a.d.close();
   b.d.close();
 });
+
+test("direct messages between friends: delivered to every device, kept, read state", async () => {
+  const a = await userWithName("dma");
+  const b = await userWithName("dmb");
+  const stranger = await userWithName("dmc");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.saw((m) => m.type === "friend" && m.friend.state === "friend");
+  const a2 = await Device.open(a.key);
+
+  a.d.send({ type: "dm_send", to: b.key.pub, sealed: "abcd01", nonce: "n1" });
+  const mine = await a.d.waitFor((m) => m.type === "dm");
+  assert.equal(mine.nonce, "n1");
+  assert.equal(mine.message.from_key, a.key.pub);
+  const other = await a2.waitFor((m) => m.type === "dm");
+  assert.equal(other.message.id, mine.message.id);
+  const theirs = await b.d.waitFor((m) => m.type === "dm");
+  assert.deepEqual([theirs.with, theirs.message.sealed], [a.key.pub, "abcd01"]);
+
+  b.d.send({ type: "dm_history", with: a.key.pub });
+  const history = await b.d.waitFor((m) => m.type === "dm_history");
+  assert.equal(history.messages.length, 1);
+  const again = await Device.open(b.key);
+  const conv = again.welcome.conversations.find((c) => c.peer === a.key.pub);
+  assert.ok(conv.last_at > conv.last_read, "unread until read");
+  b.d.send({ type: "dm_read", with: a.key.pub, at: conv.last_at });
+  await again.waitFor((m) => m.type === "dm_read");
+
+  stranger.d.send({ type: "dm_send", to: b.key.pub, sealed: "beef", nonce: "x" });
+  assert.match((await stranger.d.waitFor((m) => m.type === "error")).message, /friends/);
+  a.d.send({ type: "dm_send", to: b.key.pub, sealed: "not hex!" });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /can't be sent/);
+  for (const d of [a.d, a2, b.d, again, stranger.d]) d.close();
+});

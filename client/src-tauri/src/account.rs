@@ -47,6 +47,8 @@ impl Account {
 #[tauri::command]
 pub fn start_account(app: AppHandle, state: State<'_, AppState>, account: State<'_, Account>, cloud: String) -> CmdResult {
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    // For development: point the account at a local Worker (`npx wrangler dev`).
+    let cloud = std::env::var("STROM_ACCOUNT_URL").unwrap_or(cloud);
     account.stop();
     let handle = app.clone();
     let task = tauri::async_runtime::spawn(async move { run(handle, identity, cloud).await });

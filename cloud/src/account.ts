@@ -20,6 +20,14 @@ const FRIEND_REQUESTS_PER_DAY = 30;
 /** A username given up stays reserved for its old owner this long, so it can't be hijacked. */
 const NAME_HOLD_MS = 14 * 24 * 3_600_000;
 const RESERVED = new Set(["admin", "administrator", "strom", "ström", "support", "system", "everyone", "here", "moderator", "owner", "staff", "official", "help", "root"]);
+/** A sealed direct message: 2000 characters of text, encrypted and hex-encoded, fit easily. */
+const MAX_SEALED = 24_000;
+const DM_HISTORY = 50;
+/** Direct messages kept per conversation; older ones are dropped. */
+const DM_KEEP = 5000;
+/** A burst of messages, then about two a second. */
+const DM_BURST = 8;
+const DM_PER_SECOND = 2;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
 const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 
@@ -153,6 +161,10 @@ export class StromAccount extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS friends (
         key TEXT PRIMARY KEY, username TEXT, display_name TEXT NOT NULL, avatar TEXT,
         state TEXT NOT NULL, since INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'offline', activity TEXT);
+      CREATE TABLE IF NOT EXISTS dms (
+        id TEXT PRIMARY KEY, peer TEXT NOT NULL, from_key TEXT NOT NULL, sealed TEXT NOT NULL, sent_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS dms_by_peer ON dms (peer, sent_at);
+      CREATE TABLE IF NOT EXISTS conversations (peer TEXT PRIMARY KEY, last_at INTEGER NOT NULL, last_read INTEGER NOT NULL DEFAULT 0);
     `);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
@@ -293,6 +305,7 @@ export class StromAccount extends DurableObject<Env> {
       me: { ...this.profile(), status: this.meta("status") ?? "online", privacy: this.meta("privacy") ?? "everyone" },
       sync: { data: this.meta("sync_data"), version: Number(this.meta("sync_version") ?? 0) },
       friends: this.friendRows(),
+      conversations: this.conversations(),
     });
     if (wasOffline) await this.announcePresence();
   }
@@ -424,11 +437,69 @@ export class StromAccount extends DurableObject<Env> {
         this.sql.exec("DELETE FROM friends WHERE key = ?", key);
         return this.toDevices({ type: "friend_removed", key });
       }
+      case "dm_send":
+        return this.sendDm(ws, msg);
+      case "dm_history": {
+        const peer = String(msg.with ?? "");
+        const before = Number(msg.before ?? Number.MAX_SAFE_INTEGER);
+        const rows = this.sql
+          .exec("SELECT id, from_key, sealed, sent_at FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
+          .toArray()
+          .reverse();
+        return this.send(ws, { type: "dm_history", with: peer, messages: rows, complete: rows.length < DM_HISTORY });
+      }
+      case "dm_read": {
+        const peer = String(msg.with ?? "");
+        const at = Number(msg.at ?? Date.now());
+        this.sql.exec("UPDATE conversations SET last_read = MAX(last_read, ?) WHERE peer = ?", at, peer);
+        return this.toDevices({ type: "dm_read", with: peer, at });
+      }
       case "ping":
         return this.send(ws, { type: "pong" });
       default:
         return error(`Unknown message type "${msg.type}".`);
     }
+  }
+
+  private conversations() {
+    return this.sql.exec("SELECT peer, last_at, last_read FROM conversations ORDER BY last_at DESC").toArray();
+  }
+
+  /** Keeps a message (ours or theirs) in the conversation with `peer`. */
+  private storeDm(peer: string, message: { id: string; from_key: string; sealed: string; sent_at: number }) {
+    this.sql.exec("INSERT OR IGNORE INTO dms (id, peer, from_key, sealed, sent_at) VALUES (?, ?, ?, ?, ?)", message.id, peer, message.from_key, message.sealed, message.sent_at);
+    const mine = message.from_key === this.meta("key");
+    this.sql.exec(
+      `INSERT INTO conversations (peer, last_at, last_read) VALUES (?, ?, ?)
+       ON CONFLICT(peer) DO UPDATE SET last_at = MAX(last_at, excluded.last_at),
+         last_read = CASE WHEN ? THEN MAX(last_read, excluded.last_at) ELSE last_read END`,
+      peer, message.sent_at, mine ? message.sent_at : 0, mine ? 1 : 0,
+    );
+    this.sql.exec(
+      "DELETE FROM dms WHERE peer = ? AND sent_at < (SELECT sent_at FROM dms WHERE peer = ? ORDER BY sent_at DESC LIMIT 1 OFFSET ?)",
+      peer, peer, DM_KEEP,
+    );
+  }
+
+  private async sendDm(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: "dm_send", with: msg.to, nonce: msg.nonce });
+    const to = String(msg.to ?? "").toLowerCase();
+    const sealed = String(msg.sealed ?? "");
+    if (!/^[0-9a-f]+$/.test(sealed) || sealed.length > MAX_SEALED) return error("That message can't be sent.");
+    if (this.friend(to)?.state !== "friend") return error("You can only message your friends.");
+
+    const now = Date.now();
+    const bucket = (this.meta("dm_bucket") ?? `${DM_BURST}:${now}`).split(":").map(Number);
+    const tokens = Math.min(DM_BURST, bucket[0] + ((now - bucket[1]) / 1000) * DM_PER_SECOND);
+    if (tokens < 1) return error("You're sending messages too fast. Slow down a little.");
+    this.setMeta("dm_bucket", `${tokens - 1}:${now}`);
+
+    const message = { id: `${now.toString(36)}-${bytesToHex(crypto.getRandomValues(new Uint8Array(6)))}`, from_key: myKey, sealed, sent_at: now };
+    const delivered = await accountOf(this.env, to).receiveDm(myKey, message);
+    if (!delivered) return error("They can't receive your messages.");
+    this.storeDm(to, message);
+    this.toDevices({ type: "dm", with: to, message, nonce: msg.nonce });
   }
 
   private snapshot(): PublicProfile {
@@ -585,6 +656,14 @@ export class StromAccount extends DurableObject<Env> {
     if (this.friend(fromKey)?.state !== "friend") return;
     this.sql.exec("UPDATE friends SET status = ?, activity = ? WHERE key = ?", presence.status, presence.activity, fromKey);
     this.toDevices({ type: "presence", key: fromKey, ...presence });
+  }
+
+  /** A direct message from a friend. False if they aren't one (or are blocked). */
+  async receiveDm(fromKey: string, message: { id: string; from_key: string; sealed: string; sent_at: number }): Promise<boolean> {
+    if (this.friend(fromKey)?.state !== "friend") return false;
+    this.storeDm(fromKey, message);
+    this.toDevices({ type: "dm", with: fromKey, message });
+    return true;
   }
 
   async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {
