@@ -2491,3 +2491,11 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .incoming-text span { color: var(--muted); font-size: 13px; }
 .incoming-call .call-btn { width: 40px; height: 40px; }
 .incoming-call .call-btn .i { width: 19px; height: 19px; }
+
+/* ---------- group conversations ---------- */
+.group-friends { max-height: 280px; margin: 6px 0 0; padding: 0; overflow-y: auto; list-style: none; border: 1px solid var(--border); border-radius: 8px; }
+.group-friend { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; }
+.group-friend:hover { background: var(--hover); }
+.group-friend input { flex: none; }
+.group-friend .ellipsis { min-width: 0; font-weight: 600; }
+.group-user { margin-left: auto; color: var(--faint); font-size: 13px; }

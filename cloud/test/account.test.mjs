@@ -383,3 +383,45 @@ test("calls between friends: ring, answer, endpoints, end; strangers and offline
   assert.equal((await a.d.waitFor((m) => m.type === "call")).kind, "offline");
   a.d.close();
 });
+
+test("group conversations: create, send to everyone, rename, leave", async () => {
+  const a = await userWithName("ga");
+  const b = await userWithName("gb");
+  const c = await userWithName("gc");
+  for (const x of [b, c]) {
+    a.d.send({ type: "friend_request", username: x.name });
+    await x.d.waitFor((m) => m.type === "friend");
+    x.d.send({ type: "friend_accept", key: a.key.pub });
+    await a.d.waitFor((m) => m.type === "friend" && m.friend.key === x.key.pub && m.friend.state === "friend");
+  }
+  a.d.send({ type: "group_create", members: [b.key.pub, c.key.pub], name: "Raid crew" });
+  const { group } = await a.d.waitFor((m) => m.type === "group");
+  assert.equal(group.name, "Raid crew");
+  assert.deepEqual(group.members, [a.key.pub, b.key.pub, c.key.pub]);
+  // b and c aren't friends with each other, but they're in the group together.
+  assert.equal((await c.d.waitFor((m) => m.type === "group")).group.id, group.id);
+
+  const sealed = { [a.key.pub]: "aa", [b.key.pub]: "bb", [c.key.pub]: "cc" };
+  a.d.send({ type: "group_send", group: group.id, sealed, nonce: "n1" });
+  assert.equal((await b.d.waitFor((m) => m.type === "dm" && m.with === group.id)).message.sealed, "bb");
+  assert.equal((await c.d.waitFor((m) => m.type === "dm" && m.with === group.id)).message.sealed, "cc");
+  const mine = await a.d.waitFor((m) => m.type === "dm" && m.with === group.id);
+  assert.equal(mine.message.sealed, "aa");
+  assert.equal(mine.nonce, "n1");
+
+  // c (not b's friend) can write to the group too.
+  c.d.send({ type: "group_send", group: group.id, sealed: { ...sealed, [c.key.pub]: "c2" }, nonce: "n2" });
+  assert.equal((await b.d.waitFor((m) => m.type === "dm" && m.with === group.id)).message.from_key, c.key.pub);
+
+  b.d.send({ type: "group_update", group: group.id, name: "Night crew" });
+  assert.equal((await a.d.waitFor((m) => m.type === "group" && m.group.name === "Night crew")).group.id, group.id);
+
+  c.d.send({ type: "group_leave", group: group.id });
+  await c.d.waitFor((m) => m.type === "group_removed");
+  const after = await a.d.waitFor((m) => m.type === "group" && m.group.members.length === 2);
+  assert.deepEqual(after.group.members, [a.key.pub, b.key.pub]);
+
+  const again = await Device.open(a.key, "A");
+  assert.equal(again.welcome.groups[0].id, group.id);
+  for (const d of [a.d, b.d, c.d, again]) d.close();
+});

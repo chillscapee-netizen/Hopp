@@ -30,6 +30,11 @@ const DM_BURST = 8;
 const DM_PER_SECOND = 2;
 /** Unread marks for server channels are forgotten after this long without activity. */
 const CHANNEL_READS_DAYS = 90;
+/** Group conversations: you and up to nine others. */
+const GROUP_MAX = 10;
+const GROUP_NAME_MAX = 40;
+
+export interface Group { id: string; name: string; members: string[]; created_at: number }
 /** Calls: what each kind of signal may carry. The key is sealed for the callee, like a direct message. */
 const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint"]);
 const CALL_ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
@@ -170,6 +175,7 @@ export class StromAccount extends DurableObject<Env> {
         id TEXT PRIMARY KEY, peer TEXT NOT NULL, from_key TEXT NOT NULL, sealed TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS dms_by_peer ON dms (peer, sent_at);
       CREATE TABLE IF NOT EXISTS conversations (peer TEXT PRIMARY KEY, last_at INTEGER NOT NULL, last_read INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', members TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS channel_reads (
         server TEXT NOT NULL, channel INTEGER NOT NULL, read_id INTEGER NOT NULL DEFAULT 0, last_id INTEGER NOT NULL DEFAULT 0,
         last_at INTEGER NOT NULL DEFAULT 0, mentions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel));
@@ -315,6 +321,7 @@ export class StromAccount extends DurableObject<Env> {
       friends: this.friendRows(),
       conversations: this.conversations(),
       channels: this.channelReads(),
+      groups: this.groups(),
     });
     if (wasOffline) await this.announcePresence();
   }
@@ -448,6 +455,36 @@ export class StromAccount extends DurableObject<Env> {
       }
       case "dm_send":
         return this.sendDm(ws, msg);
+      case "group_create": {
+        const others = [...new Set((Array.isArray(msg.members) ? msg.members : []).map((k: unknown) => String(k).toLowerCase()))].filter((k) => k !== myKey);
+        if (others.length < 1 || others.length > GROUP_MAX - 1) return error(`A group has 2–${GROUP_MAX} people.`);
+        if (others.some((k) => this.friend(k)?.state !== "friend")) return error("You can only add your friends.");
+        const name = String(msg.name ?? "").trim().slice(0, GROUP_NAME_MAX);
+        const group: Group = { id: `g:${bytesToHex(crypto.getRandomValues(new Uint8Array(8)))}`, name, members: [myKey, ...others], created_at: Date.now() };
+        await this.shareGroup(group, group.members);
+        return this.send(ws, { type: "group_created", id: group.id, nonce: msg.nonce });
+      }
+      case "group_update": {
+        const group = this.group(String(msg.group ?? ""));
+        if (!group || !group.members.includes(myKey)) return error("That group doesn't exist.");
+        const added = [...new Set((Array.isArray(msg.add) ? msg.add : []).map((k: unknown) => String(k).toLowerCase()))].filter((k) => !group.members.includes(k));
+        if (added.some((k) => this.friend(k)?.state !== "friend")) return error("You can only add your friends.");
+        if (group.members.length + added.length > GROUP_MAX) return error(`A group has at most ${GROUP_MAX} people.`);
+        if (msg.name !== undefined) group.name = String(msg.name).trim().slice(0, GROUP_NAME_MAX);
+        group.members.push(...added);
+        return this.shareGroup(group, group.members);
+      }
+      case "group_leave": {
+        const group = this.group(String(msg.group ?? ""));
+        if (!group) return;
+        this.sql.exec("DELETE FROM groups WHERE id = ?", group.id);
+        this.toDevices({ type: "group_removed", id: group.id });
+        group.members = group.members.filter((k) => k !== myKey);
+        for (const k of group.members) this.ctx.waitUntil(accountOf(this.env, k).groupUpdated(myKey, group).catch(() => {}));
+        return;
+      }
+      case "group_send":
+        return this.sendGroupDm(ws, msg);
       case "dm_history": {
         const peer = String(msg.with ?? "");
         const before = Number(msg.before ?? Number.MAX_SAFE_INTEGER);
@@ -538,6 +575,79 @@ export class StromAccount extends DurableObject<Env> {
     if (!delivered) return error("They can't receive your messages.");
     this.storeDm(to, message);
     this.toDevices({ type: "dm", with: to, message, nonce: msg.nonce });
+  }
+
+  // ---------- groups ----------
+
+  private groups(): Group[] {
+    return this.sql.exec("SELECT * FROM groups ORDER BY created_at").toArray().map((r) => ({
+      id: String(r.id), name: String(r.name), members: JSON.parse(String(r.members)), created_at: Number(r.created_at),
+    }));
+  }
+
+  private group(id: string): Group | undefined {
+    return this.groups().find((g) => g.id === id);
+  }
+
+  private saveGroup(group: Group) {
+    this.sql.exec(
+      "INSERT INTO groups (id, name, members, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, members = excluded.members",
+      group.id, group.name, JSON.stringify(group.members), group.created_at,
+    );
+    this.toDevices({ type: "group", group });
+  }
+
+  /** Stores the group here and with everyone in it. */
+  private async shareGroup(group: Group, members: string[]) {
+    const myKey = this.meta("key")!;
+    this.saveGroup(group);
+    await Promise.all(members.filter((k) => k !== myKey).map((k) => accountOf(this.env, k).groupUpdated(myKey, group).catch(() => {})));
+  }
+
+  /** Someone in a group changed it (or made it with us in it). */
+  async groupUpdated(fromKey: string, group: Group): Promise<void> {
+    const myKey = this.meta("key");
+    const known = this.group(group.id);
+    // Only members may change a group; a new group must come from a friend.
+    if (known ? !known.members.includes(fromKey) : this.friend(fromKey)?.state !== "friend") return;
+    if (!myKey || !group.members.includes(myKey)) return;
+    this.saveGroup({ ...group, members: group.members.slice(0, GROUP_MAX) });
+  }
+
+  async receiveGroupDm(groupId: string, message: { id: string; from_key: string; sealed: string; sent_at: number }): Promise<boolean> {
+    const group = this.group(groupId);
+    if (!group || !group.members.includes(message.from_key)) return false;
+    if (this.friend(message.from_key)?.state === "blocked") return true;
+    this.storeDm(groupId, message);
+    this.toDevices({ type: "dm", with: groupId, message });
+    return true;
+  }
+
+  private async sendGroupDm(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: "dm_send", with: msg.group, nonce: msg.nonce });
+    const group = this.group(String(msg.group ?? ""));
+    if (!group || !group.members.includes(myKey)) return error("You're not in that group anymore.");
+    const sealed = msg.sealed && typeof msg.sealed === "object" ? (msg.sealed as Record<string, unknown>) : {};
+    for (const k of group.members) {
+      const one = sealed[k];
+      if (typeof one !== "string" || !/^[0-9a-f]+$/.test(one) || one.length > MAX_SEALED) return error("That message can't be sent.");
+    }
+    const now = Date.now();
+    const bucket = (this.meta("dm_bucket") ?? `${DM_BURST}:${now}`).split(":").map(Number);
+    const tokens = Math.min(DM_BURST, bucket[0] + ((now - bucket[1]) / 1000) * DM_PER_SECOND);
+    if (tokens < 1) return error("You're sending messages too fast. Slow down a little.");
+    this.setMeta("dm_bucket", `${tokens - 1}:${now}`);
+
+    const id = `${now.toString(36)}-${bytesToHex(crypto.getRandomValues(new Uint8Array(6)))}`;
+    await Promise.all(
+      group.members
+        .filter((k) => k !== myKey)
+        .map((k) => accountOf(this.env, k).receiveGroupDm(group.id, { id, from_key: myKey, sealed: String(sealed[k]), sent_at: now }).catch(() => false)),
+    );
+    const mine = { id, from_key: myKey, sealed: String(sealed[myKey]), sent_at: now };
+    this.storeDm(group.id, mine);
+    this.toDevices({ type: "dm", with: group.id, message: mine, nonce: msg.nonce });
   }
 
   private snapshot(): PublicProfile {

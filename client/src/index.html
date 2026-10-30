@@ -512,6 +512,27 @@
     </div>
   </dialog>
 
+  <!-- ---------- group conversations ---------- -->
+  <dialog id="group-dialog" class="modal">
+    <form id="group-form" method="dialog">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2 id="group-title">New group</h2>
+        <p id="group-sub" class="modal-sub">Pick up to 9 friends. Messages are end-to-end encrypted.</p>
+        <label class="field">
+          <span class="field-label">Group name (optional)</span>
+          <input id="group-name" maxlength="40" autocomplete="off" placeholder="Raid crew">
+        </label>
+        <span class="field-label">Friends</span>
+        <ul id="group-friends" class="group-friends"></ul>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button id="group-save" type="submit" class="btn primary" disabled>Create group</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ---------- folder settings ---------- -->
   <dialog id="folder-dialog" class="modal">
     <form id="folder-form" method="dialog">

@@ -3753,6 +3753,8 @@ listen("account", (e) => {
       state.friends = new Map(m.friends.map((f) => [f.key, f]));
       state.conversations = new Map((m.conversations ?? []).map((c) => [c.peer, { last_at: c.last_at, last_read: c.last_read }]));
       for (const row of m.channels ?? []) mergeRead(row);
+      state.groups = new Map((m.groups ?? []).map((g) => [g.id, g]));
+      for (const g of state.groups.values()) if (!state.conversations.has(g.id)) state.conversations.set(g.id, { last_at: g.created_at, last_read: g.created_at });
       state.readsLoaded = true;
       renderUnread();
       // A reconnect: fetch what arrived meanwhile for conversations already open.
@@ -3774,6 +3776,20 @@ listen("account", (e) => {
     }
     case "call":
       handleCallSignal(m);
+      return;
+    case "group":
+      state.groups.set(m.group.id, m.group);
+      if (!state.conversations.has(m.group.id)) state.conversations.set(m.group.id, { last_at: m.group.created_at, last_read: m.group.created_at });
+      renderAll();
+      return;
+    case "group_removed":
+      state.groups.delete(m.id);
+      state.conversations.delete(m.id);
+      if (state.openDm === m.id) state.openDm = null;
+      renderAll();
+      return;
+    case "group_created":
+      if (m.id) openDm(m.id);
       return;
     case "call_self":
       handleCallSelf(m);
@@ -4274,8 +4290,14 @@ state.dmComplete = new Set(); // peers whose whole history is loaded
 state.openDm = null;
 
 function personFor(key) {
+  if (isGroup(key)) return { key, display_name: groupName(state.groups?.get(key)), username: null, avatar: null, status: "offline", group: true };
   if (key === state.me?.key) return state.me;
-  return state.friends.get(key) ?? { key, display_name: "Unknown", username: null, avatar: null, status: "offline" };
+  const friend = state.friends.get(key);
+  if (friend) return friend;
+  // Someone from a group who isn't your friend: their public profile.
+  const p = profiles.get(key);
+  if (!p) loadProfile(key);
+  return { key, display_name: p?.display_name ?? "Someone", username: p?.username ?? null, avatar: p?.avatar ?? null, status: "offline" };
 }
 
 function unreadDms() {
@@ -4286,7 +4308,8 @@ function unreadDms() {
 
 async function decrypt(peer, m) {
   try {
-    return await invoke("dm_open", { peer, sealed: m.sealed });
+    // In a group, each copy is sealed between its sender and its reader.
+    return await invoke("dm_open", { peer: isGroup(peer) ? m.from_key : peer, sealed: m.sealed });
   } catch {
     return null;
   }
@@ -4322,7 +4345,7 @@ function onDmEvent(m) {
     addDmMessages(peer, [m.message]).then(() => {
       if (!mine) {
         if (viewing) markDmRead(peer);
-        else notifyDm(peer, state.dmMessages.get(peer).find((x) => x.id === m.message.id)?.text);
+        else notifyDm(peer, state.dmMessages.get(peer).find((x) => x.id === m.message.id)?.text, m.message.from_key);
       }
       renderDmAreas(peer);
     });
@@ -4350,11 +4373,16 @@ function onDmEvent(m) {
   return false;
 }
 
-function notifyDm(peer, text) {
+function notifyDm(peer, text, from) {
   const who = personFor(peer);
   if (state.me?.status === "dnd" || dmMuted(peer)) return;
   playSound("message");
-  desktopNotify(who, text ?? "Sent you a message", `dm:${peer}`);
+  if (who.group && from) {
+    const sender = personFor(from);
+    desktopNotify(sender, text ?? "Sent a message", `dm:${peer}`, `${sender.display_name}  ·  ${who.display_name}`);
+  } else {
+    desktopNotify(who, text ?? "Sent you a message", `dm:${peer}`);
+  }
 }
 
 /** A desktop notification with the person's picture, when Hopp isn't in front. */
@@ -4457,7 +4485,7 @@ function closeDm() {
 /** The sidebar's list of conversations on Home. */
 function dmSidebarRows() {
   const rows = [...state.conversations.entries()]
-    .filter(([peer]) => state.friends.has(peer))
+    .filter(([peer]) => state.friends.has(peer) || state.groups?.has(peer))
     .sort((a, b) => b[1].last_at - a[1].last_at)
     .map(([peer, conv]) => {
       const p = personFor(peer);
@@ -4468,20 +4496,41 @@ function dmSidebarRows() {
       b.classList.toggle("muted", muted);
       const text = el("span", "row-text");
       text.append(el("span", "row-title ellipsis", p.display_name));
-      if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
+      if (p.group) text.append(el("span", "row-sub ellipsis", `${state.groups.get(peer).members.length} members`));
+      else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
       b.append(personAvatar(p, "", p.state === "friend"), text);
       if (conv.last_at > conv.last_read && !muted) b.append(el("span", "count-badge", "1"));
       b.addEventListener("click", () => openDm(peer));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        openMenu([{ label: muted ? "Unmute conversation" : "Mute conversation", icon: "bell", action: () => setDmMuted(peer, !muted) }], e.clientX, e.clientY);
+        openMenu(
+          [
+            { label: muted ? "Unmute conversation" : "Mute conversation", icon: "bell", action: () => setDmMuted(peer, !muted) },
+            ...(p.group
+              ? [
+                  { label: "Edit group", icon: "edit", action: () => openGroupDialog(state.groups.get(peer)) },
+                  "sep",
+                  { label: "Leave group", icon: "logout", danger: true, action: () => leaveGroup(peer) },
+                ]
+              : []),
+          ],
+          e.clientX,
+          e.clientY,
+        );
       });
       return b;
     });
-  if (!rows.length) return [];
   const cat = el("div", "category");
   cat.append(el("span", "", "Direct messages"));
-  return [cat, ...rows];
+  if (state.friends && [...state.friends.values()].some((f) => f.state === "friend")) {
+    const add = el("button", "category-add");
+    add.type = "button";
+    add.dataset.tip = "New group";
+    add.append(icon("plus"));
+    add.addEventListener("click", () => openGroupDialog(null));
+    cat.append(add);
+  }
+  return rows.length || cat.childElementCount > 1 ? [cat, ...rows] : [];
 }
 
 function renderDmView(keepScroll) {
@@ -4491,7 +4540,7 @@ function renderDmView(keepScroll) {
   const head = $("home").querySelector(".head-title");
   head.textContent = p.display_name;
   const headIcon = $("home").querySelector(".head-icon");
-  headIcon.innerHTML = '<use href="#i-at"/>';
+  headIcon.innerHTML = p.group ? '<use href="#i-users"/>' : '<use href="#i-at"/>';
 
   const body = $("home-body");
   body.classList.add("dm-body");
@@ -4508,7 +4557,7 @@ function renderDmView(keepScroll) {
     input.id = "dm-input";
     input.rows = 1;
     input.maxLength = 2000;
-    input.placeholder = `Message @${p.username ?? p.display_name}`;
+    input.placeholder = p.group ? `Message ${p.display_name}` : `Message @${p.username ?? p.display_name}`;
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
@@ -4521,7 +4570,7 @@ function renderDmView(keepScroll) {
     });
     box.append(input);
     const lock = el("p", "dm-lock");
-    lock.append(icon("lock", "xs"), "Only you and " + p.display_name + " can read these messages.");
+    lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
     form.append(box);
     view.append(scroller, form);
     body.replaceChildren(view);
@@ -4538,7 +4587,7 @@ function renderDmView(keepScroll) {
   const intro = el("li", "welcome dm-intro");
   intro.append(personAvatar(p, "s80", false), el("h1", "", p.display_name));
   if (p.username) intro.append(el("p", "dm-handle", `@${p.username}`));
-  intro.append(el("p", "", `This is the beginning of your messages with ${p.display_name}.`), view.lock);
+  intro.append(el("p", "", p.group ? `This is the beginning of ${p.display_name}. ${state.groups.get(peer)?.members.length ?? 0} people are in it.` : `This is the beginning of your messages with ${p.display_name}.`), view.lock);
   items.push(intro);
   let prev = null;
   for (const m of state.dmMessages.get(peer) ?? []) {
@@ -4589,6 +4638,13 @@ async function sendDm(peer, input) {
   state.dmMessages.set(peer, list);
   renderDmView();
   try {
+    if (isGroup(peer)) {
+      // A copy for each person, yourself included (for your other devices).
+      const sealed = {};
+      for (const k of state.groups.get(peer)?.members ?? []) sealed[k] = await invoke("dm_seal", { peer: k, text });
+      await invoke("account_send", { msg: { type: "group_send", group: peer, sealed, nonce } });
+      return;
+    }
     const sealed = await invoke("dm_seal", { peer, text });
     await invoke("account_send", { msg: { type: "dm_send", to: peer, sealed, nonce } });
   } catch (err) {
@@ -5976,7 +6032,7 @@ function renderCall() {
     $("call-panel").classList.toggle("live", c.status === "live");
   }
   // The call button and the stage in the conversation.
-  const dmOpen = !!state.openDm && !online();
+  const dmOpen = !!state.openDm && !online() && !isGroup(state.openDm);
   $("dm-call-btn").hidden = !dmOpen || !!c;
   const here = c && dmOpen && c.peer === state.openDm && !ringingHere;
   const stage = $("call-stage");
@@ -6029,3 +6085,76 @@ listen("call-voice", (e) => {
 
 // Hanging up when the app goes away, so the friend isn't left talking to nobody.
 window.addEventListener("beforeunload", () => state.call && callSend(state.call, "end"));
+
+// ---------- group conversations ----------
+
+state.groups = new Map();
+
+function isGroup(id) {
+  return typeof id === "string" && id.startsWith("g:");
+}
+
+function groupName(g) {
+  if (!g) return "Group";
+  if (g.name) return g.name;
+  const others = g.members.filter((k) => k !== state.me?.key).map((k) => personFor(k).display_name);
+  return others.length ? others.join(", ") : "Just you";
+}
+
+var editingGroup = null;
+
+function openGroupDialog(group) {
+  editingGroup = group;
+  $("group-title").textContent = group ? "Edit group" : "New group";
+  $("group-save").textContent = group ? "Save" : "Create group";
+  $("group-name").value = group?.name ?? "";
+  const inGroup = new Set(group?.members ?? []);
+  const friends = [...state.friends.values()].filter((f) => f.state === "friend").sort((a, b) => a.display_name.localeCompare(b.display_name));
+  $("group-friends").replaceChildren(
+    ...friends.map((f) => {
+      const li = el("li");
+      const label = el("label", "group-friend");
+      const box = el("input");
+      box.type = "checkbox";
+      box.value = f.key;
+      box.checked = inGroup.has(f.key);
+      box.disabled = inGroup.has(f.key);
+      box.addEventListener("change", updateGroupSave);
+      label.append(box, personAvatar(f, "s24", false), el("span", "ellipsis", f.display_name));
+      if (f.username) label.append(el("span", "group-user", `@${f.username}`));
+      li.append(label);
+      return li;
+    }),
+  );
+  updateGroupSave();
+  openModal($("group-dialog"));
+}
+
+function pickedGroupFriends() {
+  return [...document.querySelectorAll("#group-friends input:checked:not(:disabled)")].map((b) => b.value);
+}
+
+function updateGroupSave() {
+  const picked = pickedGroupFriends().length;
+  const total = (editingGroup?.members.length ?? 1) + picked;
+  const full = total >= 10;
+  document.querySelectorAll("#group-friends input:not(:checked)").forEach((b) => (b.disabled = full));
+  $("group-sub").textContent = full ? "A group has at most 10 people." : "Pick up to 9 friends. Messages are end-to-end encrypted.";
+  $("group-save").disabled = editingGroup ? false : picked < 1;
+}
+$("group-name").addEventListener("input", updateGroupSave);
+
+$("group-form").addEventListener("submit", () => {
+  const name = $("group-name").value.trim();
+  const picked = pickedGroupFriends();
+  if (editingGroup) {
+    accountSend({ type: "group_update", group: editingGroup.id, name, add: picked }).catch((err) => toast(friendlyError(err), true));
+  } else {
+    accountSend({ type: "group_create", members: picked, name }).catch((err) => toast(friendlyError(err), true));
+  }
+});
+
+async function leaveGroup(id) {
+  const ok = await confirmDialog({ title: `Leave ${groupName(state.groups.get(id))}`, text: "You won't get its messages anymore, and someone has to add you to come back.", ok: "Leave group" });
+  if (ok) accountSend({ type: "group_leave", group: id }).catch(() => {});
+}

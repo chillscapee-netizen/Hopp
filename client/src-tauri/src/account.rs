@@ -31,6 +31,10 @@ const ALLOWED: &[&str] = &[
     "dm_read",
     "channel_read",
     "call",
+    "group_create",
+    "group_update",
+    "group_leave",
+    "group_send",
 ];
 
 #[derive(Default)]
