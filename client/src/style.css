@@ -2000,3 +2000,39 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .status-dot.idle { background: var(--yellow); }
 .status-dot.dnd { background: var(--red); }
 .status-dot.offline { background: var(--faint); }
+
+/* ---------- direct messages ---------- */
+.home-body.dm-body { padding: 0; overflow: hidden; display: flex; }
+.dm-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.dm-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+.dm-messages { margin-top: auto; }
+.dm-intro { padding-top: 24px; }
+.dm-intro .avatar { margin-bottom: 12px; }
+.dm-handle { margin: -4px 0 8px !important; color: var(--muted); font-size: 15px; }
+.dm-lock { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px !important; color: var(--faint); font-size: 12.5px; }
+.msg.pending .msg-text { color: var(--faint); }
+.msg.failed .msg-text { color: var(--red); }
+.msg-failed { color: var(--red); font-size: 12px; }
+.msg-text.unreadable { color: var(--faint); font-style: italic; }
+.dm-row .avatar { width: 32px; height: 32px; }
+.dm-row .avatar .status-dot { border-color: var(--side); }
+.dm-row.active { background: var(--active); color: var(--text); }
+.dm-row.unread .row-title { color: var(--text); font-weight: 700; }
+.friend-row.clickable { cursor: pointer; }
+.rail-badge {
+  position: absolute; right: 8px; bottom: -2px;
+  min-width: 18px; height: 18px;
+  padding: 0 5px;
+  border: 3px solid var(--frame);
+  border-radius: 10px;
+  background: var(--red);
+  color: var(--on-color);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 12px;
+  text-align: center;
+  box-sizing: content-box;
+}
+#home.dm-open .friend-tabs, #home.dm-open .friends-head .head-sep { display: none; }
+
+#home-btn .rail-badge { right: 10px; bottom: -3px; }

@@ -913,6 +913,7 @@ function railFolder(f) {
 function renderRail() {
   $("home-btn").classList.toggle("active", !state.activeId && !state.connectingId);
   normalizeRail();
+  if (typeof renderHomeBadge === "function" && state.conversations) renderHomeBadge();
   $("server-list").replaceChildren(
     ...prefs.rail.map((item) => (item.folder ? railFolder(item) : railServer(serverById(item.id)))),
   );
@@ -1173,6 +1174,7 @@ $("folder-form").addEventListener("submit", () => {
 
 $("home-btn").addEventListener("click", () => {
   if (state.activeId || state.connectingId) disconnect();
+  else if (state.openDm) closeDm();
 });
 
 function removeServer(server) {
@@ -1604,17 +1606,18 @@ function renderSidebar() {
       b.addEventListener("contextmenu", (e) => openServerMenu(s, e.clientX, e.clientY));
       return b;
     });
-    const friends = el("button", "server-row nav-row active");
+    const friends = el("button", "server-row nav-row" + (state.openDm ? "" : " active"));
     friends.append(icon("users"), el("span", "row-title", "Friends"));
     const incoming = [...(state.friends?.values() ?? [])].filter((f) => f.state === "incoming").length;
     if (incoming) friends.append(el("span", "count-badge", String(incoming)));
     friends.addEventListener("click", () => {
       state.friendTab = incoming ? "pending" : "online";
-      renderHome();
+      state.openDm = null;
+      renderAll();
     });
     const cat = el("div", "category");
     cat.append(el("span", "", "Your servers"));
-    body.replaceChildren(friends, cat, ...(rows.length ? rows : [el("div", "sidebar-empty", "No servers yet.")]));
+    body.replaceChildren(friends, ...dmSidebarRows(), cat, ...(rows.length ? rows : [el("div", "sidebar-empty", "No servers yet.")]));
     return;
   }
 
@@ -2019,6 +2022,14 @@ setInterval(() => {
 // ---------- home ----------
 
 function renderHome() {
+  if (state.openDm) {
+    renderDmView();
+    return;
+  }
+  $("home").classList.remove("dm-open");
+  $("home").querySelector(".head-title").textContent = "Friends";
+  $("home").querySelector(".head-icon").innerHTML = '<use href="#i-users"/>';
+  $("home-body").classList.remove("dm-body");
   const body = $("home-body");
   const sections = [];
   const n = state.notice;
@@ -3410,10 +3421,14 @@ listen("account-state", (e) => {
 
 listen("account", (e) => {
   const m = e.payload;
+  if (onDmEvent(m)) return;
   switch (m.type) {
     case "welcome":
       state.me = m.me;
       state.friends = new Map(m.friends.map((f) => [f.key, f]));
+      state.conversations = new Map((m.conversations ?? []).map((c) => [c.peer, { last_at: c.last_at, last_read: c.last_read }]));
+      // A reconnect: fetch what arrived meanwhile for conversations already open.
+      for (const peer of state.dmMessages.keys()) invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
       syncState.version = m.sync.version;
       receiveSync(m.sync.data);
       // A Ström ID made before usernames: ask once (it can wait).
@@ -3576,6 +3591,9 @@ function friendRow(f) {
     b.addEventListener("click", () => accountSend({ type: "unblock", key: f.key }));
     actions.append(b);
   } else {
+    action("message", "Message", () => openDm(f.key));
+    li.classList.add("clickable");
+    li.addEventListener("click", () => openDm(f.key));
     action("more", "More", (e) => {
       const r = e.currentTarget.getBoundingClientRect();
       openMenu(
@@ -3886,3 +3904,286 @@ async function pushSync() {
     syncState.dirty = true;
   }
 }
+
+// ---------- direct messages ----------
+//
+// End-to-end encrypted: sealed here with a key only we and the friend share
+// (dm_seal / dm_open), stored as ciphertext in both accounts.
+
+state.conversations = new Map(); // peer key -> { last_at, last_read }
+state.dmMessages = new Map(); // peer key -> [{ id, from_key, sent_at, text, pending?, failed? }]
+state.dmComplete = new Set(); // peers whose whole history is loaded
+state.openDm = null;
+
+function personFor(key) {
+  if (key === state.me?.key) return state.me;
+  return state.friends.get(key) ?? { key, display_name: "Unknown", username: null, avatar: null, status: "offline" };
+}
+
+function unreadDms() {
+  let n = 0;
+  for (const c of state.conversations.values()) if (c.last_at > c.last_read) n++;
+  return n;
+}
+
+async function decrypt(peer, m) {
+  try {
+    return await invoke("dm_open", { peer, sealed: m.sealed });
+  } catch {
+    return null;
+  }
+}
+
+async function addDmMessages(peer, raw, prepend) {
+  const list = state.dmMessages.get(peer) ?? [];
+  const known = new Set(list.map((m) => m.id));
+  const fresh = [];
+  for (const m of raw) {
+    if (known.has(m.id)) continue;
+    fresh.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, text: await decrypt(peer, m) });
+  }
+  const merged = prepend ? [...fresh, ...list] : [...list, ...fresh];
+  merged.sort((a, b) => a.sent_at - b.sent_at);
+  state.dmMessages.set(peer, merged);
+}
+
+function onDmEvent(m) {
+  if (m.type === "dm") {
+    const peer = m.with;
+    const conv = state.conversations.get(peer) ?? { last_at: 0, last_read: 0 };
+    conv.last_at = Math.max(conv.last_at, m.message.sent_at);
+    const mine = m.message.from_key === state.me?.key;
+    const viewing = state.openDm === peer && document.hasFocus() && !online();
+    if (mine || viewing) conv.last_read = conv.last_at;
+    state.conversations.set(peer, conv);
+    // Our own message coming back: it replaces the one shown while sending.
+    if (m.nonce) {
+      const list = state.dmMessages.get(peer) ?? [];
+      state.dmMessages.set(peer, list.filter((x) => x.nonce !== m.nonce));
+    }
+    addDmMessages(peer, [m.message]).then(() => {
+      if (!mine) {
+        if (viewing) markDmRead(peer);
+        else notifyDm(peer, state.dmMessages.get(peer).find((x) => x.id === m.message.id)?.text);
+      }
+      renderDmAreas(peer);
+    });
+    return true;
+  }
+  if (m.type === "dm_history") {
+    if (m.complete) state.dmComplete.add(m.with);
+    addDmMessages(m.with, m.messages, true).then(() => renderDmAreas(m.with, true));
+    return true;
+  }
+  if (m.type === "dm_read") {
+    const conv = state.conversations.get(m.with);
+    if (conv) conv.last_read = Math.max(conv.last_read, m.at);
+    renderDmAreas(m.with);
+    return true;
+  }
+  if (m.type === "error" && m.for === "dm_send") {
+    const list = state.dmMessages.get(m.with) ?? [];
+    const pending = list.find((x) => x.nonce === m.nonce);
+    if (pending) pending.failed = true;
+    toast(m.message, true);
+    renderDmAreas(m.with);
+    return true;
+  }
+  return false;
+}
+
+function notifyDm(peer, text) {
+  const who = personFor(peer);
+  if (state.me?.status === "dnd") return;
+  playSound("message");
+  if (!document.hasFocus()) invoke("notify", { title: who.display_name, body: text ?? "Sent you a message" }).catch(() => {});
+}
+
+function markDmRead(peer) {
+  const conv = state.conversations.get(peer);
+  if (!conv || conv.last_read >= conv.last_at) return;
+  conv.last_read = conv.last_at;
+  invoke("account_send", { msg: { type: "dm_read", with: peer, at: conv.last_at } }).catch(() => {});
+}
+
+function renderDmAreas(peer, keepScroll) {
+  renderHomeBadge();
+  if (online()) return;
+  renderSidebar();
+  if (state.openDm === peer) renderDmView(keepScroll);
+}
+
+function renderHomeBadge() {
+  const n = unreadDms() + [...(state.friends?.values() ?? [])].filter((f) => f.state === "incoming").length;
+  let badge = $("home-btn").querySelector(".rail-badge");
+  if (!badge) {
+    badge = el("span", "rail-badge");
+    $("home-btn").append(badge);
+  }
+  badge.textContent = n > 99 ? "99+" : String(n);
+  badge.hidden = n === 0;
+}
+
+function openDm(peer) {
+  state.openDm = peer;
+  if (state.activeId || state.connectingId) disconnect();
+  if (!state.dmMessages.has(peer)) {
+    state.dmMessages.set(peer, []);
+    invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
+  }
+  markDmRead(peer);
+  renderAll();
+  setTimeout(() => $("dm-input")?.focus(), 0);
+}
+
+function closeDm() {
+  state.openDm = null;
+  renderAll();
+}
+
+/** The sidebar's list of conversations on Home. */
+function dmSidebarRows() {
+  const rows = [...state.conversations.entries()]
+    .filter(([peer]) => state.friends.has(peer))
+    .sort((a, b) => b[1].last_at - a[1].last_at)
+    .map(([peer, conv]) => {
+      const p = personFor(peer);
+      const b = el("button", "server-row dm-row");
+      b.classList.toggle("active", state.openDm === peer);
+      b.classList.toggle("unread", conv.last_at > conv.last_read);
+      const text = el("span", "row-text");
+      text.append(el("span", "row-title ellipsis", p.display_name));
+      if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
+      b.append(personAvatar(p, "", p.state === "friend"), text);
+      if (conv.last_at > conv.last_read) b.append(el("span", "count-badge", "1"));
+      b.addEventListener("click", () => openDm(peer));
+      return b;
+    });
+  if (!rows.length) return [];
+  const cat = el("div", "category");
+  cat.append(el("span", "", "Direct messages"));
+  return [cat, ...rows];
+}
+
+function renderDmView(keepScroll) {
+  const peer = state.openDm;
+  const p = personFor(peer);
+  $("home").classList.add("dm-open");
+  const head = $("home").querySelector(".head-title");
+  head.textContent = p.display_name;
+  const headIcon = $("home").querySelector(".head-icon");
+  headIcon.innerHTML = '<use href="#i-at"/>';
+
+  const body = $("home-body");
+  body.classList.add("dm-body");
+  let view = body.querySelector(".dm-view");
+  if (!view || view.dataset.peer !== peer) {
+    view = el("div", "dm-view");
+    view.dataset.peer = peer;
+    const scroller = el("div", "dm-scroll");
+    const list = el("ol", "messages dm-messages");
+    scroller.append(list);
+    const form = el("form", "composer dm-composer");
+    const box = el("div", "composer-box");
+    const input = el("textarea");
+    input.id = "dm-input";
+    input.rows = 1;
+    input.maxLength = 2000;
+    input.placeholder = `Message @${p.username ?? p.display_name}`;
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        sendDm(peer, input);
+      }
+    });
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = `${input.scrollHeight}px`;
+    });
+    box.append(input);
+    const lock = el("p", "dm-lock");
+    lock.append(icon("lock", "xs"), "Only you and " + p.display_name + " can read these messages.");
+    form.append(box);
+    view.append(scroller, form);
+    body.replaceChildren(view);
+    scroller.addEventListener("scroll", () => {
+      if (scroller.scrollTop < 40 && !state.dmComplete.has(peer)) loadOlderDms(peer);
+    });
+    view.dataset.lockText = lock.textContent;
+    view.lock = lock;
+  }
+  const scroller = view.querySelector(".dm-scroll");
+  const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
+  const oldHeight = scroller.scrollHeight;
+  const items = [];
+  const intro = el("li", "welcome dm-intro");
+  intro.append(personAvatar(p, "s80", false), el("h1", "", p.display_name));
+  if (p.username) intro.append(el("p", "dm-handle", `@${p.username}`));
+  intro.append(el("p", "", `This is the beginning of your messages with ${p.display_name}.`), view.lock);
+  items.push(intro);
+  let prev = null;
+  for (const m of state.dmMessages.get(peer) ?? []) {
+    const day = dayLabel(m.sent_at);
+    const newDay = !prev || dayLabel(prev.sent_at) !== day;
+    if (newDay) items.push(el("li", "day-divider", day));
+    const grouped = !newDay && prev.from_key === m.from_key && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const li = el("li", "msg " + (grouped ? "cont" : "first") + (m.pending ? " pending" : "") + (m.failed ? " failed" : ""));
+    if (grouped) li.append(el("span", "msg-gutter", clock(m.sent_at)));
+    else {
+      const author = personFor(m.from_key);
+      const headLine = el("div", "msg-head");
+      const name = el("span", "msg-author", author.display_name);
+      headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
+      li.append(personAvatar(author, "s40", false), headLine);
+    }
+    li.append(m.text === null ? el("div", "msg-text unreadable", "This message can't be read.") : messageText(m.text));
+    if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
+    items.push(li);
+    prev = m;
+  }
+  view.querySelector(".dm-messages").replaceChildren(...items);
+  if (keepScroll) scroller.scrollTop = scroller.scrollHeight - oldHeight + scroller.scrollTop;
+  else if (atBottom || !view.dataset.scrolled) {
+    scroller.scrollTop = scroller.scrollHeight;
+    view.dataset.scrolled = "1";
+  }
+}
+
+let loadingOlder = false;
+function loadOlderDms(peer) {
+  if (loadingOlder) return;
+  const first = state.dmMessages.get(peer)?.[0];
+  if (!first) return;
+  loadingOlder = true;
+  invoke("account_send", { msg: { type: "dm_history", with: peer, before: first.sent_at } }).catch(() => {});
+  setTimeout(() => (loadingOlder = false), 800);
+}
+
+async function sendDm(peer, input) {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  input.style.height = "auto";
+  const nonce = Math.random().toString(36).slice(2);
+  const list = state.dmMessages.get(peer) ?? [];
+  list.push({ id: `pending-${nonce}`, nonce, from_key: state.me.key, sent_at: Date.now(), text, pending: true });
+  state.dmMessages.set(peer, list);
+  renderDmView();
+  try {
+    const sealed = await invoke("dm_seal", { peer, text });
+    await invoke("account_send", { msg: { type: "dm_send", to: peer, sealed, nonce } });
+  } catch (err) {
+    const pending = list.find((x) => x.nonce === nonce);
+    if (pending) pending.failed = true;
+    toast(friendlyError(err), true);
+    renderDmView();
+  }
+}
+
+// Reading a conversation when the window comes back.
+window.addEventListener("focus", () => {
+  if (state.openDm && !online()) {
+    markDmRead(state.openDm);
+    renderDmAreas(state.openDm);
+  }
+});

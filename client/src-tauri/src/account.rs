@@ -26,6 +26,9 @@ const ALLOWED: &[&str] = &[
     "friend_remove",
     "block",
     "unblock",
+    "dm_send",
+    "dm_history",
+    "dm_read",
 ];
 
 #[derive(Default)]
@@ -108,4 +111,25 @@ pub fn open_private(state: State<'_, AppState>, sealed: String) -> CmdResult<Str
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
     let bytes = identity.open_private(&sealed).map_err(|e| e.to_string())?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/** Encrypts a direct message so only we and `peer` can read it. */
+#[tauri::command]
+pub fn dm_seal(state: State<'_, AppState>, peer: String, text: String) -> CmdResult<String> {
+    let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    identity.seal_for(&peer, text.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn dm_open(state: State<'_, AppState>, peer: String, sealed: String) -> CmdResult<String> {
+    let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    let bytes = identity.open_from(&peer, &sealed).map_err(|e| e.to_string())?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/** A Windows notification (for a message that arrives while Ström isn't in front). */
+#[tauri::command]
+pub fn notify(app: AppHandle, title: String, body: String) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
 }

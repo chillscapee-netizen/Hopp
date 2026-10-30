@@ -998,6 +998,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState::default())
         .manage(shell::PendingLink::default())
         .manage(account::Account::default())
@@ -1060,6 +1061,9 @@ fn main() {
             account::account_send,
             account::seal_private,
             account::open_private,
+            account::dm_seal,
+            account::dm_open,
+            account::notify,
             debug_info,
             quit_app,
             test_output,
