@@ -27,6 +27,7 @@
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
     <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></symbol>
@@ -196,9 +197,17 @@
       </aside>
 
       <main id="home" class="home-view">
-        <header class="main-head">
-          <svg class="i head-icon"><use href="#i-server"/></svg>
-          <span class="head-title">Home</span>
+        <header class="main-head friends-head">
+          <svg class="i head-icon"><use href="#i-users"/></svg>
+          <span class="head-title">Friends</span>
+          <span class="head-sep"></span>
+          <nav class="friend-tabs">
+            <button type="button" class="friend-tab" data-ftab="online">Online</button>
+            <button type="button" class="friend-tab" data-ftab="all">All</button>
+            <button type="button" class="friend-tab" data-ftab="pending">Pending <span class="tab-badge" hidden></span></button>
+            <button type="button" class="friend-tab" data-ftab="blocked">Blocked</button>
+            <button type="button" class="friend-tab add" data-ftab="add">Add friend</button>
+          </nav>
         </header>
         <div id="home-body" class="home-body"></div>
       </main>
@@ -411,6 +420,26 @@
     </div>
   </dialog>
 
+  <!-- ---------- username ---------- -->
+  <dialog id="username-dialog" class="modal">
+    <form id="username-form" method="dialog">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2 id="username-title">Pick a username</h2>
+        <p class="modal-sub">Friends add you by it. Lowercase letters, numbers, _ and .</p>
+        <label class="username-field">
+          <span class="at">@</span>
+          <input id="username-input" maxlength="32" autocomplete="off" spellcheck="false" placeholder="username">
+        </label>
+        <p id="username-status" class="username-status"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="username-later" type="button" class="btn-link">Later</button>
+        <button id="username-save" type="submit" class="btn primary" disabled>Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ---------- folder settings ---------- -->
   <dialog id="folder-dialog" class="modal">
     <form id="folder-form" method="dialog">
@@ -589,8 +618,24 @@
             </div>
           </div>
 
+          <p id="account-offline" class="row-note hint" hidden>Connecting to your account… Your username, picture and friends show up in a moment.</p>
           <h3 class="card-title">Profile</h3>
           <div class="card">
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Username</span>
+                <span id="profile-username" class="row-sub"></span>
+              </span>
+              <button id="profile-username-btn" type="button" class="btn sm">Change</button>
+            </div>
+            <div class="row">
+              <span class="row-label"><span class="row-title">Profile picture</span></span>
+              <span class="row-control">
+                <button id="avatar-remove" type="button" class="btn-link sm">Remove</button>
+                <button id="avatar-upload" type="button" class="btn sm">Upload</button>
+                <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+              </span>
+            </div>
             <label class="row stacked">
               <span class="row-label">
                 <span class="row-title">Display name</span>
@@ -644,6 +689,14 @@
               </span>
               <button id="backup-btn" type="button" class="btn sm"></button>
             </div>
+            <label class="row">
+              <span class="row-label"><span class="row-title">Who can send you friend requests</span></span>
+              <select id="privacy-requests" class="row-select">
+                <option value="everyone">Everyone</option>
+                <option value="friends_of_friends">Friends of friends</option>
+                <option value="nobody">Nobody</option>
+              </select>
+            </label>
             <label class="row">
               <span class="row-label">
                 <span class="row-title">Stay logged in</span>

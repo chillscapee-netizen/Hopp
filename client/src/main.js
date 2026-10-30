@@ -74,6 +74,11 @@ const prefs = {
 };
 
 function newServer(address, label, invite) {
+  // Added again after being removed on some device: it's wanted after all.
+  if (prefs.removedServers?.[address]) {
+    delete prefs.removedServers[address];
+    save("removedServers", JSON.stringify(prefs.removedServers));
+  }
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     address,
@@ -84,6 +89,7 @@ function newServer(address, label, invite) {
 }
 function saveServers() {
   save("servers", JSON.stringify(prefs.servers));
+  if (typeof syncState !== "undefined" && syncState.ready) scheduleSync();
 }
 
 const state = {
@@ -145,9 +151,17 @@ function hue(name) {
   return h;
 }
 
-function avatar(name, size, dot) {
-  const a = el("span", "avatar" + (size ? ` ${size}` : ""), initials(name || "?").slice(0, size === "s24" ? 1 : 2));
+function avatar(name, size, dot, picture) {
+  const a = el("span", "avatar" + (size ? ` ${size}` : ""), picture ? "" : initials(name || "?").slice(0, size === "s24" ? 1 : 2));
   a.style.setProperty("--hue", hue(name || "?"));
+  if (picture) {
+    const img = el("img");
+    img.src = picture;
+    img.alt = "";
+    img.draggable = false;
+    a.append(img);
+    a.classList.add("has-picture");
+  }
   if (dot) a.append(el("span", `status-dot ${dot}`));
   return a;
 }
@@ -350,6 +364,7 @@ async function enterApp() {
   $("remember-toggle").checked = status.remembered;
   renderBackupState();
   renderAll();
+  startAccount();
   // Started from a strom:// link (or one arrived while logged out): follow it now.
   const link = await invoke("take_pending_link");
   if (link) openLink(link);
@@ -809,6 +824,7 @@ const FOLDER_COLORS = ["#7f8ea3", "#5b84c4", "#4a9e94", "#5c9e62", "#c4963f", "#
 
 function saveRail() {
   save("rail", JSON.stringify(prefs.rail));
+  if (typeof syncState !== "undefined" && syncState.ready) scheduleSync();
 }
 
 /** Keeps the rail in step with the server list: every server once, no empty folders. */
@@ -1161,6 +1177,9 @@ $("home-btn").addEventListener("click", () => {
 
 function removeServer(server) {
   if (server.id === state.activeId) disconnect();
+  // Remembered, so another device doesn't bring it back.
+  prefs.removedServers[server.address] = Date.now();
+  save("removedServers", JSON.stringify(prefs.removedServers));
   prefs.servers = prefs.servers.filter((s) => s.id !== server.id);
   saveServers();
   renderAll();
@@ -1358,6 +1377,7 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   state.roster = e.payload;
   const after = myVoice();
+  if ((before === null) !== (after === null)) setActivityFromVoice();
   if (before === null && after !== null) playSound("join");
   else if (before !== null && after === null) playSound("leave");
   else if (after !== null && before === after) {
@@ -1584,9 +1604,17 @@ function renderSidebar() {
       b.addEventListener("contextmenu", (e) => openServerMenu(s, e.clientX, e.clientY));
       return b;
     });
+    const friends = el("button", "server-row nav-row active");
+    friends.append(icon("users"), el("span", "row-title", "Friends"));
+    const incoming = [...(state.friends?.values() ?? [])].filter((f) => f.state === "incoming").length;
+    if (incoming) friends.append(el("span", "count-badge", String(incoming)));
+    friends.addEventListener("click", () => {
+      state.friendTab = incoming ? "pending" : "online";
+      renderHome();
+    });
     const cat = el("div", "category");
     cat.append(el("span", "", "Your servers"));
-    body.replaceChildren(cat, ...(rows.length ? rows : [el("div", "sidebar-empty", "No servers yet.")]));
+    body.replaceChildren(friends, cat, ...(rows.length ? rows : [el("div", "sidebar-empty", "No servers yet.")]));
     return;
   }
 
@@ -1714,7 +1742,8 @@ function renderVoicePanel() {
 function renderUserPanel() {
   const on = online();
   const name = state.account?.name ?? "";
-  $("me-avatar-slot").replaceChildren(avatar(name, "", on ? "online" : "offline"));
+  const myStatus = state.accountConnected ? state.me?.status ?? "online" : on ? "online" : "offline";
+  $("me-avatar-slot").replaceChildren(avatar(name, "", statusDot(myStatus), state.me?.avatar));
   const card = $("me-card");
   card.dataset.user = on ? state.roster.me : "";
   const live = on && state.speaking.has(state.roster.me);
@@ -1726,7 +1755,7 @@ function renderUserPanel() {
   const voice = on ? myVoice() : null;
   status.classList.toggle("live", sending);
   status.textContent = !on
-    ? state.connectingId ? "Connecting…" : "Offline"
+    ? state.connectingId ? "Connecting…" : state.accountConnected ? STATUS_LABEL[state.me?.status ?? "online"] : "Offline"
     : state.deafened ? "Deafened"
     : state.muted ? "Muted"
     : sending ? "Speaking"
@@ -2015,38 +2044,8 @@ function renderHome() {
     sections.push(wrap);
   }
 
-  const intro = el("section", "home-section");
-  intro.append(
-    el("h1", "", `Hi ${state.account.name}!`),
-    el("p", "lead", prefs.servers.length
-      ? "Pick a server to read and write in its channels, and join a voice channel when you want to talk."
-      : "You're not in any servers yet. Create one in a click, or join one with an invite link."),
-  );
-  sections.push(intro);
-
-  const list = el("section", "home-section");
-  list.append(el("h3", "", `Your servers — ${prefs.servers.length}`));
-  const cards = el("div", "server-cards");
-  for (const s of prefs.servers) {
-    const card = el("div", "server-card");
-    const top = el("div", "server-card-top");
-    const text = el("div", "row-text");
-    text.append(el("span", "server-card-name ellipsis", s.label), el("span", "server-card-addr ellipsis", displayAddress(s)));
-    top.append(serverChip(s), text);
-    const join = el("button", "btn primary full", s.id === state.connectingId ? "Connecting…" : "Connect");
-    join.disabled = s.id === state.connectingId;
-    join.addEventListener("click", () => connectTo(s));
-    card.append(top, join);
-    card.addEventListener("contextmenu", (e) => openServerMenu(s, e.clientX, e.clientY));
-    cards.append(card);
-  }
-  const add = el("button", "server-card add");
-  add.append(icon("plus"), el("span", "", "Add a server"));
-  add.addEventListener("click", () => openAddDialog("choose"));
-  cards.append(add);
-  list.append(cards);
-  sections.push(list);
-
+  renderFriendTabs();
+  sections.push(friendsPanel());
   body.replaceChildren(...sections);
 }
 
@@ -2376,12 +2375,12 @@ function renderOverview() {
 }
 
 /** Scales a picture down to a square of at most 256 px, small enough to send to the server. */
-function shrinkPicture(file) {
+function shrinkPicture(file, steps = [[256, 0.9], [256, 0.75], [192, 0.7], [128, 0.7]], limit = 190_000) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const side = Math.min(img.naturalWidth, img.naturalHeight);
-      for (const [size, quality] of [[256, 0.9], [256, 0.75], [192, 0.7], [128, 0.7]]) {
+      for (const [size, quality] of steps) {
         const canvas = document.createElement("canvas");
         canvas.width = canvas.height = Math.min(size, side);
         // Crop to the centre square.
@@ -2390,7 +2389,7 @@ function shrinkPicture(file) {
         );
         let data = canvas.toDataURL("image/webp", quality);
         if (!data.startsWith("data:image/webp")) data = canvas.toDataURL("image/jpeg", quality);
-        if (data.length <= 190_000) return resolve(data);
+        if (data.length <= limit) return resolve(data);
       }
       reject(new Error("That picture is too large. Try a smaller one."));
     };
@@ -2584,14 +2583,18 @@ function showTab(tab) {
 }
 document.querySelectorAll(".settings-tab[data-tab]").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
 document.querySelectorAll(".open-settings").forEach((b) => b.addEventListener("click", () => openSettings("voice")));
-$("me-card").addEventListener("click", () => openSettings("profile"));
+$("me-card").addEventListener("click", () => {
+  const r = $("me-card").getBoundingClientRect();
+  openStatusMenu(r.left, r.top);
+});
 $("settings").addEventListener("close", stopMicTest);
 $("settings").addEventListener("close", stopRecordingPtt);
 
 function renderProfilePreview() {
   const name = state.account?.name ?? "?";
   $("profile-banner").style.setProperty("--hue", hue(name));
-  $("profile-avatar-slot").replaceChildren(avatar(name, "s80"));
+  $("profile-avatar-slot").replaceChildren(avatar(name, "s80", undefined, state.me?.avatar));
+  if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
   const key = state.account?.publicKey ?? "";
   $("profile-key").textContent = key ? `Ström ID ${key.slice(0, 16).match(/.{4}/g).join(" ")}` : "";
@@ -2602,6 +2605,7 @@ $("settings-name").addEventListener("change", async (e) => {
   try {
     const name = await invoke("rename_account", { name: e.target.value });
     state.account.name = name;
+    invoke("account_send", { msg: { type: "set_profile", display_name: name } }).catch(() => {});
     e.target.value = name;
     status.textContent = online() ? "Saved. Your new name shows up the next time you connect to a server." : "Saved.";
     renderProfilePreview();
@@ -2945,6 +2949,7 @@ function playSound(name) {
   const isPtt = name.startsWith("ptt");
   const event = SOUND_EVENT_OF[name];
   if (!notes || !prefs.sounds || prefs.soundVolume === 0) return;
+  if (state.me?.status === "dnd" && !isPtt && !["mute", "unmute", "deafen", "undeafen"].includes(name)) return;
   if (event && !soundOn(event)) return;
   if (state.deafened && prefs.quietDeafened && ["others", "message"].includes(event)) return;
   try {
@@ -3373,3 +3378,511 @@ for (const dialog of document.querySelectorAll("dialog")) {
 
 window.addEventListener("contextmenu", (e) => e.preventDefault());
 boot();
+
+// ---------- your account: profile, status, friends, synced data ----------
+//
+// The account lives in Ström Cloud (one object per Ström ID, see cloud/src/account.ts).
+// This keeps state.me and state.friends in step with it and draws the Friends page.
+
+state.me = null; // { key, username, display_name, avatar, bio, status, privacy }
+state.friends = new Map(); // key -> { key, username, display_name, avatar, state, status, activity }
+state.accountConnected = false;
+state.friendTab = "online";
+let usernameAsked = false;
+
+function accountSend(msg) {
+  return invoke("account_send", { msg }).catch((err) => {
+    toast(friendlyError(err), true);
+    throw err;
+  });
+}
+
+function startAccount() {
+  invoke("start_account", { cloud: prefs.cloudUrl }).catch(() => {});
+}
+
+listen("account-state", (e) => {
+  state.accountConnected = !!e.payload.connected;
+  state.accountError = e.payload.connected ? null : e.payload.error ?? null;
+  renderUserPanel();
+  if (!online()) renderHome();
+});
+
+listen("account", (e) => {
+  const m = e.payload;
+  switch (m.type) {
+    case "welcome":
+      state.me = m.me;
+      state.friends = new Map(m.friends.map((f) => [f.key, f]));
+      syncState.version = m.sync.version;
+      receiveSync(m.sync.data);
+      // A Ström ID made before usernames: ask once (it can wait).
+      if (!m.me.username && !usernameAsked) {
+        usernameAsked = true;
+        openUsernameDialog(true);
+      }
+      setActivityFromVoice();
+      break;
+    case "profile":
+      state.me = { ...state.me, ...m.me };
+      if ($("username-dialog").open && m.me.username) $("username-dialog").close();
+      break;
+    case "status":
+      state.me.status = m.status;
+      break;
+    case "privacy":
+      state.me.privacy = m.requests;
+      break;
+    case "sync":
+      syncState.version = m.version;
+      // A refused save: merge with the newer copy, then save again.
+      if (m.conflict) syncState.saving = false;
+      receiveSync(m.data, m.conflict);
+      break;
+    case "sync_saved":
+      syncState.version = m.version;
+      syncState.saving = false;
+      if (syncState.dirty) pushSync();
+      break;
+    case "friend": {
+      const before = state.friends.get(m.friend.key);
+      state.friends.set(m.friend.key, m.friend);
+      if (m.request) {
+        toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
+        playSound("user_join");
+      } else if (m.accepted) {
+        toast(`${m.friend.display_name} accepted your friend request.`);
+      } else if (m.friend.state === "outgoing" && !before) {
+        addFriendResult(`Friend request sent to @${m.friend.username}.`, false);
+      }
+      break;
+    }
+    case "friend_removed":
+      state.friends.delete(m.key);
+      break;
+    case "presence": {
+      const f = state.friends.get(m.key);
+      if (f) Object.assign(f, { status: m.status, activity: m.activity });
+      break;
+    }
+    case "username_check":
+      showUsernameCheck(m);
+      return;
+    case "error":
+      if (m.for === "friend_request") addFriendResult(m.message, true);
+      else if (m.for === "claim_username" || m.for === "check_username") showUsernameError(m.message);
+      else toast(m.message, true);
+      return;
+  }
+  renderUserPanel();
+  renderProfilePreview();
+  if (!online()) {
+    renderSidebar();
+    renderHome();
+  }
+});
+
+// ---------- presence: what friends see you doing ----------
+
+let lastActivity;
+function setActivityFromVoice() {
+  // Just "in voice": which server and channel stays private.
+  const activity = inVoice() ? "In voice" : null;
+  if (activity === lastActivity || !state.accountConnected) return;
+  lastActivity = activity;
+  invoke("account_send", { msg: { type: "set_activity", activity } }).catch(() => {});
+}
+
+const STATUS_LABEL = { online: "Online", idle: "Idle", dnd: "Do Not Disturb", invisible: "Invisible", offline: "Offline" };
+
+function openStatusMenu(x, y) {
+  const current = state.me?.status ?? "online";
+  const item = (status, sub) => ({
+    label: STATUS_LABEL[status],
+    sub,
+    checked: current === status,
+    action: () => accountSend({ type: "set_status", status }).catch(() => {}),
+  });
+  openMenu(
+    [
+      { heading: "Status" },
+      item("online"),
+      item("idle"),
+      item("dnd", "No notification sounds"),
+      item("invisible", "You'll look offline"),
+      "sep",
+      { label: "Edit profile", icon: "user", action: () => openSettings("profile") },
+    ],
+    x,
+    y,
+    true,
+  );
+}
+
+// ---------- the Friends page ----------
+
+function friendRows(tab) {
+  const all = [...state.friends.values()];
+  const byName = (a, b) => a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" });
+  if (tab === "online") return all.filter((f) => f.state === "friend" && f.status !== "offline").sort(byName);
+  if (tab === "all") return all.filter((f) => f.state === "friend").sort(byName);
+  if (tab === "pending") return all.filter((f) => f.state === "incoming" || f.state === "outgoing").sort((a, b) => (a.state === b.state ? byName(a, b) : a.state === "incoming" ? -1 : 1));
+  if (tab === "blocked") return all.filter((f) => f.state === "blocked").sort(byName);
+  return [];
+}
+
+function personAvatar(p, size, withStatus) {
+  const a = avatar(p.display_name || p.username || "?", size, withStatus ? statusDot(p.status) : undefined, p.avatar);
+  return a;
+}
+
+function statusDot(status) {
+  return status === "online" ? "online" : status === "idle" ? "idle" : status === "dnd" ? "dnd" : "offline";
+}
+
+function friendRow(f) {
+  const li = el("li", "friend-row");
+  const text = el("div", "friend-text");
+  const top = el("div", "friend-top");
+  top.append(el("strong", "ellipsis", f.display_name));
+  if (f.username) top.append(el("span", "friend-username ellipsis", `@${f.username}`));
+  const sub =
+    f.state === "incoming" ? "Wants to be friends"
+    : f.state === "outgoing" ? "Request sent"
+    : f.state === "blocked" ? "Blocked"
+    : f.activity && f.status !== "offline" ? f.activity
+    : STATUS_LABEL[f.status] ?? "Offline";
+  text.append(top, el("span", "friend-sub ellipsis", sub));
+  li.append(personAvatar(f, "s40", f.state === "friend"), text);
+
+  const actions = el("div", "friend-actions");
+  const action = (iconName, tipText, onClick, cls = "") => {
+    const b = el("button", `icon-btn round ${cls}`);
+    b.dataset.tip = tipText;
+    b.append(icon(iconName));
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onClick(e);
+    });
+    actions.append(b);
+  };
+  if (f.state === "incoming") {
+    action("check", "Accept", () => accountSend({ type: "friend_accept", key: f.key }), "accept");
+    action("x", "Ignore", () => accountSend({ type: "friend_decline", key: f.key }), "decline");
+  } else if (f.state === "outgoing") {
+    action("x", "Cancel request", () => accountSend({ type: "friend_remove", key: f.key }), "decline");
+  } else if (f.state === "blocked") {
+    const b = el("button", "btn sm", "Unblock");
+    b.addEventListener("click", () => accountSend({ type: "unblock", key: f.key }));
+    actions.append(b);
+  } else {
+    action("more", "More", (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      openMenu(
+        [
+          { label: "Remove friend", icon: "x", action: () => removeFriend(f) },
+          { label: "Block", icon: "ban", danger: true, action: () => blockPerson(f) },
+        ],
+        r.left - 150,
+        r.bottom + 4,
+      );
+    });
+  }
+  li.append(actions);
+  return li;
+}
+
+async function removeFriend(f) {
+  const ok = await confirmDialog({ title: `Remove ${f.display_name}`, text: `Remove ${f.display_name} from your friends? You can add them again later.`, ok: "Remove friend" });
+  if (ok) accountSend({ type: "friend_remove", key: f.key }).catch(() => {});
+}
+
+async function blockPerson(f) {
+  const ok = await confirmDialog({
+    title: `Block ${f.display_name}`,
+    text: "They won't be able to send you friend requests. They aren't told you blocked them.",
+    ok: "Block",
+  });
+  if (ok) accountSend({ type: "block", key: f.key }).catch(() => {});
+}
+
+function renderFriendTabs() {
+  const pending = friendRows("pending").filter((f) => f.state === "incoming").length;
+  for (const b of document.querySelectorAll("[data-ftab]")) {
+    b.classList.toggle("active", b.dataset.ftab === state.friendTab);
+    const badge = b.querySelector(".tab-badge");
+    if (badge) {
+      badge.textContent = pending;
+      badge.hidden = b.dataset.ftab !== "pending" || pending === 0;
+    }
+  }
+}
+
+for (const b of document.querySelectorAll("[data-ftab]")) {
+  b.addEventListener("click", () => {
+    state.friendTab = b.dataset.ftab;
+    renderHome();
+    if (state.friendTab === "add") setTimeout(() => $("add-friend-input")?.focus(), 0);
+  });
+}
+
+let addFriendMessage = null;
+function addFriendResult(text, isError) {
+  addFriendMessage = { text, isError };
+  const box = $("add-friend-result");
+  if (box) {
+    box.textContent = text;
+    box.className = `add-friend-result ${isError ? "error" : "ok"}`;
+    box.hidden = false;
+  }
+  if (!isError && $("add-friend-input")) $("add-friend-input").value = "";
+}
+
+function addFriendPanel() {
+  const panel = el("section", "add-friend");
+  panel.append(el("h2", "", "Add friend"), el("p", "hint", "Add friends with their Ström username."));
+  if (!state.me?.username) {
+    const need = el("div", "callout-info");
+    const btn = el("button", "btn sm primary", "Pick a username");
+    btn.addEventListener("click", () => openUsernameDialog(false));
+    need.append(el("span", "", "You need a username first, so people know who's asking."), btn);
+    panel.append(need);
+    return panel;
+  }
+  const form = el("form", "add-friend-form");
+  const at = el("span", "at", "@");
+  const input = el("input");
+  input.id = "add-friend-input";
+  input.placeholder = "username";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.maxLength = 33;
+  const send = el("button", "btn primary sm", "Send friend request");
+  send.type = "submit";
+  send.disabled = true;
+  input.addEventListener("input", () => {
+    input.value = input.value.toLowerCase().replace(/\s/g, "");
+    send.disabled = input.value.replace(/^@/, "").length < 2;
+  });
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const username = input.value.replace(/^@/, "");
+    if (username.length < 2) return;
+    accountSend({ type: "friend_request", username }).catch(() => {});
+  });
+  form.append(at, input, send);
+  const result = el("p", "add-friend-result");
+  result.id = "add-friend-result";
+  result.hidden = !addFriendMessage;
+  if (addFriendMessage) {
+    result.textContent = addFriendMessage.text;
+    result.classList.add(addFriendMessage.isError ? "error" : "ok");
+  }
+  const mine = el("p", "hint your-name");
+  const copy = el("button", "link", "Copy");
+  copy.type = "button";
+  copy.addEventListener("click", () => copyText(state.me.username, copy, "Copy"));
+  mine.append(`Your username is @${state.me.username} · `, copy);
+  panel.append(form, result, mine);
+  return panel;
+}
+
+function friendsPanel() {
+  const wrap = el("section", "friends");
+  if (!state.accountConnected && !state.me) {
+    const box = el("div", "friends-empty");
+    box.append(el("span", "spinner"), el("p", "", state.accountError ? "Can't reach your account right now. Trying again…" : "Connecting to your account…"));
+    wrap.append(box);
+    return wrap;
+  }
+  if (state.friendTab === "add") {
+    wrap.append(addFriendPanel());
+    return wrap;
+  }
+  const rows = friendRows(state.friendTab);
+  const label = { online: "Online", all: "All friends", pending: "Pending", blocked: "Blocked" }[state.friendTab];
+  wrap.append(el("h3", "friends-count", `${label} — ${rows.length}`));
+  if (rows.length === 0) {
+    const empty = el("div", "friends-empty");
+    const text = {
+      online: state.friends.size ? "None of your friends are online right now." : "No friends yet. Add someone with their username.",
+      all: "No friends yet. Add someone with their username.",
+      pending: "No friend requests waiting.",
+      blocked: "You haven't blocked anyone.",
+    }[state.friendTab];
+    empty.append(el("p", "", text));
+    if (state.friendTab !== "blocked" && state.friendTab !== "pending") {
+      const add = el("button", "btn primary sm", "Add friend");
+      add.addEventListener("click", () => {
+        state.friendTab = "add";
+        renderHome();
+      });
+      empty.append(add);
+    }
+    wrap.append(empty);
+    return wrap;
+  }
+  const list = el("ul", "friend-list");
+  list.append(...rows.map(friendRow));
+  wrap.append(list);
+  return wrap;
+}
+
+// ---------- username ----------
+
+let usernameTimer = null;
+function openUsernameDialog(firstTime) {
+  $("username-input").value = state.me?.username ?? "";
+  $("username-later").hidden = !firstTime;
+  $("username-title").textContent = state.me?.username ? "Change your username" : "Pick a username";
+  showUsernameError(null);
+  openModal($("username-dialog"));
+  setTimeout(() => $("username-input").focus(), 0);
+}
+
+function showUsernameError(text) {
+  const box = $("username-status");
+  box.textContent = text ?? "";
+  box.className = `username-status ${text ? "error" : ""}`;
+  $("username-save").disabled = !!text || $("username-input").value.length < 2;
+}
+
+function showUsernameCheck(m) {
+  if (m.name !== $("username-input").value) return;
+  const box = $("username-status");
+  box.textContent = m.ok ? `@${m.name} is available.` : m.message;
+  box.className = `username-status ${m.ok ? "ok" : "error"}`;
+  $("username-save").disabled = !m.ok;
+}
+
+$("username-input").addEventListener("input", (e) => {
+  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, "");
+  e.target.value = v;
+  clearTimeout(usernameTimer);
+  $("username-save").disabled = true;
+  $("username-status").textContent = "";
+  if (v.length < 2 || v === state.me?.username) return;
+  usernameTimer = setTimeout(() => accountSend({ type: "check_username", name: v }).catch(() => {}), 300);
+});
+$("username-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("username-input").value;
+  if (name.length >= 2) accountSend({ type: "claim_username", name }).catch(() => {});
+});
+$("username-later").addEventListener("click", () => $("username-dialog").close());
+
+// ---------- profile in settings ----------
+
+function renderAccountSettings() {
+  const me = state.me;
+  $("profile-username").textContent = me?.username ? `@${me.username}` : "Not picked yet";
+  $("profile-username-btn").textContent = me?.username ? "Change" : "Pick one";
+  $("privacy-requests").value = me?.privacy ?? "everyone";
+  $("avatar-remove").hidden = !me?.avatar;
+  $("account-offline").hidden = state.accountConnected;
+}
+
+$("profile-username-btn").addEventListener("click", () => openUsernameDialog(false));
+$("privacy-requests").addEventListener("change", (e) => accountSend({ type: "set_privacy", requests: e.target.value }).catch(() => {}));
+$("avatar-upload").addEventListener("click", () => $("avatar-file").click());
+$("avatar-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const picture = await shrinkPicture(file, [[128, 0.85], [128, 0.7], [96, 0.7], [64, 0.7]], 38_000);
+    await accountSend({ type: "set_profile", avatar: picture });
+  } catch (err) {
+    if (err instanceof Error) toast(err.message, true);
+  }
+});
+$("avatar-remove").addEventListener("click", () => accountSend({ type: "set_profile", avatar: null }).catch(() => {}));
+
+// ---------- your servers and folders on every device ----------
+//
+// The list is saved, encrypted so only this Ström ID can read it, in the account.
+// Servers are matched by address (ids differ per device); removing one is
+// remembered so it doesn't come back from another device.
+
+var syncState = { version: 0, saving: false, dirty: false, timer: null, ready: false };
+prefs.removedServers = loadJson("removedServers", {});
+
+function syncDoc() {
+  const addressOf = (id) => serverById(id)?.address;
+  return {
+    v: 1,
+    servers: prefs.servers.map((s) => ({ address: s.address, label: s.label, customLabel: !!s.customLabel })),
+    rail: prefs.rail
+      .map((item) => (item.folder ? { folder: item.folder, name: item.name, color: item.color, open: !!item.open, addresses: item.ids.map(addressOf).filter(Boolean) } : { address: addressOf(item.id) }))
+      .filter((item) => item.address || item.addresses?.length),
+    removed: prefs.removedServers,
+  };
+}
+
+/** Folds the other device's list into ours: theirs decides order and folders, nothing added here is lost. */
+function mergeSync(remote) {
+  const removed = { ...remote.removed };
+  for (const [address, at] of Object.entries(prefs.removedServers)) removed[address] = Math.max(at, removed[address] ?? 0);
+  const keepSince = Date.now() - 90 * 86_400_000;
+  for (const [address, at] of Object.entries(removed)) if (at < keepSince) delete removed[address];
+
+  const local = new Map(prefs.servers.map((s) => [s.address, s]));
+  const servers = [];
+  for (const r of remote.servers ?? []) {
+    if (removed[r.address]) continue;
+    const mine = local.get(r.address);
+    servers.push(mine ? { ...mine, label: r.customLabel ? r.label : mine.label, customLabel: r.customLabel } : { ...newServer(r.address, r.customLabel ? r.label : ""), label: r.label });
+    local.delete(r.address);
+  }
+  for (const s of local.values()) if (!removed[s.address]) servers.push(s);
+
+  const idOf = new Map(servers.map((s) => [s.address, s.id]));
+  const rail = (remote.rail ?? []).map((item) =>
+    item.folder ? { folder: item.folder, name: item.name, color: item.color, open: item.open, ids: item.addresses.map((a) => idOf.get(a)).filter(Boolean) } : { id: idOf.get(item.address) },
+  ).filter((item) => item.id || item.ids?.length);
+
+  prefs.servers = servers;
+  prefs.rail = rail;
+  prefs.removedServers = removed;
+  save("servers", JSON.stringify(prefs.servers));
+  save("rail", JSON.stringify(prefs.rail));
+  save("removedServers", JSON.stringify(prefs.removedServers));
+  normalizeRail();
+}
+
+async function receiveSync(sealed, conflict) {
+  if (sealed) {
+    try {
+      const remote = JSON.parse(await invoke("open_private", { sealed }));
+      mergeSync(remote);
+      renderAll();
+      // Anything only this device knew goes back up.
+      if (conflict || JSON.stringify(syncDoc()) !== JSON.stringify(remote)) scheduleSync(true);
+    } catch (err) {
+      console.warn("couldn't read synced data", err);
+    }
+  } else if (prefs.servers.length) {
+    // First device with this account: upload what's here.
+    scheduleSync(true);
+  }
+  syncState.ready = true;
+}
+
+function scheduleSync(now) {
+  syncState.dirty = true;
+  clearTimeout(syncState.timer);
+  syncState.timer = setTimeout(pushSync, now ? 0 : 1500);
+}
+
+async function pushSync() {
+  if (!state.accountConnected || syncState.saving) return;
+  syncState.dirty = false;
+  syncState.saving = true;
+  try {
+    const data = await invoke("seal_private", { text: JSON.stringify(syncDoc()) });
+    await invoke("account_send", { msg: { type: "set_sync", data, base_version: syncState.version } });
+  } catch {
+    syncState.saving = false;
+    syncState.dirty = true;
+  }
+}
