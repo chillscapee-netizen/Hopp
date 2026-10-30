@@ -5,6 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import { inviteIndex } from "./invites";
+import { accountOf } from "./account";
 
 const PROTOCOL_VERSION = 5;
 const MAX_NAME_LEN = 32;
@@ -24,6 +25,8 @@ const INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 /** Voice endpoints: "a.b.c.d:port", a few local addresses at most. */
 const ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
 const MAX_LOCAL_ENDPOINTS = 4;
+/** A mention in message text: <@hex key of their Hopp ID>. */
+const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
 interface Channel { id: number; name: string; kind: ChannelKind }
@@ -34,6 +37,7 @@ interface User {
   muted: boolean;
   deafened: boolean;
   owner: boolean;
+  public_key: string;
 }
 interface ChatMessage {
   id: number;
@@ -206,6 +210,38 @@ export class StromServer extends DurableObject<Env> {
     ws.close(4000, "rejected");
   }
 
+  /**
+   * Tells every member's account about a new message, so their apps can show
+   * the server and channel as unread (and count mentions) while they're elsewhere.
+   */
+  private tellAccounts(m: ChatMessage, channelName: string) {
+    const serverId = this.meta("server_id");
+    if (!serverId) return;
+    const names = new Map<string, string>();
+    const keys: string[] = [];
+    for (const row of this.sql.exec("SELECT key, name FROM accounts WHERE key NOT IN (SELECT key FROM bans) LIMIT 1000")) {
+      keys.push(String(row.key));
+      names.set(String(row.key), String(row.name));
+    }
+    const mentioned = new Set([...m.text.matchAll(MENTION)].map((x) => x[1]));
+    const preview = m.text.replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`).slice(0, 200);
+    const activity = {
+      server: `cloud:${serverId}`,
+      server_name: this.meta("name") ?? "",
+      channel: m.channel,
+      channel_name: channelName,
+      id: m.id,
+      at: m.sent_at,
+      author_key: m.author_key,
+      author_name: m.sender_name,
+    };
+    for (const key of keys) {
+      const mention = mentioned.has(key) && key !== m.author_key;
+      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview: mention ? preview : null });
+      this.ctx.waitUntil(call.catch(() => {}));
+    }
+  }
+
   private members(): [WebSocket, Session][] {
     return this.ctx
       .getWebSockets()
@@ -354,6 +390,7 @@ export class StromServer extends DurableObject<Env> {
       muted: false,
       deafened: false,
       owner: isOwner,
+      public_key: key,
     };
     const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now };
     this.broadcast({ type: "user_joined", user });
@@ -452,7 +489,8 @@ export class StromServer extends DurableObject<Env> {
           id: Number(row.id), channel: ch.id, sender: user.session_id, sender_name: user.name,
           author_key: s.key!, text, sent_at: now,
         };
-        return this.broadcast({ type: "chat", message });
+        this.broadcast({ type: "chat", message });
+        return this.tellAccounts(message, ch.name);
       }
       case "delete_message": {
         const channel = Number(msg.channel);

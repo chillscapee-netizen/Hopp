@@ -42,6 +42,9 @@ pub struct User {
     pub muted: bool,
     pub deafened: bool,
     pub owner: bool,
+    /// Hex Ed25519 key of their Hopp ID, so mentions (`<@key>`) can name them.
+    #[serde(default)]
+    pub public_key: String,
 }
 
 /// What a client signs to prove it holds the private key for its identity.

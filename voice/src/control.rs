@@ -282,7 +282,7 @@ mod tests {
     use super::*;
 
     fn user(id: SessionId, voice: Option<ChannelId>) -> User {
-        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false }
+        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new() }
     }
 
     #[test]

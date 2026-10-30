@@ -773,6 +773,25 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
     Ok(body)
 }
 
+/// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
+#[tauri::command]
+async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
+    if key.len() != 64 || !key.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Not a Hopp ID.".into());
+    }
+    let url = format!("{}/profiles/{}", cloud.trim_end_matches('/'), key.to_lowercase());
+    let response = reqwest::Client::new()
+        .get(url)
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
+    if !response.status().is_success() {
+        return Err("No such account.".into());
+    }
+    response.json().await.map_err(|e| e.to_string())
+}
+
 /// This computer's address on the local network, for invite links.
 #[tauri::command]
 fn local_address() -> Option<String> {
@@ -1047,6 +1066,7 @@ fn main() {
             set_loopback,
             local_address,
             invite_preview,
+            fetch_profile,
             update_server,
             set_muted,
             set_deafened,

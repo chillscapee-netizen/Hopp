@@ -100,7 +100,8 @@ const state = {
   notice: null,
   roster: null,
   view: null, // the text channel being read
-  unread: new Set(),
+  /** Read marks per server channel, by `${address}|${channel}`: { server, channel, read_id, last_id, mentions }. */
+  reads: new Map(),
   speaking: new Set(),
   // channel id -> Map(session id -> time it expires)
   typing: new Map(),
@@ -862,7 +863,9 @@ function railServer(s, folder) {
   if (folder) b.dataset.inFolder = folder.folder;
   b.classList.toggle("active", isActiveServer(s.id));
   b.classList.toggle("connecting", s.id === state.connectingId);
+  b.classList.toggle("unread", serverUnread(s));
   b.append(serverIcon("rail-icon server-tint", s.label, s.icon));
+  railBadge(b, serverMentions(s));
   b.addEventListener("click", () => {
     if (railDrag.justDropped) return;
     if (!isActiveServer(s.id)) connectTo(s);
@@ -884,6 +887,11 @@ function railFolder(f) {
   head.dataset.tipPos = "right";
   head.style.setProperty("--folder", color);
   head.classList.toggle("active", hasActive && !f.open);
+  const servers = f.ids.map(serverById).filter(Boolean);
+  if (!f.open) {
+    head.classList.toggle("unread", servers.some(serverUnread));
+    railBadge(head, servers.reduce((n, s) => n + serverMentions(s), 0));
+  }
   head.addEventListener("click", () => {
     if (railDrag.justDropped) return;
     f.open = !f.open;
@@ -1297,7 +1305,6 @@ async function connectTo(server, create, reconnecting) {
   state.speaking.clear();
   state.typing.clear();
   state.appliedVolumes.clear();
-  state.unread.clear();
   state.chats.clear();
   state.latency = null;
   renderAll();
@@ -1400,7 +1407,10 @@ listen("roster", (e) => {
     state.speaking.clear();
     state.latency = null;
   }
+  if (state.pendingView !== undefined && textChannels().some((c) => c.id === state.pendingView)) state.view = state.pendingView;
+  state.pendingView = undefined;
   if (!textChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
+  forgetDeletedChannels();
   applyUserVolumes();
   renderAll();
 });
@@ -1427,22 +1437,30 @@ listen("voice", (e) => {
 
 listen("chat", (e) => {
   const m = e.payload;
-  if (m.sender !== state.roster?.me && !document.hasFocus()) playSound("message");
   if (!state.chats.has(m.channel)) state.chats.set(m.channel, []);
   state.chats.get(m.channel).push(m);
   state.typing.get(m.channel)?.delete(m.sender);
+  const server = currentServer();
+  const fresh = server && noteMessage(server.address, m);
   if (m.channel === state.view) {
     renderMessages(true);
     renderTyping();
-  } else if (m.sender !== state.roster?.me) {
-    state.unread.add(m.channel);
-    renderSidebar();
+  }
+  if (fresh && server) {
+    if (m.author_key !== state.account?.publicKey && mentionsMe(m.text)) {
+      notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channelName(m.channel), text: plainText(m.text) });
+    }
+    renderUnread();
   }
 });
 
 listen("chat-history", (e) => {
-  state.chats.set(e.payload.channel, e.payload.messages);
-  if (e.payload.channel === state.view) renderMessages(false);
+  const { channel: ch, messages } = e.payload;
+  state.chats.set(ch, messages);
+  const server = currentServer();
+  if (server) noteHistory(server, ch, messages);
+  if (ch === state.view) renderMessages(false);
+  renderUnread();
 });
 
 listen("message-deleted", (e) => {
@@ -1602,6 +1620,9 @@ function renderSidebar() {
       const text = el("span", "row-text");
       text.append(el("span", "row-title ellipsis", s.label), el("span", "row-sub ellipsis", displayAddress(s)));
       b.append(serverChip(s), text);
+      const mentions = serverMentions(s);
+      if (mentions) b.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
+      else if (serverUnread(s)) b.classList.add("unread");
       b.addEventListener("click", () => connectTo(s));
       b.addEventListener("contextmenu", (e) => openServerMenu(s, e.clientX, e.clientY));
       return b;
@@ -1631,8 +1652,11 @@ function renderSidebar() {
   for (const ch of textChannels()) {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
-    row.classList.toggle("unread", state.unread.has(ch.id) && ch.id !== state.view);
+    const address = activeServer()?.address;
+    row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
     row.append(icon("hash"), el("span", "ellipsis", ch.name));
+    const mentions = channelMentions(address, ch.id);
+    if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
     if (owner) row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
     items.push(row);
@@ -1662,7 +1686,6 @@ function renderSidebar() {
 
 function openTextChannel(id) {
   state.view = id;
-  state.unread.delete(id);
   renderSidebar();
   renderChannelView();
   $("chat-input").focus();
@@ -1695,7 +1718,7 @@ function userRow(u, className, size, sub) {
   row.dataset.user = u.session_id;
   const member = className === "member";
   // The member list is just who is here: avatar with a status dot, name, crown.
-  row.append(avatar(u.name, size, member ? "online" : undefined));
+  row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(u.public_key)));
   const nameLine = el("span", "name-line");
   nameLine.append(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name));
   if (u.owner) {
@@ -1860,9 +1883,21 @@ async function followInvite(link) {
   }
 }
 
-/** Message text with web and invite links made clickable; everything else stays plain text. */
+/** Message text with mentions shown as names, web and invite links made clickable; the rest stays plain text. */
 function messageText(text) {
   const out = el("div", "msg-text");
+  let last = 0;
+  for (const match of text.matchAll(MENTION)) {
+    appendLinks(out, text.slice(last, match.index));
+    const pill = el("span", "mention" + (match[1] === state.account?.publicKey ? " me" : ""), `@${nameForKey(match[1])}`);
+    out.append(pill);
+    last = match.index + match[0].length;
+  }
+  appendLinks(out, text.slice(last));
+  return out;
+}
+
+function appendLinks(out, text) {
   let last = 0;
   for (const match of text.matchAll(LINK_PATTERN)) {
     out.append(text.slice(last, match.index));
@@ -1877,7 +1912,6 @@ function messageText(text) {
     last = match.index + match[0].length;
   }
   out.append(text.slice(last));
-  return out;
 }
 
 function canDelete(m) {
@@ -1911,6 +1945,13 @@ function renderMessages(keepScrollUnlessAtBottom) {
   }
   const name = channelName(state.view);
   const msgs = state.chats.get(state.view) || [];
+  // Opening a channel: remember where reading stopped, for the "New" line.
+  const address = activeServer()?.address;
+  if (!keepScrollUnlessAtBottom) {
+    const read = state.reads.get(readKey(address, state.view));
+    state.newSince = read && read.last_id > read.read_id ? { channel: state.view, id: read.read_id } : null;
+  }
+  let newSince = state.newSince?.channel === state.view ? state.newSince.id : null;
 
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
@@ -1931,7 +1972,14 @@ function renderMessages(keepScrollUnlessAtBottom) {
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
     const grouped = !newDay && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    if (newSince !== null && m.id > newSince && m.author_key !== state.account?.publicKey) {
+      const line = el("li", "new-divider");
+      line.append(el("span", "", "New"));
+      items.push(line);
+      newSince = null;
+    }
     const li = el("li", "msg " + (grouped ? "cont" : "first"));
+    if (mentionsMe(m.text) && m.author_key !== state.account?.publicKey) li.classList.add("mentions-me");
     if (grouped) {
       li.append(el("span", "msg-gutter", clock(m.sent_at)));
     } else {
@@ -1939,7 +1987,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       const author = el("span", "msg-author", m.sender_name);
       author.style.color = `hsl(${hue(m.sender_name)} 22% 80%)`;
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
-      li.append(avatar(m.sender_name, "s40"), head);
+      li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     li.append(messageText(m.text));
     for (const link of new Set([...m.text.matchAll(INVITE_LINK)].map((x) => x[0]).slice(0, 3))) {
@@ -1960,6 +2008,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   }
   $("messages").replaceChildren(...items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
+  markViewedRead();
 }
 
 /** An invite posted in chat, shown as a card with the server's name, picture and a Join button. */
@@ -2522,18 +2571,21 @@ function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
 const chatInput = $("chat-input");
 let lastTypingSent = 0;
 chatInput.addEventListener("keydown", (e) => {
+  if (mentionKeydown(e)) return;
   // Enter while an input method is composing a character confirms the character, not the message.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
-    const text = chatInput.value.trim();
+    const text = withMentions(chatInput.value.trim());
     if (!text || state.view === null) return;
     chatInput.value = "";
     lastTypingSent = 0;
+    composeMentions.clear();
+    state.newSince = null;
     autosize();
     invoke("send_chat", { channel: state.view, text }).catch((err) => {
       // Give the text back rather than lose it.
       if (!chatInput.value) {
-        chatInput.value = text;
+        chatInput.value = plainText(text);
         autosize();
       }
       toast(friendlyError(err), true);
@@ -2546,6 +2598,7 @@ function autosize() {
 }
 chatInput.addEventListener("input", () => {
   autosize();
+  updateMentionPicker();
   if (chatInput.value.trim() && state.view !== null && Date.now() - lastTypingSent > TYPING_SEND_MS) {
     lastTypingSent = Date.now();
     invoke("typing", { channel: state.view }).catch(() => {});
@@ -3274,7 +3327,7 @@ let cardUser = null;
 function openUserCard(user, anchor) {
   cardUser = user;
   $("user-card-banner").style.setProperty("--hue", hue(user.name));
-  $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80"));
+  $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80", undefined, pictureFor(user.public_key)));
   $("user-card-name").textContent = user.name;
   const sub = $("user-card-sub");
   if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
@@ -3473,6 +3526,9 @@ listen("account", (e) => {
       state.me = m.me;
       state.friends = new Map(m.friends.map((f) => [f.key, f]));
       state.conversations = new Map((m.conversations ?? []).map((c) => [c.peer, { last_at: c.last_at, last_read: c.last_read }]));
+      for (const row of m.channels ?? []) mergeRead(row);
+      state.readsLoaded = true;
+      renderUnread();
       // A reconnect: fetch what arrived meanwhile for conversations already open.
       for (const peer of state.dmMessages.keys()) invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
       syncState.version = m.sync.version;
@@ -3484,6 +3540,16 @@ listen("account", (e) => {
       }
       setActivityFromVoice();
       break;
+    case "channel_activity": {
+      const fresh = mergeRead(m);
+      if (fresh && m.mention) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ?? "Mentioned you" });
+      renderUnread();
+      return;
+    }
+    case "channel_read":
+      mergeRead(m);
+      renderUnread();
+      return;
     case "profile":
       state.me = { ...state.me, ...m.me };
       if ($("username-dialog").open && m.me.username) $("username-dialog").close();
@@ -4048,10 +4114,10 @@ function notifyDm(peer, text) {
 }
 
 /** A desktop notification with the person's picture, when Hopp isn't in front. */
-async function desktopNotify(person, body, action) {
+async function desktopNotify(person, body, action, title = person.display_name) {
   if (document.hasFocus() || state.me?.status === "dnd") return;
   const image = await notifyPicture(person).catch(() => null);
-  invoke("notify", { title: person.display_name, body, image, action }).catch(() => {});
+  invoke("notify", { title, body, image, action }).catch(() => {});
 }
 
 /** The person's avatar (picture or initials) as PNG bytes, for a notification. */
@@ -4083,6 +4149,16 @@ async function notifyPicture(person) {
 listen("notification-click", (e) => {
   const action = String(e.payload);
   if (action.startsWith("dm:")) openDm(action.slice(3));
+  else if (action.startsWith("channel:")) {
+    const [, id, ch] = action.split(":");
+    const server = serverById(id);
+    if (!server) return;
+    if (server.id === state.activeId) openTextChannel(Number(ch));
+    else {
+      state.pendingView = Number(ch);
+      connectTo(server);
+    }
+  }
   else if (action === "friend-requests") {
     if (state.activeId || state.connectingId) disconnect();
     state.openDm = null;
@@ -4274,8 +4350,338 @@ async function sendDm(peer, input) {
 
 // Reading a conversation when the window comes back.
 window.addEventListener("focus", () => {
+  markViewedRead();
   if (state.openDm && !online()) {
     markDmRead(state.openDm);
     renderDmAreas(state.openDm);
   }
 });
+
+// ---------- unread, mentions and pictures in servers ----------
+//
+// Every member's account hears about new messages in their cloud servers (even
+// while they're in another one), so the rail shows a dot for unread servers and
+// a red count only for mentions, like Discord. Read marks live in the account,
+// so they follow you between computers. Self-hosted servers count while you're in them.
+
+var MENTION = /<@([0-9a-f]{64})>/g;
+
+function readKey(address, channel) {
+  return `${address}|${channel}`;
+}
+
+function currentServer() {
+  return activeServer() ?? connectingServer();
+}
+
+function mentionsMe(text) {
+  return !!state.account && text.includes(`<@${state.account.publicKey}>`);
+}
+
+/** Message text as a person would read it: mentions become @names. */
+function plainText(text) {
+  return text.replace(MENTION, (_, key) => `@${nameForKey(key)}`);
+}
+
+/** The name to show for a Hopp ID: someone here, a friend, someone who wrote, or a fetched profile. */
+function nameForKey(key) {
+  if (key === state.account?.publicKey) return state.account.name;
+  const here = state.roster?.users.find((u) => u.public_key === key);
+  if (here) return here.name;
+  const friend = state.friends?.get(key);
+  if (friend) return friend.display_name;
+  for (const list of state.chats.values()) {
+    const m = list.findLast((x) => x.author_key === key);
+    if (m) return m.sender_name;
+  }
+  const p = profiles.get(key);
+  if (p?.display_name) return p.display_name;
+  loadProfile(key);
+  return "someone";
+}
+
+/** Takes in what an account or server says about a channel. True when it's a message we hadn't seen. */
+function mergeRead(row) {
+  const k = readKey(row.server, row.channel);
+  const cur = state.reads.get(k);
+  if (!cur) {
+    state.reads.set(k, { server: row.server, channel: row.channel, read_id: row.read_id, last_id: row.last_id, mentions: row.mentions });
+    return row.last_id > row.read_id;
+  }
+  const fresh = row.last_id > cur.last_id;
+  cur.read_id = Math.max(cur.read_id, row.read_id);
+  cur.last_id = Math.max(cur.last_id, row.last_id);
+  cur.mentions = row.mentions;
+  if (cur.read_id >= cur.last_id) cur.mentions = 0;
+  return fresh;
+}
+
+/** A message that arrived on the server we're in. True when it's new to us. */
+function noteMessage(address, m) {
+  const k = readKey(address, m.channel);
+  const cur = state.reads.get(k) ?? { server: address, channel: m.channel, read_id: 0, last_id: 0, mentions: 0 };
+  state.reads.set(k, cur);
+  if (m.id <= cur.last_id) return false;
+  cur.last_id = m.id;
+  if (m.author_key === state.account?.publicKey) {
+    cur.read_id = m.id;
+    cur.mentions = 0;
+  } else if (mentionsMe(m.text) && m.id > cur.read_id) {
+    cur.mentions += 1;
+  }
+  return true;
+}
+
+/** A channel's recent messages, on joining: catch up with what the read marks know. */
+function noteHistory(server, channel, messages) {
+  const last = messages.at(-1)?.id;
+  if (!last) return;
+  const k = readKey(server.address, channel);
+  const cur = state.reads.get(k);
+  // Never seen this channel (just joined, or nothing new for a long time): it's all read.
+  // (Unless the account hasn't told us its read marks yet.)
+  if (!cur) return state.readsLoaded ? setRead(server.address, channel, last) : undefined;
+  cur.last_id = Math.max(cur.last_id, last);
+  // Self-hosted servers don't tell the account; count mentions here.
+  if (!isCloud(server)) {
+    cur.mentions = messages.filter((m) => m.id > cur.read_id && m.author_key !== state.account?.publicKey && mentionsMe(m.text)).length;
+  }
+  if (cur.read_id >= cur.last_id) cur.mentions = 0;
+}
+
+var readQueue = new Map();
+/** Marks a channel read up to message `id`, here and (shortly) in the account. */
+function setRead(address, channel, id) {
+  const k = readKey(address, channel);
+  const cur = state.reads.get(k) ?? { server: address, channel, read_id: 0, last_id: 0, mentions: 0 };
+  state.reads.set(k, cur);
+  if (cur.read_id >= id && cur.mentions === 0) return false;
+  cur.read_id = Math.max(cur.read_id, id);
+  cur.last_id = Math.max(cur.last_id, id);
+  if (cur.read_id >= cur.last_id) cur.mentions = 0;
+  clearTimeout(readQueue.get(k));
+  readQueue.set(k, setTimeout(() => {
+    readQueue.delete(k);
+    invoke("account_send", { msg: { type: "channel_read", server: address, channel, id: cur.read_id } }).catch(() => {});
+  }, 500));
+  return true;
+}
+
+/** The channel on screen counts as read while the window is in front. */
+function markViewedRead() {
+  if (!online() || state.view === null || !document.hasFocus()) return;
+  const address = activeServer()?.address;
+  const last = state.chats.get(state.view)?.at(-1)?.id;
+  if (address && last && setRead(address, state.view, last)) renderUnread();
+}
+
+/** Channels deleted from the server we're in shouldn't keep it unread. */
+function forgetDeletedChannels() {
+  const address = activeServer()?.address;
+  if (!address || !state.roster) return;
+  const live = new Set(textChannels().map((c) => c.id));
+  for (const [k, r] of state.reads) {
+    if (r.server === address && !live.has(r.channel) && r.last_id > r.read_id) {
+      setRead(address, r.channel, r.last_id);
+      state.reads.delete(k);
+    }
+  }
+}
+
+function channelUnread(address, channel) {
+  const r = state.reads.get(readKey(address, channel));
+  return !!r && r.last_id > r.read_id;
+}
+
+function channelMentions(address, channel) {
+  return state.reads.get(readKey(address, channel))?.mentions ?? 0;
+}
+
+function serverRows(s) {
+  const rows = [...state.reads.values()].filter((r) => r.server === s.address);
+  // The server we're in: only channels that still exist.
+  if (s.id === state.activeId && state.roster) {
+    const live = new Set(textChannels().map((c) => c.id));
+    return rows.filter((r) => live.has(r.channel));
+  }
+  return rows;
+}
+
+function serverUnread(s) {
+  return serverRows(s).some((r) => r.last_id > r.read_id);
+}
+
+function serverMentions(s) {
+  return serverRows(s).reduce((n, r) => n + r.mentions, 0);
+}
+
+function railBadge(item, n) {
+  if (!n) return;
+  item.append(el("span", "rail-badge", n > 99 ? "99+" : String(n)));
+}
+
+var unreadFrame = 0;
+function renderUnread() {
+  cancelAnimationFrame(unreadFrame);
+  unreadFrame = requestAnimationFrame(() => {
+    renderRail();
+    renderSidebar();
+  });
+}
+
+/** Someone mentioned you somewhere you aren't looking: a sound and a notification. */
+function notifyMention({ server, channel, author_key, author_name, channel_name, text }) {
+  const s = prefs.servers.find((x) => x.address === server);
+  if (!s || state.me?.status === "dnd") return;
+  const looking = s.id === state.activeId && state.view === channel && document.hasFocus();
+  if (looking) return;
+  playSound("message");
+  const person = { display_name: author_name, avatar: pictureFor(author_key) };
+  desktopNotify(person, text, `channel:${s.id}:${channel}`, `${author_name}  ·  #${channel_name}, ${s.label}`);
+}
+
+// ---------- pictures for everyone ----------
+
+var profiles = new Map();
+var PROFILE_FRESH_MS = 10 * 60_000;
+
+/** Someone's profile picture by Hopp ID: yours, a friend's, or fetched once in a while. */
+function pictureFor(key) {
+  if (!key) return null;
+  if (key === state.account?.publicKey) return state.me?.avatar ?? null;
+  const friend = state.friends?.get(key);
+  if (friend && friend.state !== "blocked") return friend.avatar ?? null;
+  const p = profiles.get(key);
+  if (!p || Date.now() - p.at > PROFILE_FRESH_MS) loadProfile(key);
+  return p?.avatar ?? null;
+}
+
+function loadProfile(key) {
+  const p = profiles.get(key);
+  if (p?.loading || !/^[0-9a-f]{64}$/.test(key)) return;
+  profiles.set(key, { ...(p ?? { avatar: null }), loading: true, at: Date.now() });
+  invoke("fetch_profile", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), key }).then(
+    (r) => {
+      const changed = (p?.avatar ?? null) !== (r.avatar ?? null) || p?.display_name !== r.display_name;
+      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, at: Date.now() });
+      if (changed) renderPictures();
+    },
+    () => profiles.set(key, { ...(p ?? { avatar: null }), loading: false, at: Date.now() }),
+  );
+}
+
+var picturesTimer = 0;
+function renderPictures() {
+  clearTimeout(picturesTimer);
+  picturesTimer = setTimeout(() => {
+    if (!online()) return;
+    renderSidebar();
+    renderMembers();
+    renderMessages(true);
+    if (mentionPicker.open) updateMentionPicker();
+  }, 150);
+}
+
+// ---------- composer: @mentions ----------
+
+/** "@Name" in the composer, to the Hopp ID it stands for; replaced by <@key> on sending. */
+var composeMentions = new Map();
+var mentionPicker = { open: false, items: [], index: 0, start: 0 };
+
+function mentionCandidates(query) {
+  const q = query.toLowerCase();
+  const seen = new Set([state.account?.publicKey]);
+  const out = [];
+  const add = (key, name) => {
+    if (!/^[0-9a-f]{64}$/.test(key ?? "") || seen.has(key)) return;
+    seen.add(key);
+    const username = profiles.get(key)?.username ?? state.friends?.get(key)?.username ?? null;
+    if (!q || name.toLowerCase().includes(q) || username?.includes(q)) out.push({ key, name, username });
+  };
+  for (const u of [...(state.roster?.users ?? [])].sort(byName)) add(u.public_key, u.name);
+  for (const list of state.chats.values()) for (const m of [...list].reverse()) add(m.author_key, m.sender_name);
+  return out.sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
+}
+
+function updateMentionPicker() {
+  const before = chatInput.value.slice(0, chatInput.selectionStart);
+  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.\-]{0,32})$/u);
+  const items = match && online() ? mentionCandidates(match[1]) : [];
+  let pop = $("mention-picker");
+  if (!items.length) {
+    mentionPicker.open = false;
+    if (pop) pop.hidden = true;
+    return;
+  }
+  if (!pop) {
+    pop = el("div", "mention-picker");
+    pop.id = "mention-picker";
+    pop.addEventListener("mousedown", (e) => e.preventDefault());
+    $("composer").append(pop);
+  }
+  const keep = mentionPicker.open ? mentionPicker.items[mentionPicker.index]?.key : null;
+  mentionPicker.open = true;
+  mentionPicker.items = items;
+  mentionPicker.index = Math.max(0, items.findIndex((i) => i.key === keep));
+  mentionPicker.start = before.length - match[1].length - 1;
+  const rows = items.map((item, i) => {
+    const row = el("button", "mention-option" + (i === mentionPicker.index ? " active" : ""));
+    row.type = "button";
+    row.append(avatar(item.name, "s24", undefined, pictureFor(item.key)), el("span", "mention-name ellipsis", item.name));
+    if (item.username) row.append(el("span", "mention-user ellipsis", item.username));
+    row.addEventListener("mouseenter", () => {
+      mentionPicker.index = i;
+      pop.querySelectorAll(".mention-option").forEach((n, j) => n.classList.toggle("active", j === i));
+    });
+    row.addEventListener("click", () => pickMention(item));
+    return row;
+  });
+  pop.replaceChildren(el("div", "mention-head", "Members"), ...rows);
+  pop.hidden = false;
+}
+
+function pickMention(item) {
+  const label = `@${item.name}`;
+  const end = chatInput.selectionStart;
+  chatInput.value = chatInput.value.slice(0, mentionPicker.start) + label + " " + chatInput.value.slice(end);
+  const caret = mentionPicker.start + label.length + 1;
+  chatInput.setSelectionRange(caret, caret);
+  composeMentions.set(label, item.key);
+  mentionPicker.open = false;
+  $("mention-picker").hidden = true;
+  chatInput.focus();
+  autosize();
+}
+
+/** Arrow keys, Enter, Tab and Escape while the picker is open. True when the key was used. */
+function mentionKeydown(e) {
+  if (!mentionPicker.open) return false;
+  const n = mentionPicker.items.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    mentionPicker.index = (mentionPicker.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+    document.querySelectorAll("#mention-picker .mention-option").forEach((row, i) => row.classList.toggle("active", i === mentionPicker.index));
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    pickMention(mentionPicker.items[mentionPicker.index]);
+  } else if (e.key === "Escape") {
+    mentionPicker.open = false;
+    $("mention-picker").hidden = true;
+  } else {
+    return false;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  return true;
+}
+
+chatInput.addEventListener("blur", () => {
+  mentionPicker.open = false;
+  if ($("mention-picker")) $("mention-picker").hidden = true;
+});
+chatInput.addEventListener("click", updateMentionPicker);
+
+/** The text to send: picked @names become mentions the server and everyone's app understand. */
+function withMentions(text) {
+  const labels = [...composeMentions.keys()].sort((a, b) => b.length - a.length);
+  for (const label of labels) text = text.split(label).join(`<@${composeMentions.get(label)}>`);
+  return text;
+}

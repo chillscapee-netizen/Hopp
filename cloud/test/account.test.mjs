@@ -278,3 +278,68 @@ test("direct messages between friends: delivered to every device, kept, read sta
   assert.match((await a.d.waitFor((m) => m.type === "error")).message, /can't be sent/);
   for (const d of [a.d, a2, b.d, again, stranger.d]) d.close();
 });
+
+// ---------- server channels: unread and mentions ----------
+
+/** Joins a cloud server (creating it with `create`), over the server protocol. */
+async function joinServer(serverId, name, key, { invite, create } = {}) {
+  const ws = new WebSocket(`${BASE}/servers/${serverId}/ws`);
+  await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+  const c = new Device(ws);
+  c.send({ type: "hello", name, protocol_version: 5, public_key: key.pub, invite, create });
+  const challenge = await c.next();
+  c.send({ type: "auth", signature: crypto.sign(null, authMessage(challenge.nonce), key.privateKey).toString("hex") });
+  c.welcome = await c.next();
+  assert.equal(c.welcome.type, "welcome", JSON.stringify(c.welcome));
+  return c;
+}
+
+test("server messages mark channels unread on every member's account, and mentions count", async () => {
+  const serverId = crypto.randomBytes(12).toString("hex");
+  const alice = newKey();
+  const bob = newKey();
+  const owner = await joinServer(serverId, "alice", alice, { create: "Unread test" });
+  assert.equal(owner.welcome.users[0].public_key, alice.pub);
+  owner.send({ type: "create_invite", max_uses: null, expires_in_hours: null });
+  const { invite } = await owner.waitFor((m) => m.type === "invite_created");
+  const member = await joinServer(serverId, "bob", bob, { invite: invite.code });
+  const general = owner.welcome.channels.find((c) => c.name === "general").id;
+  const server = `cloud:${serverId}`;
+
+  // Alice's account, somewhere else in the app.
+  const account = await Device.open(alice, "Alice");
+  member.send({ type: "send_chat", channel: general, text: "plain message" });
+  const plain = await account.waitFor((m) => m.type === "channel_activity");
+  assert.equal(plain.server, server);
+  assert.equal(plain.channel, general);
+  assert.equal(plain.mention, false);
+  assert.equal(plain.mentions, 0);
+  assert.ok(plain.last_id > plain.read_id);
+
+  member.send({ type: "send_chat", channel: general, text: `hey <@${alice.pub}> look` });
+  const mention = await account.waitFor((m) => m.type === "channel_activity" && m.mention);
+  assert.equal(mention.mentions, 1);
+  assert.equal(mention.preview, "hey @alice look");
+  assert.equal(mention.author_name, "bob");
+  assert.equal(mention.server_name, "Unread test");
+
+  // It's there on the next login too, and reading clears it on every device.
+  const again = await Device.open(alice, "Alice");
+  const row = again.welcome.channels.find((c) => c.server === server && c.channel === general);
+  assert.equal(row.mentions, 1);
+  again.send({ type: "channel_read", server, channel: general, id: mention.last_id });
+  const read = await account.waitFor((m) => m.type === "channel_read");
+  assert.equal(read.read_id, mention.last_id);
+  assert.equal(read.mentions, 0);
+
+  // Your own messages count as read.
+  owner.send({ type: "send_chat", channel: general, text: "my reply" });
+  const own = await account.waitFor((m) => m.type === "channel_read" && m.last_id > mention.last_id);
+  assert.equal(own.read_id, own.last_id);
+
+  // Pictures for people in servers: anyone's public profile by Hopp ID.
+  const profile = await (await fetch(`${HTTP}/profiles/${alice.pub}`)).json();
+  assert.equal(profile.key, alice.pub);
+  assert.equal(profile.display_name, "Alice");
+  for (const d of [owner, member, account, again]) d.close();
+});

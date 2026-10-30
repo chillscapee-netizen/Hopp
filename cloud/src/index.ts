@@ -20,6 +20,7 @@ export interface Env {
 const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
 const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
+const PROFILE_PATH = /^\/profiles\/([0-9a-f]{64})$/;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -57,6 +58,14 @@ export default {
       const key = await directory(env).lookup(user[1]);
       if (!key) return json({ error: "Nobody has that username." }, 404);
       return json(await accountOf(env, key).publicProfile());
+    }
+
+    // Someone's public profile by Hopp ID: the names and pictures of people in servers and chat.
+    const profile = url.pathname.match(PROFILE_PATH);
+    if (profile && request.method === "GET") {
+      const p = await accountOf(env, profile[1]).publicProfile();
+      if (!p.key) return json({ error: "No such account." }, 404);
+      return json(p);
     }
 
     const invite = url.pathname.match(INVITE_PATH);

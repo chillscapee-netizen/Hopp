@@ -28,6 +28,8 @@ const DM_KEEP = 5000;
 /** A burst of messages, then about two a second. */
 const DM_BURST = 8;
 const DM_PER_SECOND = 2;
+/** Unread marks for server channels are forgotten after this long without activity. */
+const CHANNEL_READS_DAYS = 90;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
 const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 
@@ -165,6 +167,9 @@ export class StromAccount extends DurableObject<Env> {
         id TEXT PRIMARY KEY, peer TEXT NOT NULL, from_key TEXT NOT NULL, sealed TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS dms_by_peer ON dms (peer, sent_at);
       CREATE TABLE IF NOT EXISTS conversations (peer TEXT PRIMARY KEY, last_at INTEGER NOT NULL, last_read INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS channel_reads (
+        server TEXT NOT NULL, channel INTEGER NOT NULL, read_id INTEGER NOT NULL DEFAULT 0, last_id INTEGER NOT NULL DEFAULT 0,
+        last_at INTEGER NOT NULL DEFAULT 0, mentions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel));
     `);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
@@ -306,6 +311,7 @@ export class StromAccount extends DurableObject<Env> {
       sync: { data: this.meta("sync_data"), version: Number(this.meta("sync_version") ?? 0) },
       friends: this.friendRows(),
       conversations: this.conversations(),
+      channels: this.channelReads(),
     });
     if (wasOffline) await this.announcePresence();
   }
@@ -453,6 +459,13 @@ export class StromAccount extends DurableObject<Env> {
         const at = Number(msg.at ?? Date.now());
         this.sql.exec("UPDATE conversations SET last_read = MAX(last_read, ?) WHERE peer = ?", at, peer);
         return this.toDevices({ type: "dm_read", with: peer, at });
+      }
+      case "channel_read": {
+        const server = String(msg.server ?? "");
+        const channel = Number(msg.channel);
+        const id = Number(msg.id);
+        if (!server || server.length > 300 || !Number.isSafeInteger(channel) || !Number.isSafeInteger(id) || id < 0) return error("Bad channel.");
+        return this.markRead(server, channel, id);
       }
       case "ping":
         return this.send(ws, { type: "pong" });
@@ -664,6 +677,60 @@ export class StromAccount extends DurableObject<Env> {
     this.storeDm(fromKey, message);
     this.toDevices({ type: "dm", with: fromKey, message });
     return true;
+  }
+
+  // ---------- server channels: unread and mentions ----------
+
+  private channelReads() {
+    const since = Date.now() - CHANNEL_READS_DAYS * 86_400_000;
+    return this.sql
+      .exec("SELECT server, channel, read_id, last_id, last_at, mentions FROM channel_reads WHERE last_at > ? ORDER BY last_at DESC LIMIT 2000", since)
+      .toArray();
+  }
+
+  private channelRead(server: string, channel: number) {
+    return this.sql.exec("SELECT server, channel, read_id, last_id, last_at, mentions FROM channel_reads WHERE server = ? AND channel = ?", server, channel).one();
+  }
+
+  /** Read up to message `id`; every device clears its unread marks. */
+  private markRead(server: string, channel: number, id: number) {
+    this.sql.exec(
+      `INSERT INTO channel_reads (server, channel, read_id, last_id, last_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(server, channel) DO UPDATE SET
+         read_id = max(read_id, excluded.read_id),
+         last_id = max(last_id, excluded.last_id),
+         mentions = CASE WHEN excluded.read_id >= last_id THEN 0 ELSE mentions END`,
+      server, channel, id, id, Date.now(),
+    );
+    this.toDevices({ type: "channel_read", ...this.channelRead(server, channel) });
+  }
+
+  /** A server tells us about a new message in one of its channels. */
+  async channelActivity(m: {
+    server: string; server_name: string; channel: number; channel_name: string; id: number; at: number;
+    author_key: string; author_name: string; mention: boolean; preview: string | null;
+  }): Promise<void> {
+    if (m.author_key === this.meta("key")) return this.markRead(m.server, m.channel, m.id);
+    if (this.friend(m.author_key)?.state === "blocked") return;
+    this.sql.exec(
+      `INSERT INTO channel_reads (server, channel, read_id, last_id, last_at, mentions) VALUES (?, ?, 0, ?, ?, ?)
+       ON CONFLICT(server, channel) DO UPDATE SET
+         mentions = mentions + CASE WHEN ? AND excluded.last_id > last_id AND excluded.last_id > read_id THEN 1 ELSE 0 END,
+         last_id = max(last_id, excluded.last_id),
+         last_at = max(last_at, excluded.last_at)`,
+      m.server, m.channel, m.id, m.at, m.mention ? 1 : 0, m.mention ? 1 : 0,
+    );
+    this.toDevices({
+      type: "channel_activity",
+      ...this.channelRead(m.server, m.channel),
+      id: m.id,
+      server_name: m.server_name,
+      channel_name: m.channel_name,
+      author_key: m.author_key,
+      author_name: m.author_name,
+      mention: m.mention,
+      preview: m.preview,
+    });
   }
 
   async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {

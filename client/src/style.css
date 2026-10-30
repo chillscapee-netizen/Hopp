@@ -2068,3 +2068,80 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .field-row.editing { align-items: flex-end; }
 .field-row.editing input { margin-top: 6px; }
 .field-row.editing .row-sub { margin-top: 4px; }
+
+/* ---------- unread and mentions ---------- */
+.rail-item.unread:not(:hover):not(.active)::before { height: 8px; }
+.server-row.unread .row-title { color: var(--text); font-weight: 700; }
+.server-row .count-badge { margin-left: auto; }
+.channel-row .count-badge { flex: none; }
+
+.mention {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--link) 18%, transparent);
+  color: #c6d8f7;
+  font-weight: 500;
+}
+.mention.me { background: color-mix(in srgb, var(--yellow) 20%, transparent); color: #f5d796; }
+.msg.mentions-me { background: color-mix(in srgb, var(--yellow) 7%, transparent); }
+.msg.mentions-me::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--yellow);
+}
+.msg.mentions-me:hover { background: color-mix(in srgb, var(--yellow) 10%, transparent); }
+
+.new-divider {
+  position: relative;
+  height: 0;
+  margin: 12px 16px 12px 16px;
+  border-top: 1px solid var(--red);
+  list-style: none;
+}
+.new-divider span {
+  position: absolute; right: 0; top: -8px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+.mention-picker {
+  position: absolute; left: 16px; right: 16px; bottom: 100%;
+  z-index: 20;
+  margin-bottom: -12px;
+  padding: 6px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.mention-head {
+  padding: 4px 8px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mention-option {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.mention-option.active { background: var(--active); color: var(--text); }
+.mention-name { font-weight: 600; }
+.mention-user { margin-left: auto; color: var(--faint); font-size: 13px; }
