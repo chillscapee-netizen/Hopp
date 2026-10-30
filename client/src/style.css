@@ -2558,3 +2558,25 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .splash-name { margin: 16px 0 4px; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
 .splash-text { margin: 0; color: var(--muted); font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { .splash-bunny, .splash-shadow { animation: none; } }
+
+/* ---------- picker: emoji and GIFs ---------- */
+.emoji-picker { width: 400px; height: 440px; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.emoji-picker[hidden] { display: none; }
+.emoji-picker.with-gifs { width: 440px; height: 480px; }
+.picker-head { display: grid; gap: 10px; padding: 12px 12px 10px; border-bottom: 1px solid var(--border); }
+.picker-tabs { display: flex; gap: 4px; }
+.picker-tab { padding: 5px 12px; background: none; border: none; border-radius: 6px; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.picker-tab:hover { background: var(--hover); color: var(--text-2); }
+.picker-tab.active { background: var(--active); color: var(--text); }
+.picker-search { width: 100%; height: 34px; padding: 0 10px; background: var(--deep); border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--text); font: inherit; font-size: 14px; }
+.picker-search:focus { border-color: var(--border-focus); }
+.picker-body { flex: 1; overflow-y: auto; padding: 4px 10px 10px; }
+.picker-body .emoji-head { position: sticky; top: -4px; padding: 10px 2px 6px; background: var(--side-2); }
+.picker-empty { padding: 40px 10px; color: var(--faint); font-size: 14px; text-align: center; }
+.gif-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: start; }
+.gif-col { display: grid; gap: 6px; }
+.gif-option { display: block; padding: 0; overflow: hidden; background: var(--elev); border: none; border-radius: 6px; cursor: pointer; }
+.gif-option img { display: block; width: 100%; height: auto; min-height: 60px; object-fit: cover; }
+.gif-option:hover { outline: 2px solid var(--text-2); outline-offset: -2px; }
+.gif-credit { padding: 10px 0 2px; color: var(--faint); font-size: 11px; text-align: center; }
+.msg-gif { display: block; max-width: min(320px, 100%); max-height: 260px; margin: 4px 0 2px; border-radius: 8px; }

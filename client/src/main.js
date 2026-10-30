@@ -2248,7 +2248,17 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
-    else {
+    else if (GIF_URL.test(m.text.trim())) {
+      const img = el("img", "msg-gif");
+      img.src = m.text.trim();
+      img.alt = "GIF";
+      img.loading = "lazy";
+      img.addEventListener("load", () => {
+        const scroller = $("scroller");
+        if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 400) scroller.scrollTop = scroller.scrollHeight;
+      });
+      li.append(img);
+    } else {
       const body = messageText(m.text);
       if (m.edited_at) {
         const tag = el("span", "msg-edited", "(edited)");
@@ -4774,6 +4784,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  if (GIF_URL.test(text.trim())) return "GIF";
   return plainText(text)
     .replace(/\|\|[\s\S]+?\|\|/g, "(spoiler)")
     .replace(/```[a-z0-9+#-]*\n?/gi, "")
@@ -5262,63 +5273,190 @@ function react(m, emoji, on) {
   invoke("react", { channel: m.channel, id: m.id, emoji, on }).catch((err) => toast(friendlyError(err), true));
 }
 
-// ---------- emoji picker ----------
+// ---------- emoji and GIF picker ----------
 
-var EMOJI = [
-  "👍", "👎", "😂", "🤣", "❤️", "🔥", "🎉", "😮", "😢", "😭", "😡", "🙏", "👀", "💯", "✅", "❌",
-  "😄", "😅", "🙂", "😉", "😎", "🤔", "😬", "🙃", "😍", "🥳", "🤯", "😴", "💀", "🤡", "🫡", "🥲",
-  "👏", "🙌", "🤝", "👋", "💪", "🤞", "✌️", "👌", "🎮", "🏆", "⭐", "✨", "⚡", "🍕", "☕", "🐰",
+/** Emoji by category, each with the words it's found by. */
+var EMOJI_GROUPS = [
+  ["Smileys", "😀 grin happy|😃 smile happy|😄 smile laugh|😁 grin teeth|😆 laugh|😅 sweat laugh|🤣 rofl laugh|😂 joy tears laugh|🙂 slight smile|🙃 upside down|😉 wink|😊 blush smile|😇 angel halo|🥰 love hearts|😍 heart eyes love|🤩 star struck wow|😘 kiss|😋 yum tasty|😛 tongue|😜 wink tongue crazy|🤪 zany crazy|😝 tongue|🤑 money|🤗 hug|🤭 oops giggle|🤫 shush quiet|🤔 think hmm|🤐 zip quiet|🤨 raised eyebrow sus|😐 neutral|😑 expressionless|😶 speechless|😏 smirk|😒 unamused|🙄 eye roll|😬 grimace awkward|😮‍💨 exhale relief|🤥 lie|😌 relieved|😔 pensive sad|😪 sleepy|🤤 drool|😴 sleep zzz|😷 mask sick|🤒 sick fever|🤕 hurt|🤢 nausea sick|🤮 vomit|🥵 hot|🥶 cold freezing|🥴 woozy dizzy|😵 dizzy|🤯 mind blown|🤠 cowboy|🥳 party celebrate|😎 cool sunglasses|🤓 nerd|🧐 monocle|😕 confused|😟 worried|🙁 frown|😮 wow open mouth|😯 hushed|😲 astonished shock|😳 flushed embarrassed|🥺 pleading puppy|🥹 holding tears|😦 frown|😧 anguished|😨 fearful scared|😰 anxious sweat|😥 sad relieved|😢 cry sad|😭 sob cry|😱 scream shock|😖 confounded|😣 persevere|😞 disappointed|😓 sweat|😩 weary tired|😫 tired|🥱 yawn bored|😤 triumph huff|😡 angry rage|😠 angry mad|🤬 swear cursing|😈 devil|💀 skull dead|☠️ skull crossbones|💩 poop|🤡 clown|👻 ghost|👽 alien|🤖 robot|😺 cat smile|🫡 salute|🫠 melting|🫣 peek|🥲 smile tear"],
+  ["Gestures", "👍 thumbs up yes like|👎 thumbs down no|👌 ok|✌️ peace victory|🤞 fingers crossed luck|🤟 love you|🤘 rock metal|🤙 call me|👈 left|👉 right|👆 up|👇 down|☝️ point|✋ hand stop|🤚 raised back|🖐️ hand|🖖 vulcan|👋 wave hi bye|🤏 pinch small|💪 muscle strong flex|🙏 pray please thanks|👏 clap applause|🙌 raise hands hooray|🤝 handshake deal|✍️ write|🫶 heart hands|👀 eyes look|🧠 brain|👑 crown king|🫵 you point"],
+  ["Hearts", "❤️ heart love red|🧡 orange heart|💛 yellow heart|💚 green heart|💙 blue heart|💜 purple heart|🖤 black heart|🤍 white heart|🤎 brown heart|💔 broken heart|❣️ heart|💕 two hearts|💞 revolving hearts|💓 beating heart|💗 growing heart|💖 sparkling heart|💘 cupid|💝 heart gift|❤️‍🔥 heart fire"],
+  ["Animals & food", "🐰 bunny rabbit hopp|🐶 dog|🐱 cat|🐭 mouse|🦊 fox|🐻 bear|🐼 panda|🐨 koala|🐯 tiger|🦁 lion|🐮 cow|🐷 pig|🐸 frog|🐵 monkey|🐔 chicken|🐧 penguin|🐦 bird|🦆 duck|🦉 owl|🐺 wolf|🦄 unicorn|🐝 bee|🦋 butterfly|🐢 turtle|🐍 snake|🦖 dinosaur t-rex|🐙 octopus|🐬 dolphin|🐳 whale|🦈 shark|🌵 cactus|🌲 tree|🍀 clover luck|🌸 flower blossom|🌹 rose|🌻 sunflower|🍎 apple|🍌 banana|🍉 watermelon|🍓 strawberry|🍑 peach|🥑 avocado|🍕 pizza|🍔 burger|🍟 fries|🌭 hot dog|🌮 taco|🍣 sushi|🍜 ramen noodles|🍩 donut|🍪 cookie|🎂 cake birthday|🍫 chocolate|🍿 popcorn|☕ coffee|🍵 tea|🍺 beer|🍻 cheers beers|🥤 drink soda|🧃 juice"],
+  ["Activities", "🎮 game controller gaming|🕹️ joystick|🎧 headphones|🎤 microphone sing|🎵 music note|🎶 music|🎸 guitar|🥁 drum|🎉 party tada|🎊 confetti|🎈 balloon|🎁 gift present|🏆 trophy win|🥇 gold medal first|🥈 silver second|🥉 bronze third|🏅 medal|⚽ soccer football|🏀 basketball|🏈 american football|⚾ baseball|🎾 tennis|🏐 volleyball|🎱 pool eight ball|🎯 target bullseye|🎲 dice|♟️ chess|🧩 puzzle|🎬 movie clapper|📸 camera photo|🎨 art paint"],
+  ["Things & symbols", "🔥 fire lit hot|✨ sparkles|⭐ star|🌟 glowing star|⚡ lightning zap|💥 boom|💯 hundred perfect|✅ check yes done|❌ cross no|⚠️ warning|❓ question|❗ exclamation|💤 sleep zzz|💬 speech chat|💭 thought|🔔 bell|📌 pin|📎 paperclip|🔒 lock|🔑 key|💡 idea bulb|💻 laptop computer|🖥️ desktop pc|📱 phone|⌨️ keyboard|🖱️ mouse|🔊 loud|🔇 mute|⏰ alarm clock|⌛ hourglass|🚀 rocket|✈️ plane|🚗 car|🏠 home house|🌍 earth world|🌙 moon night|☀️ sun|🌈 rainbow|❄️ snow|☔ rain umbrella|💰 money bag|💎 gem diamond|🗑️ trash|📈 chart up|📉 chart down|🆗 ok|🆒 cool|🆕 new|🔝 top"],
 ];
 
 function recentEmoji() {
   try {
-    return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string").slice(0, 8);
+    return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string").slice(0, 16);
   } catch {
     return [];
   }
 }
 
 function rememberEmoji(emoji) {
-  const list = [emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, 8);
+  const list = [emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, 16);
   try {
     localStorage.setItem("recentEmoji", JSON.stringify(list));
   } catch {}
 }
 
-function openEmojiPicker(anchor, onPick) {
+var picker = { tab: "emoji", onEmoji: null, onGif: null, gifTimer: 0, gifQuery: null };
+
+/**
+ * Opens the picker. From the composer it sits right above the box with a GIF tab;
+ * for reactions it opens beside the button and only has emoji.
+ */
+function openEmojiPicker(anchor, onEmoji, onGif) {
   const pop = $("emoji-picker");
-  const section = (title, list) => {
-    const grid = el("div", "emoji-grid");
-    for (const emoji of list) {
-      const b = el("button", "emoji-option", emoji);
+  picker.onEmoji = onEmoji;
+  picker.onGif = onGif ?? null;
+  if (!onGif) picker.tab = "emoji";
+  const search = el("input", "picker-search");
+  search.placeholder = picker.tab === "gif" ? "Search GIFs" : "Find the perfect emoji";
+  search.autocomplete = "off";
+  search.spellcheck = false;
+  const tabs = el("div", "picker-tabs");
+  if (onGif) {
+    for (const [tab, label] of [["gif", "GIFs"], ["emoji", "Emoji"]]) {
+      const b = el("button", "picker-tab" + (picker.tab === tab ? " active" : ""), label);
       b.type = "button";
       b.addEventListener("click", () => {
-        pop.hidden = true;
-        rememberEmoji(emoji);
-        onPick(emoji);
+        picker.tab = tab;
+        tabs.querySelectorAll(".picker-tab").forEach((t) => t.classList.toggle("active", t === b));
+        search.value = "";
+        search.placeholder = tab === "gif" ? "Search GIFs" : "Find the perfect emoji";
+        renderPickerBody(body, "");
+        search.focus();
       });
-      grid.append(b);
+      tabs.append(b);
     }
-    return [el("div", "emoji-head", title), grid];
-  };
-  const recent = recentEmoji();
-  pop.replaceChildren(...(recent.length ? section("Recently used", recent) : []), ...section("Emoji", EMOJI));
+  }
+  const body = el("div", "picker-body");
+  search.addEventListener("input", () => renderPickerBody(body, search.value.trim().toLowerCase()));
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closePopovers();
+    }
+  });
+  const head = el("div", "picker-head");
+  head.append(...(onGif ? [tabs] : []), search);
+  pop.replaceChildren(head, body);
+  pop.classList.toggle("with-gifs", !!onGif);
+  renderPickerBody(body, "");
+
   const r = anchor.getBoundingClientRect();
-  placePopover(pop, r.right - 320, r.top - 8 - pop.offsetHeight);
-  if (pop.getBoundingClientRect().top < 8) placePopover(pop, r.right - 320, r.bottom + 8);
+  // Measured while showing: a hidden picker has no size.
+  pop.hidden = false;
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  if (onGif) {
+    // Above the message box, its right edge lined up with the box.
+    const box = $("composer").querySelector(".composer-box").getBoundingClientRect();
+    placePopover(pop, box.right - w, box.top - h - 8);
+  } else {
+    placePopover(pop, r.right - w, r.top - h - 8);
+    if (r.top - h - 8 < 40) placePopover(pop, r.right - w, r.bottom + 8);
+  }
+  setTimeout(() => search.focus(), 0);
+}
+
+function renderPickerBody(body, q) {
+  if (picker.tab === "gif") return renderGifs(body, q);
+  const pick = (emoji) => {
+    rememberEmoji(emoji);
+    closePopovers();
+    picker.onEmoji(emoji);
+  };
+  const grid = (list) => {
+    const g = el("div", "emoji-grid");
+    for (const [emoji, words] of list) {
+      const b = el("button", "emoji-option", emoji);
+      b.type = "button";
+      b.title = words ? `:${words.split(" ")[0]}:` : "";
+      b.addEventListener("click", () => pick(emoji));
+      g.append(b);
+    }
+    return g;
+  };
+  const all = EMOJI_GROUPS.map(([name, list]) => [name, list.split("|").map((x) => [x.split(" ")[0], x.split(" ").slice(1).join(" ")])]);
+  const parts = [];
+  if (q) {
+    const found = all.flatMap(([, l]) => l).filter(([, words]) => words.split(" ").some((w) => w.startsWith(q)));
+    parts.push(found.length ? grid(found) : el("div", "picker-empty", "No emoji found."));
+  } else {
+    const recent = recentEmoji();
+    if (recent.length) parts.push(el("div", "emoji-head", "Recently used"), grid(recent.map((e) => [e, ""])));
+    for (const [name, list] of all) parts.push(el("div", "emoji-head", name), grid(list));
+  }
+  body.replaceChildren(...parts);
+  body.scrollTop = 0;
+}
+
+function renderGifs(body, q) {
+  clearTimeout(picker.gifTimer);
+  picker.gifQuery = q;
+  if (!body.querySelector(".gif-grid")) body.replaceChildren(el("div", "picker-empty", "Loading GIFs…"));
+  picker.gifTimer = setTimeout(async () => {
+    let result;
+    try {
+      result = await invoke("gif_search", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), q, pos: null });
+    } catch (err) {
+      if (picker.gifQuery === q) body.replaceChildren(el("div", "picker-empty", friendlyError(err)));
+      return;
+    }
+    if (picker.gifQuery !== q) return;
+    const cols = [el("div", "gif-col"), el("div", "gif-col")];
+    const heights = [0, 0];
+    for (const gif of result.gifs) {
+      const i = heights[0] <= heights[1] ? 0 : 1;
+      heights[i] += gif.width ? gif.height / gif.width : 1;
+      const b = el("button", "gif-option");
+      b.type = "button";
+      b.title = gif.title;
+      const img = el("img");
+      img.src = gif.preview;
+      img.alt = gif.title;
+      img.loading = "lazy";
+      if (gif.width && gif.height) img.style.aspectRatio = `${gif.width} / ${gif.height}`;
+      b.append(img);
+      b.addEventListener("click", () => {
+        closePopovers();
+        picker.onGif?.(gif);
+      });
+      cols[i].append(b);
+    }
+    const grid = el("div", "gif-grid");
+    grid.append(...cols);
+    body.replaceChildren(...(result.gifs.length ? [el("div", "emoji-head", q ? `GIFs for “${q}”` : "Trending"), grid] : [el("div", "picker-empty", "No GIFs found.")]));
+    const credit = el("div", "gif-credit", "Powered by KLIPY");
+    body.append(credit);
+  }, q ? 300 : 0);
 }
 
 $("emoji-btn").addEventListener("click", (e) => {
   if (!$("emoji-picker").hidden) return closePopovers();
-  openEmojiPicker(e.currentTarget, (emoji) => {
-    const at = chatInput.selectionStart ?? chatInput.value.length;
-    chatInput.value = chatInput.value.slice(0, at) + emoji + chatInput.value.slice(chatInput.selectionEnd ?? at);
-    chatInput.focus();
-    chatInput.setSelectionRange(at + emoji.length, at + emoji.length);
-    autosize();
-  });
+  openEmojiPicker(
+    e.currentTarget,
+    (emoji) => {
+      const at = chatInput.selectionStart ?? chatInput.value.length;
+      chatInput.value = chatInput.value.slice(0, at) + emoji + chatInput.value.slice(chatInput.selectionEnd ?? at);
+      chatInput.focus();
+      chatInput.setSelectionRange(at + emoji.length, at + emoji.length);
+      autosize();
+    },
+    (gif) => {
+      if (state.view === null) return;
+      const replyTo = state.replyTo?.channel === state.view ? state.replyTo.id : null;
+      setReply(null);
+      sendChat(state.view, gif.url, replyTo);
+    },
+  );
 });
 $("emoji-btn").addEventListener("mousedown", (e) => e.preventDefault());
+
+/** A message that is just a GIF from the picker shows as the GIF. */
+var GIF_URL = /^https:\/\/static\d?\.klipy\.com\/[^\s]+\.(gif|webp)$/i;
 
 // ---------- older messages ----------
 

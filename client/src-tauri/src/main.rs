@@ -890,6 +890,25 @@ fn set_autostart(app: AppHandle, on: bool) -> CmdResult {
     if on { launcher.enable() } else { launcher.disable() }.map_err(|e| format!("Couldn't change that: {e}"))
 }
 
+/// GIFs for the picker, through Hopp Cloud (which holds the GIF service's key).
+#[tauri::command]
+async fn gif_search(cloud: String, q: String, pos: Option<String>) -> CmdResult<serde_json::Value> {
+    let mut url = reqwest::Url::parse(&format!("{}/gifs", cloud.trim_end_matches('/'))).map_err(|e| e.to_string())?;
+    url.query_pairs_mut().append_pair("q", &q).append_pair("pos", pos.as_deref().unwrap_or(""));
+    let response = reqwest::Client::new()
+        .get(url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(body["error"].as_str().unwrap_or("Couldn't load GIFs right now.").to_string());
+    }
+    Ok(body)
+}
+
 /// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
 #[tauri::command]
 async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
@@ -1195,6 +1214,7 @@ fn main() {
             local_address,
             invite_preview,
             fetch_profile,
+            gif_search,
             autostart_enabled,
             set_autostart,
             shell::window_compact,

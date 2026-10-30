@@ -14,6 +14,8 @@ export interface Env {
   INVITES: DurableObjectNamespace<InviteIndex>;
   ACCOUNTS: DurableObjectNamespace<StromAccount>;
   DIRECTORY: DurableObjectNamespace<UserDirectory>;
+  /** KLIPY API key for GIF search (`npx wrangler secret put KLIPY_KEY`); GIFs are off without it. */
+  KLIPY_KEY?: string;
 }
 
 /** Server ids are long and random, so they can't be guessed. */
@@ -29,8 +31,11 @@ const json = (body: unknown, status = 200) =>
   });
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // GIFs for the picker: search, or what's popular. The key stays here, and answers are cached.
+    if (url.pathname === "/gifs" && request.method === "GET") return gifs(url, env, ctx);
 
     const server = url.pathname.match(SERVER_PATH);
     if (server) {
@@ -84,3 +89,43 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+interface Gif { id: string; url: string; preview: string; width: number; height: number; title: string }
+
+async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (!env.KLIPY_KEY) return json({ error: "GIFs aren't set up yet." }, 503);
+  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 60);
+  const pos = (url.searchParams.get("pos") ?? "").slice(0, 40);
+  const cacheKey = new Request(`https://gifs.cache/?q=${encodeURIComponent(q.toLowerCase())}&pos=${encodeURIComponent(pos)}`);
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+
+  const api = new URL(`https://api.klipy.com/v2/${q ? "search" : "featured"}`);
+  api.searchParams.set("key", env.KLIPY_KEY);
+  if (q) api.searchParams.set("q", q);
+  if (pos) api.searchParams.set("pos", pos);
+  api.searchParams.set("limit", "30");
+  api.searchParams.set("media_filter", "gif,tinygif");
+  api.searchParams.set("contentfilter", "medium");
+  const upstream = await fetch(api);
+  if (!upstream.ok) return json({ error: "Couldn't load GIFs right now." }, 502);
+  const data = (await upstream.json()) as { results?: any[]; next?: string };
+  const list: Gif[] = (data.results ?? [])
+    .map((r) => {
+      const full = r.media_formats?.gif;
+      const small = r.media_formats?.tinygif ?? full;
+      return {
+        id: String(r.id ?? ""),
+        url: String(full?.url ?? ""),
+        preview: String(small?.url ?? ""),
+        width: Number(small?.dims?.[0] ?? full?.dims?.[0] ?? 0),
+        height: Number(small?.dims?.[1] ?? full?.dims?.[1] ?? 0),
+        title: String(r.content_description ?? r.title ?? ""),
+      };
+    })
+    .filter((g) => g.url.startsWith("https://") && g.preview.startsWith("https://"));
+  const res = json({ gifs: list, next: data.next ?? null });
+  res.headers.set("cache-control", `public, max-age=${q ? 3600 : 900}`);
+  ctx.waitUntil(caches.default.put(cacheKey, res.clone()));
+  return res;
+}
