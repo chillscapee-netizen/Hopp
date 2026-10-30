@@ -1718,7 +1718,7 @@ function userRow(u, className, size, sub) {
   row.dataset.user = u.session_id;
   const member = className === "member";
   // The member list is just who is here: avatar with a status dot, name, crown.
-  row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(u.public_key)));
+  row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
   nameLine.append(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name));
   if (u.owner) {
@@ -3327,7 +3327,7 @@ let cardUser = null;
 function openUserCard(user, anchor) {
   cardUser = user;
   $("user-card-banner").style.setProperty("--hue", hue(user.name));
-  $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80", undefined, pictureFor(user.public_key)));
+  $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80", undefined, pictureFor(keyOf(user))));
   $("user-card-name").textContent = user.name;
   const sub = $("user-card-sub");
   if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
@@ -3552,6 +3552,7 @@ listen("account", (e) => {
       return;
     case "profile":
       state.me = { ...state.me, ...m.me };
+      renderPictures();
       if ($("username-dialog").open && m.me.username) $("username-dialog").close();
       break;
     case "status":
@@ -3574,6 +3575,7 @@ listen("account", (e) => {
     case "friend": {
       const before = state.friends.get(m.friend.key);
       state.friends.set(m.friend.key, m.friend);
+      if (before?.avatar !== m.friend.avatar) renderPictures();
       if (m.request) {
         toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
         playSound("user_join");
@@ -4388,7 +4390,7 @@ function plainText(text) {
 /** The name to show for a Hopp ID: someone here, a friend, someone who wrote, or a fetched profile. */
 function nameForKey(key) {
   if (key === state.account?.publicKey) return state.account.name;
-  const here = state.roster?.users.find((u) => u.public_key === key);
+  const here = state.roster?.users.find((u) => keyOf(u) === key);
   if (here) return here.name;
   const friend = state.friends?.get(key);
   if (friend) return friend.display_name;
@@ -4545,7 +4547,21 @@ function notifyMention({ server, channel, author_key, author_name, channel_name,
 // ---------- pictures for everyone ----------
 
 var profiles = new Map();
-var PROFILE_FRESH_MS = 10 * 60_000;
+var PROFILE_FRESH_MS = 3 * 60_000;
+
+/**
+ * Someone's Hopp ID in the server we're in. Servers send it with each user; older
+ * ones don't, so fall back to yourself, or to what their messages are signed with.
+ */
+function keyOf(u) {
+  if (u.public_key) return u.public_key;
+  if (u.session_id === state.roster?.me) return state.account?.publicKey ?? null;
+  for (const list of state.chats.values()) {
+    const m = list.findLast((x) => x.sender === u.session_id && x.author_key);
+    if (m) return m.author_key;
+  }
+  return null;
+}
 
 /** Someone's profile picture by Hopp ID: yours, a friend's, or fetched once in a while. */
 function pictureFor(key) {
@@ -4600,7 +4616,7 @@ function mentionCandidates(query) {
     const username = profiles.get(key)?.username ?? state.friends?.get(key)?.username ?? null;
     if (!q || name.toLowerCase().includes(q) || username?.includes(q)) out.push({ key, name, username });
   };
-  for (const u of [...(state.roster?.users ?? [])].sort(byName)) add(u.public_key, u.name);
+  for (const u of [...(state.roster?.users ?? [])].sort(byName)) add(keyOf(u), u.name);
   for (const list of state.chats.values()) for (const m of [...list].reverse()) add(m.author_key, m.sender_name);
   return out.sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
 }
@@ -4687,3 +4703,8 @@ function withMentions(text) {
   for (const label of labels) text = text.split(label).join(`<@${composeMentions.get(label)}>`);
   return text;
 }
+
+// Pictures people change while you're in a server show up within a few minutes.
+setInterval(() => {
+  if (online() && document.hasFocus()) renderMembers();
+}, PROFILE_FRESH_MS);
