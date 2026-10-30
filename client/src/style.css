@@ -2435,3 +2435,59 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .welcome-modal [data-wstep] { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .welcome-modal [data-wstep][hidden] { display: none; }
 .welcome-modal .welcome-meter { width: 100%; }
+
+/* ---------- calls ---------- */
+.dm-call-btn { margin-left: auto; }
+#home:not(.dm-open) .dm-call-btn { display: none; }
+.call-panel .voice-status { color: var(--yellow); }
+.call-panel.live .voice-status { color: var(--green); }
+.call-where { padding: 0; background: none; border: none; color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.call-where:hover { color: var(--text); text-decoration: underline; }
+
+.call-stage {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 28px 16px 20px;
+  background: var(--deep);
+  border-bottom: 1px solid var(--border);
+}
+.call-stage[hidden] { display: none; }
+.call-people { display: flex; gap: 28px; }
+.call-person .avatar { transition: box-shadow 80ms; }
+.call-person.speaking .avatar { box-shadow: 0 0 0 3px var(--deep), 0 0 0 6px var(--green); }
+.call-stage-status { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.call-stage-actions { display: flex; gap: 12px; }
+.call-btn {
+  display: grid; place-items: center;
+  width: 48px; height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+}
+.call-btn .i { width: 22px; height: 22px; }
+.call-btn.accept { background: #2f9e64; }
+.call-btn.accept:hover { background: #33b06f; }
+.call-btn.decline { background: var(--red); }
+.call-btn.decline:hover { background: var(--red-hover); }
+
+.incoming-call {
+  position: fixed; top: 48px; left: 50%;
+  z-index: 90;
+  display: flex; align-items: center; gap: 12px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 12px 12px 12px 14px;
+  background: var(--side-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+  transform: translateX(-50%);
+  animation: incoming 1.6s ease-in-out infinite;
+}
+.incoming-call[hidden] { display: none; }
+@keyframes incoming { 50% { box-shadow: 0 12px 40px rgb(0 0 0 / 0.5), 0 0 0 4px color-mix(in srgb, var(--green) 25%, transparent); } }
+.incoming-text { flex: 1; display: grid; min-width: 0; }
+.incoming-text strong { font-size: 15px; }
+.incoming-text span { color: var(--muted); font-size: 13px; }
+.incoming-call .call-btn { width: 40px; height: 40px; }
+.incoming-call .call-btn .i { width: 19px; height: 19px; }

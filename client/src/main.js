@@ -1373,6 +1373,8 @@ async function disconnect() {
 
 async function joinVoice(id) {
   if (myVoice() === id) return;
+  // One voice at a time: joining a channel ends a call.
+  if (state.call) await endCall();
   state.voiceState = { ready: false };
   state.latency = null;
   await call("join_voice", { channel: id });
@@ -1604,6 +1606,7 @@ function connectingServer() {
 
 function renderAll() {
   if (!state.account) return;
+  if (typeof renderCall === "function") queueMicrotask(renderCall);
   const on = online();
   const loading = !on && !!connectingServer();
   $("shell").classList.toggle("offline", !on && !loading);
@@ -3230,6 +3233,8 @@ const SOUNDS = {
   ptt_off: [[660, 0]],
   muted: [[349, 0], [349, 0.14]],
   message: [[988, 0], [1319, 0.06]],
+  ring: [[784, 0], [988, 0.13], [784, 0.42], [988, 0.55]],
+  ringback: [[440, 0], [440, 0.3]],
 };
 /** Which switch each sound belongs to, in the order the Sounds tab lists them. */
 const SOUND_EVENTS = [
@@ -3239,6 +3244,7 @@ const SOUND_EVENTS = [
   ["others", "Others joining and leaving", ["user_join", "user_leave"]],
   ["ptt", "Push to talk", ["ptt_on", "ptt_off"]],
   ["message", "New messages", ["message"]],
+  ["calls", "Calls ringing", ["ring", "ringback"]],
   ["disconnect", "Lost connection", ["disconnect"]],
 ];
 const SOUND_EVENT_OF = Object.fromEntries(SOUND_EVENTS.flatMap(([key, , names]) => names.map((n) => [n, key])));
@@ -3760,6 +3766,12 @@ listen("account", (e) => {
       renderUnread();
       return;
     }
+    case "call":
+      handleCallSignal(m);
+      return;
+    case "call_self":
+      handleCallSelf(m);
+      return;
     case "channel_read":
       mergeRead(m);
       renderUnread();
@@ -4375,6 +4387,7 @@ async function notifyPicture(person) {
 listen("notification-click", (e) => {
   const action = String(e.payload);
   if (action.startsWith("dm:")) openDm(action.slice(3));
+  else if (action.startsWith("call:")) openDm(action.slice(5));
   else if (action.startsWith("channel:")) {
     const [, id, ch] = action.split(":");
     const server = serverById(id);
@@ -5763,3 +5776,250 @@ function openMessageMenu(m, e) {
     e.clientY,
   );
 }
+
+// ---------- calls with friends ----------
+//
+// Peer to peer, with the same audio chain as voice channels. The friends'
+// accounts pass the ringing, answers and addresses along; the call's key goes
+// sealed for the friend, like a direct message, so nobody else can listen in.
+
+var CALL_RING_MS = 35_000;
+
+function hex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function callSend(c, kind, extra = {}) {
+  return invoke("account_send", { msg: { type: "call", to: c.peer, call_id: c.id, kind, ...extra } }).catch(() => {});
+}
+
+async function startCall(peer) {
+  if (state.call) return toast(state.call.peer === peer ? "You're already calling them." : "You're already in a call.", true);
+  if (!state.accountConnected) return toast("You're offline. Calls need a connection.", true);
+  const key = hex(crypto.getRandomValues(new Uint8Array(32)));
+  const c = { id: crypto.randomUUID(), peer, role: "caller", status: "ringing", key, me: 1, other: 2, startedAt: null, peerEndpoint: null, engineReady: false };
+  state.call = c;
+  try {
+    const sealed = await invoke("dm_seal", { peer, text: key });
+    await invoke("account_send", { msg: { type: "call", to: peer, call_id: c.id, kind: "ring", sealed } });
+  } catch (err) {
+    state.call = null;
+    renderCall();
+    return toast(friendlyError(err), true);
+  }
+  startRinging("ringback");
+  c.timeout = setTimeout(() => state.call === c && endCall("missed"), CALL_RING_MS);
+  renderCall();
+}
+
+async function handleCallSignal(m) {
+  const c = state.call;
+  const name = personFor(m.from).display_name;
+  if (m.kind === "ring") {
+    if (c) return callSend({ peer: m.from, id: m.call_id }, "busy");
+    let key;
+    try {
+      key = await invoke("dm_open", { peer: m.from, sealed: m.sealed });
+    } catch {
+      return;
+    }
+    const call = { id: m.call_id, peer: m.from, role: "callee", status: "ringing", key, me: 2, other: 1, startedAt: null, peerEndpoint: null, engineReady: false };
+    state.call = call;
+    startRinging("ring");
+    call.timeout = setTimeout(() => state.call === call && call.status === "ringing" && endCall("unanswered"), CALL_RING_MS + 5000);
+    desktopNotify(personFor(m.from), "Incoming call", `call:${m.from}`, name);
+    renderCall();
+    return;
+  }
+  if (!c || c.id !== m.call_id || c.peer !== m.from) return;
+  if (m.kind === "answer" && c.role === "caller") {
+    stopRinging();
+    clearTimeout(c.timeout);
+    c.status = "connecting";
+    renderCall();
+    await beginCallVoice(c);
+  } else if (m.kind === "endpoint") {
+    c.peerEndpoint = { session_id: c.other, public: m.public ?? null, local: m.local ?? [] };
+    if (c.engineReady) invoke("call_peer", { callId: c.id, peer: c.peerEndpoint });
+    c.status = "live";
+    c.startedAt ??= Date.now();
+    renderCall();
+  } else if (m.kind === "decline") {
+    toast(`${name} declined the call.`);
+    endCall("remote");
+  } else if (m.kind === "busy") {
+    toast(`${name} is in another call.`);
+    endCall("remote");
+  } else if (m.kind === "offline") {
+    toast(`${name} is offline. They'll see that you called.`);
+    endCall("missed");
+  } else if (m.kind === "end") {
+    endCall("remote");
+  }
+}
+
+/** Another of your devices answered or declined: stop ringing here. */
+function handleCallSelf(m) {
+  const c = state.call;
+  if (!c || c.id !== m.call_id || c.role !== "callee" || c.status !== "ringing") return;
+  if (m.kind === "answer" || m.kind === "decline") {
+    clearTimeout(c.timeout);
+    stopRinging();
+    state.call = null;
+    renderCall();
+  }
+}
+
+async function beginCallVoice(c) {
+  if (myVoice() !== null) await call("leave_voice");
+  stopMicTest();
+  let me;
+  try {
+    me = await invoke("start_call", { callId: c.id, key: c.key, me: c.me });
+  } catch (err) {
+    toast(friendlyError(err), true);
+    return endCall();
+  }
+  if (state.call !== c) return invoke("end_call");
+  c.engineReady = true;
+  if (c.peerEndpoint) invoke("call_peer", { callId: c.id, peer: c.peerEndpoint });
+  callSend(c, "endpoint", { public: me?.public ?? null, local: me?.local ?? [] });
+  playSound("join");
+}
+
+async function answerCall() {
+  const c = state.call;
+  if (!c || c.role !== "callee" || c.status !== "ringing") return;
+  clearTimeout(c.timeout);
+  stopRinging();
+  c.status = "connecting";
+  callSend(c, "answer");
+  renderCall();
+  openDm(c.peer);
+  await beginCallVoice(c);
+}
+
+function declineCall() {
+  const c = state.call;
+  if (!c) return;
+  callSend(c, "decline");
+  endCall("declined");
+}
+
+/** Ends the call here; tells the friend unless they ended it. */
+async function endCall(reason) {
+  const c = state.call;
+  if (!c) return;
+  state.call = null;
+  clearTimeout(c.timeout);
+  stopRinging();
+  if (reason !== "remote" && reason !== "declined" && reason !== "unanswered") callSend(c, "end");
+  // Nobody picked up: leave a note in the conversation.
+  if (c.role === "caller" && reason === "missed") sendDmText(c.peer, "📞 Missed call");
+  if (c.engineReady) {
+    await invoke("end_call").catch(() => {});
+    playSound("leave");
+  }
+  renderCall();
+}
+
+async function sendDmText(peer, text) {
+  try {
+    const sealed = await invoke("dm_seal", { peer, text });
+    await invoke("account_send", { msg: { type: "dm_send", to: peer, sealed, nonce: Math.random().toString(36).slice(2) } });
+  } catch {}
+}
+
+function startRinging(sound) {
+  stopRinging();
+  playSound(sound);
+  state.ringTimer = setInterval(() => playSound(sound), sound === "ring" ? 2200 : 3000);
+}
+
+function stopRinging() {
+  clearInterval(state.ringTimer);
+  state.ringTimer = null;
+}
+
+function callClock(c) {
+  const secs = Math.max(0, Math.floor((Date.now() - (c.startedAt ?? Date.now())) / 1000));
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
+function callStatusText(c) {
+  if (c.status === "ringing") return c.role === "caller" ? "Calling…" : "Incoming call…";
+  if (c.status === "connecting") return "Connecting…";
+  return `In call · ${callClock(c)}`;
+}
+
+function renderCall() {
+  const c = state.call;
+  const ringingHere = c && c.role === "callee" && c.status === "ringing";
+  // Incoming call card.
+  $("incoming-call").hidden = !ringingHere;
+  if (ringingHere) {
+    const p = personFor(c.peer);
+    $("incoming-avatar").replaceChildren(avatar(p.display_name, "s40", undefined, p.avatar));
+    $("incoming-name").textContent = p.display_name;
+  }
+  // The panel above your name.
+  $("call-panel").hidden = !c || ringingHere;
+  if (c && !ringingHere) {
+    $("call-status-text").textContent = callStatusText(c);
+    $("call-where").textContent = personFor(c.peer).display_name;
+    $("call-panel").classList.toggle("live", c.status === "live");
+  }
+  // The call button and the stage in the conversation.
+  const dmOpen = !!state.openDm && !online();
+  $("dm-call-btn").hidden = !dmOpen || !!c;
+  const here = c && dmOpen && c.peer === state.openDm && !ringingHere;
+  const stage = $("call-stage");
+  stage.hidden = !here;
+  if (here) {
+    const me = state.me ?? {};
+    const peer = personFor(c.peer);
+    const who = (person, id) => {
+      const wrap = el("div", "call-person");
+      wrap.dataset.session = id;
+      wrap.append(avatar(person.display_name ?? "?", "s80", undefined, person.avatar));
+      return wrap;
+    };
+    const people = el("div", "call-people");
+    people.append(who({ display_name: state.account?.name, avatar: me.avatar }, c.me), who(peer, c.other));
+    const status = el("div", "call-stage-status", callStatusText(c));
+    const actions = el("div", "call-stage-actions");
+    const hang = el("button", "call-btn decline");
+    hang.type = "button";
+    hang.dataset.tip = "Hang up";
+    hang.append(icon("phone-off"));
+    hang.addEventListener("click", () => endCall());
+    actions.append(hang);
+    stage.replaceChildren(people, status, actions);
+  }
+}
+
+$("dm-call-btn").addEventListener("click", () => state.openDm && startCall(state.openDm));
+$("call-accept").addEventListener("click", answerCall);
+$("call-decline").addEventListener("click", declineCall);
+$("call-hangup").addEventListener("click", () => endCall());
+$("call-where").addEventListener("click", () => state.call && openDm(state.call.peer));
+setInterval(() => {
+  if (state.call?.status === "live") {
+    $("call-status-text").textContent = callStatusText(state.call);
+    const status = document.querySelector(".call-stage-status");
+    if (status) status.textContent = callStatusText(state.call);
+  }
+}, 1000);
+
+listen("call-voice", (e) => {
+  const ev = e.payload;
+  if (ev.type === "speaking") {
+    document.querySelectorAll(`.call-person[data-session="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
+  } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
+    playSound("muted");
+    toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  }
+});
+
+// Hanging up when the app goes away, so the friend isn't left talking to nobody.
+window.addEventListener("beforeunload", () => state.call && callSend(state.call, "end"));

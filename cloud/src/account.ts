@@ -30,6 +30,9 @@ const DM_BURST = 8;
 const DM_PER_SECOND = 2;
 /** Unread marks for server channels are forgotten after this long without activity. */
 const CHANNEL_READS_DAYS = 90;
+/** Calls: what each kind of signal may carry. The key is sealed for the callee, like a direct message. */
+const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint"]);
+const CALL_ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
 const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 
@@ -460,6 +463,28 @@ export class StromAccount extends DurableObject<Env> {
         this.sql.exec("UPDATE conversations SET last_read = MAX(last_read, ?) WHERE peer = ?", at, peer);
         return this.toDevices({ type: "dm_read", with: peer, at });
       }
+      case "call": {
+        const to = String(msg.to ?? "").toLowerCase();
+        const kind = String(msg.kind ?? "");
+        const callId = String(msg.call_id ?? "");
+        if (!CALL_KINDS.has(kind) || !/^[0-9a-f-]{8,40}$/.test(callId)) return error("Bad call signal.");
+        if (this.friend(to)?.state !== "friend") return error("You can only call friends.");
+        const signal: Record<string, unknown> = { kind, call_id: callId };
+        if (kind === "ring") {
+          const sealed = String(msg.sealed ?? "");
+          if (!/^[0-9a-f]{40,400}$/.test(sealed)) return error("Bad call signal.");
+          signal.sealed = sealed;
+        }
+        if (kind === "endpoint") {
+          signal.public = typeof msg.public === "string" && CALL_ENDPOINT.test(msg.public) ? msg.public : null;
+          signal.local = (Array.isArray(msg.local) ? msg.local : []).filter((a: unknown) => typeof a === "string" && CALL_ENDPOINT.test(a)).slice(0, 4);
+        }
+        const reached = await accountOf(this.env, to).callSignal(myKey, signal);
+        // Your other devices stop ringing once one of them answers or declines.
+        this.toDevices({ type: "call_self", with: to, kind, call_id: callId }, ws);
+        if (kind === "ring" && !reached) this.send(ws, { type: "call", from: to, kind: "offline", call_id: callId });
+        return;
+      }
       case "channel_read": {
         const server = String(msg.server ?? "");
         const channel = Number(msg.channel);
@@ -731,6 +756,14 @@ export class StromAccount extends DurableObject<Env> {
       mention: m.mention,
       preview: m.preview,
     });
+  }
+
+  /** A call signal from a friend. False when none of our devices is online to hear it. */
+  async callSignal(fromKey: string, signal: Record<string, unknown>): Promise<boolean> {
+    if (this.friend(fromKey)?.state !== "friend") return false;
+    if (this.devices().length === 0) return false;
+    this.toDevices({ ...signal, type: "call", from: fromKey });
+    return true;
   }
 
   async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {

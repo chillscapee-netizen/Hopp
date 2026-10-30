@@ -49,6 +49,8 @@ pub struct AppState {
     /// The audio devices, looked up ahead of time so device menus open at once.
     device_list: Mutex<Option<DeviceList>>,
     mic_test: Mutex<Option<MicTest>>,
+    /// A call with a friend: its own peer-to-peer voice, apart from any server.
+    call: Mutex<Option<Call>>,
     /// When Windows Hello last confirmed the user; unlocks password reset and the phrase briefly.
     hello_verified_at: Mutex<Option<Instant>>,
 }
@@ -626,6 +628,49 @@ fn start_peer_voice(ui: AppHandle, generation: u64, attempt: u64, channel: Chann
     let _ = ui.emit("voice-state", serde_json::json!({ "ready": true }));
 }
 
+struct Call {
+    id: String,
+    engine: VoiceEngine,
+}
+
+/// Starts a call's voice (`me` is 1 for the caller, 2 for the one called) and
+/// returns where the friend can reach us; their address comes with `call_peer`.
+#[tauri::command]
+async fn start_call(app: AppHandle, call_id: String, key: String, me: SessionId) -> CmdResult<Option<PeerEndpoint>> {
+    let key = decode_key(&key).ok_or("The call key is broken.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        // One microphone user at a time: the mic check and server voice make way.
+        *state.mic_test.lock().unwrap() = None;
+        *state.call.lock().unwrap() = None;
+        let devices = state.devices.lock().unwrap().clone();
+        let (engine, events) = VoiceEngine::start_mesh(me, key, &devices, state.audio.clone()).map_err(|e| format!("Couldn't start your audio: {e:#}"))?;
+        let endpoint = engine.endpoint().cloned();
+        let relay = app.clone();
+        std::thread::spawn(move || {
+            for ev in events {
+                let _ = relay.emit("call-voice", ev);
+            }
+        });
+        *state.call.lock().unwrap() = Some(Call { id: call_id, engine });
+        Ok(endpoint)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn call_peer(state: State<'_, AppState>, call_id: String, peer: PeerEndpoint) {
+    if let Some(call) = state.call.lock().unwrap().as_ref().filter(|c| c.id == call_id) {
+        call.engine.set_peer(&peer);
+    }
+}
+
+#[tauri::command]
+fn end_call(state: State<'_, AppState>) {
+    *state.call.lock().unwrap() = None;
+}
+
 fn decode_key(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 || !hex.is_ascii() {
         return None;
@@ -1126,6 +1171,9 @@ fn main() {
             edit_message,
             react,
             load_older,
+            start_call,
+            call_peer,
+            end_call,
             leave_server,
             create_channel,
             delete_channel,

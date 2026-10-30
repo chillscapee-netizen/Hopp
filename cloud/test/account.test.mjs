@@ -343,3 +343,43 @@ test("server messages mark channels unread on every member's account, and mentio
   assert.equal(profile.display_name, "Alice");
   for (const d of [owner, member, account, again]) d.close();
 });
+
+test("calls between friends: ring, answer, endpoints, end; strangers and offline friends", async () => {
+  const a = await userWithName("caller");
+  const b = await userWithName("callee");
+  const id = "0f1e2d3c-4b5a";
+  a.d.send({ type: "call", to: b.key.pub, call_id: id, kind: "ring", sealed: "ab".repeat(30) });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /only call friends/);
+
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+
+  const b2 = await Device.open(b.key, "Callee");
+  a.d.send({ type: "call", to: b.key.pub, call_id: id, kind: "ring", sealed: "ab".repeat(30) });
+  const ring = await b.d.waitFor((m) => m.type === "call");
+  assert.deepEqual(ring, { type: "call", from: a.key.pub, kind: "ring", call_id: id, sealed: "ab".repeat(30) });
+  await b2.waitFor((m) => m.type === "call" && m.kind === "ring");
+
+  b.d.send({ type: "call", to: a.key.pub, call_id: id, kind: "answer" });
+  assert.equal((await a.d.waitFor((m) => m.type === "call")).kind, "answer");
+  // The other device stops ringing.
+  assert.equal((await b2.waitFor((m) => m.type === "call_self")).kind, "answer");
+
+  b.d.send({ type: "call", to: a.key.pub, call_id: id, kind: "endpoint", public: "1.2.3.4:5000", local: ["192.168.1.2:5000", "evil"] });
+  const ep = await a.d.waitFor((m) => m.type === "call" && m.kind === "endpoint");
+  assert.equal(ep.public, "1.2.3.4:5000");
+  assert.deepEqual(ep.local, ["192.168.1.2:5000"]);
+
+  a.d.send({ type: "call", to: b.key.pub, call_id: id, kind: "end" });
+  assert.equal((await b.d.waitFor((m) => m.type === "call" && m.kind === "end")).call_id, id);
+
+  // Nobody home: the caller hears so at once.
+  b.d.close();
+  b2.close();
+  await sleep(200);
+  a.d.send({ type: "call", to: b.key.pub, call_id: "aaaabbbbcccc", kind: "ring", sealed: "cd".repeat(30) });
+  assert.equal((await a.d.waitFor((m) => m.type === "call")).kind, "offline");
+  a.d.close();
+});

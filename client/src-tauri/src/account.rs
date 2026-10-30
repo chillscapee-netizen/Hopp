@@ -30,6 +30,7 @@ const ALLOWED: &[&str] = &[
     "dm_history",
     "dm_read",
     "channel_read",
+    "call",
 ];
 
 #[derive(Default)]
