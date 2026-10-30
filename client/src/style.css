@@ -1891,3 +1891,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 
 .settings-tab.subtle { margin-top: auto; color: var(--faint); font-size: 13px; }
 .settings-tab.subtle .i { width: 16px; height: 16px; }
+
+.member .status-dot { border-color: var(--side); }
+.member:hover .status-dot { border-color: color-mix(in srgb, var(--side) 92%, white); }

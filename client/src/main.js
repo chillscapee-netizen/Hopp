@@ -1662,7 +1662,9 @@ function userRow(u, className, size, sub) {
   const talking = className === "voice-user" && state.speaking.has(u.session_id);
   const row = el("li", className + (isSelf ? " self" : "") + (talking ? " speaking" : ""));
   row.dataset.user = u.session_id;
-  row.append(avatar(u.name, size));
+  const member = className === "member";
+  // The member list is just who is here: avatar with a status dot, name, crown.
+  row.append(avatar(u.name, size, member ? "online" : undefined));
   const nameLine = el("span", "name-line");
   nameLine.append(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name));
   if (u.owner) {
@@ -1678,10 +1680,11 @@ function userRow(u, className, size, sub) {
   } else {
     row.append(nameLine);
   }
-  const flags = flagsFor(u);
+  // Voice details (muted, deafened, your volume for them) belong in the voice channel.
+  const flags = member ? null : flagsFor(u);
   const vol = prefs.userVolumes[u.name];
   if (flags) row.append(flags);
-  else if (!isSelf && vol !== undefined && vol !== 100) row.append(el("span", "vol-tag", vol === 0 ? "Muted" : `${vol}%`));
+  else if (!member && !isSelf && vol !== undefined && vol !== 100) row.append(el("span", "vol-tag", vol === 0 ? "Muted" : `${vol}%`));
   if (!isSelf) row.addEventListener("click", () => openUserCard(u, row));
   return row;
 }
@@ -1778,7 +1781,7 @@ function renderMembers() {
   for (const [label, list] of groups) {
     if (list.length === 0) continue;
     items.push(el("li", "member-group", `${label} — ${list.length}`));
-    items.push(...list.map((u) => userRow(u, "member", "", u.voice_channel !== null ? channelName(u.voice_channel) : null)));
+    items.push(...list.map((u) => userRow(u, "member", "")));
   }
   if (users.length === 1) {
     items.push(emptyCta("It's just you here", "Invite friends to chat and talk.", "Invite people", openInvite));
