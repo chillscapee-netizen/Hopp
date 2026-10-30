@@ -3465,8 +3465,10 @@ listen("account", (e) => {
       if (m.request) {
         toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
         playSound("user_join");
+        desktopNotify(m.friend, "Sent you a friend request", "friend-requests");
       } else if (m.accepted) {
         toast(`${m.friend.display_name} accepted your friend request.`);
+        desktopNotify(m.friend, "Accepted your friend request", `dm:${m.friend.key}`);
       } else if (m.friend.state === "outgoing" && !before) {
         addFriendResult(`Friend request sent to @${m.friend.username}.`, false);
       }
@@ -3996,8 +3998,52 @@ function notifyDm(peer, text) {
   const who = personFor(peer);
   if (state.me?.status === "dnd") return;
   playSound("message");
-  if (!document.hasFocus()) invoke("notify", { title: who.display_name, body: text ?? "Sent you a message" }).catch(() => {});
+  desktopNotify(who, text ?? "Sent you a message", `dm:${peer}`);
 }
+
+/** A desktop notification with the person's picture, when Hopp isn't in front. */
+async function desktopNotify(person, body, action) {
+  if (document.hasFocus() || state.me?.status === "dnd") return;
+  const image = await notifyPicture(person).catch(() => null);
+  invoke("notify", { title: person.display_name, body, image, action }).catch(() => {});
+}
+
+/** The person's avatar (picture or initials) as PNG bytes, for a notification. */
+async function notifyPicture(person) {
+  const size = 96;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const g = canvas.getContext("2d");
+  const name = person.display_name || "?";
+  if (person.avatar) {
+    const img = new Image();
+    img.src = person.avatar;
+    await img.decode();
+    const side = Math.min(img.width, img.height);
+    g.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+  } else {
+    g.fillStyle = `hsl(${hue(name)} 13% 36%)`;
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = "#f2f2f3";
+    g.font = '600 36px "Inter", "Segoe UI", sans-serif';
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(initials(name).slice(0, 2), size / 2, size / 2 + 2);
+  }
+  const blob = await new Promise((done) => canvas.toBlob(done, "image/png"));
+  return Array.from(new Uint8Array(await blob.arrayBuffer()));
+}
+
+listen("notification-click", (e) => {
+  const action = String(e.payload);
+  if (action.startsWith("dm:")) openDm(action.slice(3));
+  else if (action === "friend-requests") {
+    if (state.activeId || state.connectingId) disconnect();
+    state.openDm = null;
+    state.friendTab = "pending";
+    renderAll();
+  }
+});
 
 function markDmRead(peer) {
   const conv = state.conversations.get(peer);
