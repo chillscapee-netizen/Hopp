@@ -1387,7 +1387,8 @@ listen("voice", (e) => {
   const ev = e.payload;
   if (ev.type === "speaking") {
     ev.speaking ? state.speaking.add(ev.session_id) : state.speaking.delete(ev.session_id);
-    document.querySelectorAll(`[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
+    // Who is talking shows in the voice channel (and on your own panel), like Discord; not in the member list.
+    document.querySelectorAll(`.voice-user[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
     if (state.roster && ev.session_id === state.roster.me) renderUserPanel();
   } else if (ev.type === "latency") {
     state.latency = ev.ms;
@@ -1658,7 +1659,8 @@ function flagsFor(u) {
 
 function userRow(u, className, size, sub) {
   const isSelf = u.session_id === state.roster.me;
-  const row = el("li", className + (isSelf ? " self" : "") + (state.speaking.has(u.session_id) ? " speaking" : ""));
+  const talking = className === "voice-user" && state.speaking.has(u.session_id);
+  const row = el("li", className + (isSelf ? " self" : "") + (talking ? " speaking" : ""));
   row.dataset.user = u.session_id;
   row.append(avatar(u.name, size));
   const nameLine = el("span", "name-line");
