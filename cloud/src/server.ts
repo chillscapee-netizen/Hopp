@@ -164,6 +164,8 @@ export class StromServer extends DurableObject<Env> {
     const channelColumns = new Set(this.sql.exec("PRAGMA table_info(channels)").toArray().map((c) => String(c.name)));
     if (!channelColumns.has("position")) this.sql.exec("ALTER TABLE channels ADD COLUMN position INTEGER");
     if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
+    const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
+    if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
     const columns = new Set(this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => String(c.name)));
     for (const [name, type] of [["reply_id", "INTEGER"], ["reply_name", "TEXT"], ["reply_key", "TEXT"], ["reply_text", "TEXT"], ["edited_at", "INTEGER"], ["reactions", "TEXT"]]) {
@@ -187,7 +189,8 @@ export class StromServer extends DurableObject<Env> {
     const name = this.meta("name");
     if (name === null || !this.invites().some((i) => i.code === code)) return null;
     const members = Number(this.sql.exec("SELECT count(*) AS n FROM accounts").one().n);
-    return { name, icon: this.meta("icon"), members, online: this.members().length };
+    const inviter = this.sql.exec("SELECT inviter FROM invites WHERE code = ?", code).toArray()[0]?.inviter ?? null;
+    return { name, icon: this.meta("icon"), members, online: this.members().length, inviter };
   }
 
   // ---------- storage helpers ----------
@@ -701,8 +704,8 @@ export class StromServer extends DurableObject<Env> {
         }
         const invite: Invite = { code, created_at: now, expires_at: expiresAt, max_uses: maxUses, uses: 0 };
         this.sql.exec(
-          "INSERT INTO invites (code, created_at, expires_at, max_uses, uses) VALUES (?, ?, ?, ?, 0)",
-          invite.code, invite.created_at, invite.expires_at, invite.max_uses,
+          "INSERT INTO invites (code, created_at, expires_at, max_uses, uses, inviter) VALUES (?, ?, ?, ?, 0, ?)",
+          invite.code, invite.created_at, invite.expires_at, invite.max_uses, user.name,
         );
         this.send(ws, { type: "invite_created", invite });
         return this.send(ws, { type: "invites", invites: this.invites() });

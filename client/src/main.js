@@ -2409,7 +2409,7 @@ function updateJoinPreview() {
     try {
       const p = await invitePreview(code);
       if (shortInviteCode($("join-address").value) !== code) return;
-      box.replaceChildren(inviteCard(p).card);
+      box.replaceChildren(inviteCard(p, p.inviter ? `${p.inviter} invited you to join` : "You've been invited to join").card);
     } catch (err) {
       if (shortInviteCode($("join-address").value) !== code) return;
       box.hidden = true;

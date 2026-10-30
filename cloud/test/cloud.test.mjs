@@ -206,6 +206,7 @@ test("short invite codes show a preview and lead to the right server", async () 
   assert.equal(preview.name, "Test server");
   assert.equal(preview.members, 1);
   assert.equal(preview.online, 1);
+  assert.equal(preview.inviter, "owner");
 
   // What the app does with a pasted code: preview, then join that server with it.
   (await join(preview.server_id, "friend", { invite: preview.code })).close();
