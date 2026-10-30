@@ -1,4 +1,4 @@
-//! Client side of Ström: identity, the TCP control connection and the realtime voice engine.
+//! Client side of Hopp: identity, the TCP control connection and the realtime voice engine.
 
 pub mod account;
 pub mod capture;

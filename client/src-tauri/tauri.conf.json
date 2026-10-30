@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Strom",
+  "productName": "Hopp",
   "version": "0.1.0",
   "identifier": "se.strom.client",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Ström",
+        "title": "Hopp",
         "width": 1280,
         "height": 800,
         "minWidth": 940,
@@ -37,6 +37,7 @@
     "deep-link": {
       "desktop": {
         "schemes": [
+          "hopp",
           "strom"
         ]
       }

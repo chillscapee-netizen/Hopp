@@ -23,7 +23,7 @@ const METER_MIN_DB = -60;
 const METER_MAX_DB = 0;
 const GROUP_WINDOW_MS = 7 * 60 * 1000;
 const DEFAULT_PORT = 7777;
-/** Where Ström Cloud runs (see cloud/). For local development, `npx wrangler dev` serves ws://127.0.0.1:8787. */
+/** Where Hopp Cloud runs (see cloud/). For local development, `npx wrangler dev` serves ws://127.0.0.1:8787. */
 const DEFAULT_CLOUD_URL = "wss://strom-cloud.strom-chat.workers.dev";
 const TYPING_SEND_MS = 2500;
 const TYPING_SHOW_MS = 6000;
@@ -213,8 +213,8 @@ function friendlyError(raw) {
   if (/10061|refused/i.test(s)) return "The server isn't answering. Check that it's running and that the address is right.";
   if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check the address and that port 7777 is open.";
   if (/resolve|11001|no such host/i.test(s)) return "Couldn't find a server at that address.";
-  if (/protocol/i.test(s)) return "This server runs a different version of Ström. Update the server and the app to the same version.";
-  if (/using the default devices instead/i.test(s)) return "Your chosen audio device couldn't be opened, so Ström is using the system default for now.";
+  if (/protocol/i.test(s)) return "This server runs a different version of Hopp. Update the server and the app to the same version.";
+  if (/using the default devices instead/i.test(s)) return "Your chosen audio device couldn't be opened, so Hopp is using the system default for now.";
   if (/^audio:/i.test(s)) return "Couldn't start audio. Check your input and output devices in User settings.";
   return s;
 }
@@ -235,10 +235,10 @@ function online() {
   return state.activeId !== null && state.roster !== null;
 }
 
-const SHORT_INVITE = /^(?:strom:\/\/)?([A-Za-z0-9]{6,16})\/?$/i;
-const INVITE_LINK = /\bstrom:\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
+const SHORT_INVITE = /^(?:(?:hopp|strom):\/\/)?([A-Za-z0-9]{6,16})\/?$/i;
+const INVITE_LINK = /\b(?:hopp|strom):\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
 
-/** The code of a short Ström Cloud invite ("strom://K7P2QX9M"), or null. */
+/** The code of a short Hopp Cloud invite ("strom://K7P2QX9M"), or null. */
 function shortInviteCode(input) {
   const m = input.trim().match(SHORT_INVITE);
   // A bare word could be a host name too; only "localhost" is likely, and it has no digits.
@@ -262,7 +262,7 @@ function invitePreview(code) {
  * the older cloud form; "strom://host:port/CODE" (or a bare address) is self-hosted.
  */
 function parseInvite(input) {
-  const s = input.trim().replace(/^strom:\/\//i, "");
+  const s = input.trim().replace(/^(?:hopp|strom):\/\//i, "");
   const parts = s.split("/").map((p) => p.trim());
   if (parts[0].toLowerCase() === "cloud" && parts[1]) {
     return { address: `cloud:${parts[1]}`, invite: parts[2]?.toUpperCase() || undefined };
@@ -280,7 +280,7 @@ function endpoint(server) {
 }
 
 function displayAddress(server) {
-  return isCloud(server) ? "Ström Cloud" : server.address;
+  return isCloud(server) ? "Hopp Cloud" : server.address;
 }
 
 function newCloudId() {
@@ -335,7 +335,7 @@ function showAuth(mode) {
   if (mode !== "recover") authReturn = mode;
   authMode = mode;
   for (const [m, id] of Object.entries(AUTH_PANES)) $(id).hidden = m !== mode;
-  $("topbar-title").textContent = "Ström";
+  $("topbar-title").textContent = "Hopp";
   const focus = AUTH_FOCUS[mode];
   if (focus) setTimeout(() => $(focus).focus(), 0);
 }
@@ -444,7 +444,7 @@ $("create-form").addEventListener("submit", async (e) => {
   const password = $("create-password").value;
   if (password !== $("create-confirm").value) return showError("create-error", "The passwords don't match.");
   const btn = $("create-btn");
-  setBusy(btn, true, "Creating your Ström ID…");
+  setBusy(btn, true, "Creating your Hopp ID…");
   try {
     const created = await invoke("create_account", {
       name: $("create-name").value,
@@ -479,7 +479,7 @@ async function copyText(text, btn, label) {
 
 $("to-create").addEventListener("click", async () => {
   const ok = await confirmDialog({
-    title: "Create a new Ström ID?",
+    title: "Create a new Hopp ID?",
     text: "Your current account isn't deleted. It's kept as a backup in the app's folder, but from now on you'll log in with the new one. Forgot your password? Use your recovery phrase instead.",
     ok: "Create new account",
   });
@@ -532,7 +532,7 @@ async function checkPhrase() {
     status.classList.add("ok");
     status.textContent = `This is the recovery phrase for ${$("login-name").textContent || "your account"}.`;
   } else if (phraseCheck.other_account_name) {
-    status.textContent = `This is a different Ström ID. The account on this computer (${phraseCheck.other_account_name}) will be kept as a backup.`;
+    status.textContent = `This is a different Hopp ID. The account on this computer (${phraseCheck.other_account_name}) will be kept as a backup.`;
   } else {
     status.classList.add("ok");
     status.textContent = "Valid recovery phrase. Choose the name you want to use.";
@@ -788,7 +788,7 @@ document.querySelectorAll("[data-backup]").forEach((b) =>
 async function remindLater() {
   const ok = await confirmDialog({
     title: "Skip saving your phrase?",
-    text: "If you forget your password without it, this account is gone for good. Nobody, not even Ström, can get it back. You'll see a reminder until you've saved it.",
+    text: "If you forget your password without it, this account is gone for good. Nobody, not even Hopp, can get it back. You'll see a reminder until you've saved it.",
     ok: "Remind me later",
   });
   if (ok) closeBackup();
@@ -1512,7 +1512,7 @@ function renderAll() {
   const loading = !on && !!connectingServer();
   $("shell").classList.toggle("offline", !on && !loading);
   $("shell").classList.toggle("loading", loading);
-  $("topbar-title").textContent = on ? activeServer()?.label ?? state.roster.server_name : loading ? connectingServer().label : "Ström";
+  $("topbar-title").textContent = on ? activeServer()?.label ?? state.roster.server_name : loading ? connectingServer().label : "Hopp";
   renderRail();
   renderSidebar();
   renderVoicePanel();
@@ -1595,7 +1595,7 @@ function renderSidebar() {
     return;
   }
   if (!online()) {
-    $("sidebar-title").textContent = "Ström";
+    $("sidebar-title").textContent = "Hopp";
     head.disabled = true;
     const rows = prefs.servers.map((s) => {
       const b = el("button", "server-row");
@@ -1870,7 +1870,7 @@ function messageText(text) {
     a.href = match[0];
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      if (/^strom:/i.test(match[0])) followInvite(match[0]);
+      if (/^(?:hopp|strom):/i.test(match[0])) followInvite(match[0]);
       else openUrl(match[0]);
     });
     out.append(a);
@@ -2295,7 +2295,7 @@ async function showInvite(invite) {
   if (!$("invite-dialog").open) return;
   const { address } = await shareableAddress();
   // Cloud: strom://CODE. Self-hosted: strom://host:port/CODE.
-  $("invite-link").value = address ? `strom://${address}/${invite.code}` : `strom://${invite.code}`;
+  $("invite-link").value = address ? `hopp://${address}/${invite.code}` : `hopp://${invite.code}`;
   $("invite-summary").textContent = inviteSummary(invite);
 }
 
@@ -2404,7 +2404,7 @@ function shrinkPicture(file, steps = [[256, 0.9], [256, 0.75], [192, 0.7], [128,
       }
       reject(new Error("That picture is too large. Try a smaller one."));
     };
-    const unreadable = () => reject(new Error("That file isn't a picture Ström can read. Use PNG, JPEG or WebP."));
+    const unreadable = () => reject(new Error("That file isn't a picture Hopp can read. Use PNG, JPEG or WebP."));
     img.onerror = unreadable;
     // Read it as a data: URL; the app's security policy doesn't allow blob: pictures.
     const reader = new FileReader();
@@ -2608,7 +2608,7 @@ function renderProfilePreview() {
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
   const key = state.account?.publicKey ?? "";
-  $("profile-key").textContent = key ? `Ström ID ${key.slice(0, 16).match(/.{4}/g).join(" ")}` : "";
+  $("profile-key").textContent = key ? `Hopp ID ${key.slice(0, 16).match(/.{4}/g).join(" ")}` : "";
 }
 
 $("settings-name").addEventListener("change", async (e) => {
@@ -2669,7 +2669,7 @@ function stopMicTest() {
 }
 $("mic-check").addEventListener("click", () => (state.micTesting ? stopMicTest() : startMicTest()));
 
-// Hear Ström on the chosen speakers.
+// Hear Hopp on the chosen speakers.
 $("test-output").addEventListener("click", () => {
   invoke("test_output").catch((err) => toast(friendlyError(err), true));
 });
@@ -2906,7 +2906,7 @@ listen("ptt-recorded", (e) => {
   else setPttKey(e.payload.key, e.payload.label);
 });
 listen("ptt-blocked", () => {
-  toast("Push to talk can't see your key while the app in front runs as administrator. Run Ström as administrator too, or the game without it.", true);
+  toast("Push to talk can't see your key while the app in front runs as administrator. Run Hopp as administrator too, or the game without it.", true);
 });
 listen("ptt", (e) => {
   if (soundOn("ptt") && (inVoice() || state.micTesting) && !state.muted && !state.deafened) playSound(e.payload ? "ptt_on" : "ptt_off");
@@ -3092,7 +3092,7 @@ $("noise").addEventListener("change", (e) => {
 });
 
 
-/** Every voice and audio setting back to how Ström starts out; devices and the push-to-talk key stay. */
+/** Every voice and audio setting back to how Hopp starts out; devices and the push-to-talk key stay. */
 const AUDIO_DEFAULTS = {
   inputVolume: 100, outputVolume: 100, mode: "voice_activity", autoSensitivity: true, threshold: -50,
   noise: true, echo: true, autoGain: true, pttDelay: 200,
@@ -3267,7 +3267,7 @@ async function removeUser(ban) {
   closePopovers();
   const ok = await confirmDialog(
     ban
-      ? { title: `Ban ${user.name}`, text: `${user.name} is disconnected and can never rejoin with this Ström ID, not even with an invite. You can undo this in Server settings.`, ok: "Ban" }
+      ? { title: `Ban ${user.name}`, text: `${user.name} is disconnected and can never rejoin with this Hopp ID, not even with an invite. You can undo this in Server settings.`, ok: "Ban" }
       : { title: `Kick ${user.name}`, text: `${user.name} is disconnected right away. As a member they can rejoin later.`, ok: "Kick" },
   );
   if (ok) call("kick", { sessionId: user.session_id, ban });
@@ -3332,10 +3332,10 @@ $("win-close").addEventListener("click", async () => {
   let choice = load("closeAction", "");
   if (!choice) {
     const keep = await confirmDialog({
-      title: "Keep Ström running?",
-      text: "Ström can keep running in the notification area when you close the window, so you stay in voice and still get messages. Open it again from the icon by the clock.",
+      title: "Keep Hopp running?",
+      text: "Hopp can keep running in the notification area when you close the window, so you stay in voice and still get messages. Open it again from the icon by the clock.",
       ok: "Keep running",
-      cancel: "Quit Ström",
+      cancel: "Quit Hopp",
       danger: false,
     });
     choice = keep ? "tray" : "quit";
@@ -3351,9 +3351,9 @@ listen("tray-action", (e) => {
   else if (e.payload === "deafen") setDeafened(!state.deafened);
 });
 
-// strom:// links from outside (a browser, another app, or what Ström was started with).
+// strom:// links from outside (a browser, another app, or what Hopp was started with).
 async function openLink(url) {
-  if (!state.account || !/^strom:\/\//i.test(url)) return;
+  if (!state.account || !/^(?:hopp|strom):\/\//i.test(url)) return;
   closePopovers();
   await followInvite(url);
 }
@@ -3392,7 +3392,7 @@ boot();
 
 // ---------- your account: profile, status, friends, synced data ----------
 //
-// The account lives in Ström Cloud (one object per Ström ID, see cloud/src/account.ts).
+// The account lives in Hopp Cloud (one object per Hopp ID, see cloud/src/account.ts).
 // This keeps state.me and state.friends in step with it and draws the Friends page.
 
 state.me = null; // { key, username, display_name, avatar, bio, status, privacy }
@@ -3431,7 +3431,7 @@ listen("account", (e) => {
       for (const peer of state.dmMessages.keys()) invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
       syncState.version = m.sync.version;
       receiveSync(m.sync.data);
-      // A Ström ID made before usernames: ask once (it can wait).
+      // A Hopp ID made before usernames: ask once (it can wait).
       if (!m.me.username && !usernameAsked) {
         usernameAsked = true;
         openUsernameDialog(true);
@@ -3658,7 +3658,7 @@ function addFriendResult(text, isError) {
 
 function addFriendPanel() {
   const panel = el("section", "add-friend");
-  panel.append(el("h2", "", "Add friend"), el("p", "hint", "Add friends with their Ström username."));
+  panel.append(el("h2", "", "Add friend"), el("p", "hint", "Add friends with their Hopp username."));
   if (!state.me?.username) {
     const need = el("div", "callout-info");
     const btn = el("button", "btn sm primary", "Pick a username");
@@ -3818,7 +3818,7 @@ $("avatar-remove").addEventListener("click", () => accountSend({ type: "set_prof
 
 // ---------- your servers and folders on every device ----------
 //
-// The list is saved, encrypted so only this Ström ID can read it, in the account.
+// The list is saved, encrypted so only this Hopp ID can read it, in the account.
 // Servers are matched by address (ids differ per device); removing one is
 // remembered so it doesn't come back from another device.
 

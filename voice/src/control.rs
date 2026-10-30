@@ -21,7 +21,9 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 /// connection is dead (wifi gone, laptop slept) even if it never closed.
 const SILENCE_TIMEOUT: Duration = Duration::from_secs(35);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
-pub const INVITE_SCHEME: &str = "strom://";
+pub const INVITE_SCHEME: &str = "hopp://";
+/// Links made before the app was called Hopp.
+pub const OLD_INVITE_SCHEME: &str = "strom://";
 
 /// Everything the client needs after a successful login.
 pub struct Session {
@@ -84,7 +86,7 @@ impl Roster {
 /// `strom://host:port/CODE`. Returns `host:port` and the invite code, if any.
 pub fn parse_invite(input: &str) -> anyhow::Result<(String, Option<String>)> {
     let s = input.trim();
-    let s = s.strip_prefix(INVITE_SCHEME).unwrap_or(s);
+    let s = s.strip_prefix(INVITE_SCHEME).or_else(|| s.strip_prefix(OLD_INVITE_SCHEME)).unwrap_or(s);
     let (host, code) = match s.split_once('/') {
         Some((host, code)) => (host, Some(code.trim_matches('/')).filter(|c| !c.is_empty())),
         None => (s, None),
@@ -191,7 +193,7 @@ async fn open_websocket(url: &str) -> anyhow::Result<(Reader, Writer)> {
     Ok((Reader::Ws(stream), Writer::Ws(sink)))
 }
 
-/// Connects and logs in with a Ström ID.
+/// Connects and logs in with a Hopp ID.
 ///
 /// `address` is a self-hosted server (`host:port`) or a cloud server's WebSocket
 /// URL. `invite` is needed the first time; `create` creates a new cloud server

@@ -1,4 +1,4 @@
-//! The connection to your account in Ström Cloud: profile, username, the
+//! The connection to your account in Hopp Cloud: profile, username, the
 //! encrypted account data every device shares, friends and presence.
 //!
 //! Messages are plain JSON objects with a "type"; the app's page works with
@@ -38,7 +38,7 @@ pub async fn connect_account(cloud: &str, identity: &Identity) -> anyhow::Result
     let url = format!("{}/account/ws?key={}", cloud.trim_end_matches('/'), identity.public_key());
     let (stream, _) = tokio::time::timeout(ANSWER_TIMEOUT, tokio_tungstenite::connect_async(&url))
         .await
-        .map_err(|_| anyhow::anyhow!("Ström Cloud didn't answer"))??;
+        .map_err(|_| anyhow::anyhow!("Hopp Cloud didn't answer"))??;
     let (mut sink, mut stream) = stream.split();
 
     async fn next_json(
@@ -47,14 +47,14 @@ pub async fn connect_account(cloud: &str, identity: &Identity) -> anyhow::Result
         loop {
             let msg = tokio::time::timeout(ANSWER_TIMEOUT, stream.next())
                 .await
-                .map_err(|_| anyhow::anyhow!("Ström Cloud didn't answer"))?
-                .ok_or_else(|| anyhow::anyhow!("Ström Cloud closed the connection"))??;
+                .map_err(|_| anyhow::anyhow!("Hopp Cloud didn't answer"))?
+                .ok_or_else(|| anyhow::anyhow!("Hopp Cloud closed the connection"))??;
             if let WsMessage::Text(text) = msg {
                 return Ok(serde_json::from_str(&text)?);
             }
         }
     }
-    let fail = |msg: &Value| anyhow::anyhow!(msg["message"].as_str().unwrap_or("unexpected answer from Ström Cloud").to_string());
+    let fail = |msg: &Value| anyhow::anyhow!(msg["message"].as_str().unwrap_or("unexpected answer from Hopp Cloud").to_string());
 
     let hello = json!({ "type": "hello", "public_key": identity.public_key(), "protocol": ACCOUNT_PROTOCOL });
     sink.send(WsMessage::Text(hello.to_string().into())).await?;

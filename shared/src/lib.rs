@@ -1,4 +1,4 @@
-//! Wire protocol shared by the Ström server and client.
+//! Wire protocol shared by the Hopp server and client.
 //!
 //! Control traffic is newline-delimited JSON over TCP. Voice is sent over UDP
 //! as small binary packets carrying one Opus frame each; the server only
@@ -104,7 +104,7 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    /// `public_key` is the hex-encoded Ed25519 key of the user's Ström-ID.
+    /// `public_key` is the hex-encoded Ed25519 key of the user's Hopp-ID.
     /// `invite` is required the first time someone joins a server.
     Hello {
         name: String,
@@ -134,7 +134,7 @@ pub enum ClientMsg {
     Typing { channel: ChannelId },
     /// Owner only: disconnects someone.
     Kick { session_id: SessionId },
-    /// Owner only: disconnects someone and refuses their Ström-ID from now on.
+    /// Owner only: disconnects someone and refuses their Hopp-ID from now on.
     Ban { session_id: SessionId },
     /// Owner only.
     Unban { public_key: String },

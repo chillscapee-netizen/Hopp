@@ -303,14 +303,14 @@ fn save_recovery_file(app: AppHandle, state: State<'_, AppState>, phrase: String
     }
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
     let safe_name: String = identity.name.chars().filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-').collect();
-    let path = dir.join(format!("Strom recovery phrase - {}.txt", safe_name.trim()));
+    let path = dir.join(format!("Hopp recovery phrase - {}.txt", safe_name.trim()));
     let words: String = phrase
         .split(' ')
         .enumerate()
         .map(|(i, w)| format!("{:>2}. {w}\n", i + 1))
         .collect();
     let text = format!(
-        "STRÖM RECOVERY PHRASE\r\n\r\nAccount: {}\r\nStröm ID: {}\r\n\r\n{}\r\n\
+        "HOPP RECOVERY PHRASE\r\n\r\nAccount: {}\r\nHopp ID: {}\r\n\r\n{}\r\n\
          These 24 words ARE your account. With them anyone can log in as you.\r\n\
          Keep this file somewhere safe and private (a USB stick, a password manager,\r\n\
          or printed out). Never send it to anyone.\r\n",
@@ -334,7 +334,7 @@ async fn verify_with_windows_hello(app: AppHandle, state: State<'_, AppState>) -
     logged_in_identity(&state)?;
     let window = app.get_webview_window("main").ok_or("No window.")?;
     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
-    let ok = blocking(move || hello::verify(hwnd, "Confirm it's you to reset your Ström password")).await?;
+    let ok = blocking(move || hello::verify(hwnd, "Confirm it's you to reset your Hopp password")).await?;
     if !ok {
         return Err("Windows Hello didn't confirm it was you.".into());
     }
@@ -364,7 +364,7 @@ async fn set_password_with_phrase(state: State<'_, AppState>, phrase: String, ne
     let identity = logged_in_identity(&state)?;
     let key = strom_voice::identity::public_key_of_phrase(&phrase).map_err(|e| e.to_string())?;
     if key != identity.public_key() {
-        return Err("That recovery phrase belongs to a different Ström ID.".into());
+        return Err("That recovery phrase belongs to a different Hopp ID.".into());
     }
     let name = identity.name.clone();
     let (_, mut stored) = blocking(move || Identity::restore(&name, &phrase, &new_password)).await?;
@@ -538,7 +538,7 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
             let state = app.state::<AppState>();
             let unanswered = state.conn.lock().unwrap().as_ref().is_some_and(|c| c.generation == generation && c.voice_attempt == attempt);
             if unanswered {
-                let _ = app.emit("voice-state", serde_json::json!({ "ready": false, "error": "Ström Cloud didn't answer. It may be running an older version without voice." }));
+                let _ = app.emit("voice-state", serde_json::json!({ "ready": false, "error": "Hopp Cloud didn't answer. It may be running an older version without voice." }));
             }
         });
         return Ok(());
@@ -752,7 +752,7 @@ fn set_loopback(state: State<'_, AppState>, enabled: bool) -> CmdResult {
 }
 
 /// What an invite code leads to (server name, picture, member counts), fetched
-/// from Ström Cloud before joining. `cloud` is the cloud's https:// base URL.
+/// from Hopp Cloud before joining. `cloud` is the cloud's https:// base URL.
 #[tauri::command]
 async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Value> {
     if !code.chars().all(|c| c.is_ascii_alphanumeric()) || code.len() > 16 {
@@ -764,7 +764,7 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
         .timeout(Duration::from_secs(8))
         .send()
         .await
-        .map_err(|e| format!("Couldn't reach Ström Cloud: {e}"))?;
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
     let status = response.status();
     let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
@@ -938,7 +938,7 @@ fn init_logging(app: &tauri::App) {
             let _ = registry.try_init();
         }
     }
-    tracing::info!("Ström {} starting", app.package_info().version);
+    tracing::info!("Hopp {} starting", app.package_info().version);
 }
 
 /// What helps someone fix a problem: version, system, audio devices and the recent log.
@@ -948,7 +948,7 @@ fn debug_info(app: AppHandle, state: State<'_, AppState>) -> String {
     let chosen = state.devices.lock().unwrap().clone();
     let connected = state.conn.lock().unwrap().as_ref().map(|c| (c.udp_addr.is_none(), c.engine.is_some()));
     let mut out = format!(
-        "Ström {}
+        "Hopp {}
 System: {} {}
 Microphone: {:?} (default {:?})
 Speakers: {:?} (default {:?})
@@ -1089,7 +1089,7 @@ fn main() {
             set_mic_monitor,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Ström");
+        .expect("error while running Hopp");
 }
 
 #[cfg(test)]

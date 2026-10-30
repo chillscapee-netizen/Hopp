@@ -1,4 +1,4 @@
-// One Ström server: accounts, invites, bans, channels and chat in this
+// One Hopp server: accounts, invites, bans, channels and chat in this
 // Durable Object's SQLite database, with members connected over hibernatable
 // WebSockets. Speaks the same JSON messages as the self-hosted Rust server.
 
@@ -74,7 +74,7 @@ const hexToBytes = (hex: string): Uint8Array | null => {
 };
 const bytesToHex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
-/** What a client signs to prove it holds its Ström ID's private key. */
+/** What a client signs to prove it holds its Hopp ID's private key. */
 function authMessage(nonce: Uint8Array): Uint8Array {
   const prefix = new TextEncoder().encode("strom-auth-v1\0");
   const msg = new Uint8Array(prefix.length + nonce.length);
@@ -260,7 +260,7 @@ export class StromServer extends DurableObject<Env> {
     const name = String(msg.name ?? "").trim();
     if (!name || [...name].length > MAX_NAME_LEN) return this.reject(ws, `Names must be 1–${MAX_NAME_LEN} characters.`);
     const key = String(msg.public_key ?? "").toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(key)) return this.reject(ws, "Invalid Ström ID.");
+    if (!/^[0-9a-f]{64}$/.test(key)) return this.reject(ws, "Invalid Hopp ID.");
 
     const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
     const session: Session = {

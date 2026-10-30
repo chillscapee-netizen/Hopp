@@ -1,4 +1,4 @@
-//! Keeps the connection to your account in Ström Cloud while you're logged in:
+//! Keeps the connection to your account in Hopp Cloud while you're logged in:
 //! profile, username, synced data, friends and presence. It reconnects by itself
 //! with growing pauses, and the page gets every message as an `account` event.
 
@@ -95,11 +95,11 @@ pub fn account_send(account: State<'_, Account>, msg: Value) -> CmdResult {
             link.send(msg);
             Ok(())
         }
-        None => Err("Not connected to Ström Cloud right now. Trying again…".into()),
+        None => Err("Not connected to Hopp Cloud right now. Trying again…".into()),
     }
 }
 
-/// Encrypts text so only this Ström ID can read it (for the synced account data).
+/// Encrypts text so only this Hopp ID can read it (for the synced account data).
 #[tauri::command]
 pub fn seal_private(state: State<'_, AppState>, text: String) -> CmdResult<String> {
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
@@ -127,7 +127,7 @@ pub fn dm_open(state: State<'_, AppState>, peer: String, sealed: String) -> CmdR
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-/** A Windows notification (for a message that arrives while Ström isn't in front). */
+/** A Windows notification (for a message that arrives while Hopp isn't in front). */
 #[tauri::command]
 pub fn notify(app: AppHandle, title: String, body: String) {
     use tauri_plugin_notification::NotificationExt;

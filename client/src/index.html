@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ström</title>
+  <title>Hopp</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
-    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 8c3-2.5 6-2.5 9 0s6 2.5 9 0"/><path d="M3 12.5c3-2.5 6-2.5 9 0s6 2.5 9 0"/><path d="M3 17c3-2.5 6-2.5 9 0s6 2.5 9 0"/></symbol>
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M9.2 9.6C8 6.4 7.7 3.4 8.6 2.1c1.4.4 2.3 3.4 2.4 7"/><path d="M14.8 9.6c1.2-3.2 1.5-6.2.6-7.5-1.4.4-2.3 3.4-2.4 7"/><circle cx="12" cy="15.2" r="6.3"/><path d="M9.6 14.4h.01M14.4 14.4h.01"/><path d="M11 17.2l1 .9 1-.9"/></symbol>
     <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
     <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M2 2l20 20"/><path d="M18.9 13.4A7 7 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.3V5a3 3 0 0 0-5.7-1.3"/><path d="M9 9v3a3 3 0 0 0 5.1 2.1"/><path d="M12 19v3"/></symbol>
     <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></symbol>
@@ -81,12 +81,12 @@
           </div>
           <p id="login-error" class="error" hidden></p>
           <button id="login-btn" type="submit" class="btn primary full lg">Log in</button>
-          <p class="auth-switch">Not you? <button type="button" id="to-create" class="link">Create a new Ström ID</button></p>
+          <p class="auth-switch">Not you? <button type="button" id="to-create" class="link">Create a new Hopp ID</button></p>
         </form>
 
         <form id="create-form" class="auth-pane" hidden>
           <div class="auth-logo"><svg class="i"><use href="#i-logo"/></svg></div>
-          <h1>Create your Ström ID</h1>
+          <h1>Create your Hopp ID</h1>
           <p class="auth-sub">One account for every server. No email, no tracking.</p>
           <label class="field">
             <span class="field-label">Display name</span>
@@ -109,15 +109,15 @@
           <button id="create-btn" type="submit" class="btn primary full lg">Create account</button>
           <div class="auth-note">
             <svg class="i"><use href="#i-lock"/></svg>
-            <span>Your Ström ID is an encrypted key on this computer. Your password never leaves it. Next, you'll get a recovery phrase that lets you reset your password or move to another computer.</span>
+            <span>Your Hopp ID is an encrypted key on this computer. Your password never leaves it. Next, you'll get a recovery phrase that lets you reset your password or move to another computer.</span>
           </div>
-          <p class="auth-switch">Already have a Ström ID? <button type="button" class="link" data-auth="recover">Restore it</button></p>
+          <p class="auth-switch">Already have a Hopp ID? <button type="button" class="link" data-auth="recover">Restore it</button></p>
           <p id="to-login-row" class="auth-switch">Or <button type="button" id="to-login" class="link">log in</button> with the account on this computer.</p>
         </form>
 
         <form id="recover-form" class="auth-pane" hidden>
           <div class="auth-logo"><svg class="i"><use href="#i-shield"/></svg></div>
-          <h1>Restore your Ström ID</h1>
+          <h1>Restore your Hopp ID</h1>
           <p class="auth-sub">Enter your 24-word recovery phrase and choose a new password. Your servers, name and ownership come with it.</p>
           <label class="field">
             <span class="field-label">Recovery phrase</span>
@@ -253,7 +253,7 @@
         <p class="modal-sub">Create your own server in a click, or join one you've been invited to.</p>
         <button type="button" class="option-row featured" data-goto="create">
           <span class="option-icon"><svg class="i"><use href="#i-plus"/></svg></span>
-          <span class="option-text"><strong>Create a server</strong><small>Always online on Ström Cloud. Free, nothing to install.</small></span>
+          <span class="option-text"><strong>Create a server</strong><small>Always online on Hopp Cloud. Free, nothing to install.</small></span>
           <svg class="i sm option-chevron"><use href="#i-chevron-right"/></svg>
         </button>
         <button type="button" class="option-row" data-goto="join">
@@ -294,11 +294,11 @@
         <p class="modal-sub">Paste the invite link you were sent.</p>
         <label class="field">
           <span class="field-label">Invite link</span>
-          <input id="join-address" required autocomplete="off" spellcheck="false" placeholder="strom://K7P2QX9M">
+          <input id="join-address" required autocomplete="off" spellcheck="false" placeholder="hopp://K7P2QX9M">
         </label>
         <div id="join-preview" class="join-preview" hidden></div>
         <p id="join-error" class="error" hidden></p>
-        <p id="join-hint" class="hint left">Invites look like <code>strom://K7P2QX9M</code>. Self-hosted servers use <code>strom://host:port/CODE</code>.</p>
+        <p id="join-hint" class="hint left">Invites look like <code>hopp://K7P2QX9M</code>. Self-hosted servers use <code>hopp://host:port/CODE</code>.</p>
       </div>
       <div class="modal-foot spread">
         <button type="button" class="btn-link" data-goto="choose">Back</button>
@@ -310,7 +310,7 @@
       <div class="modal-body">
         <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
         <h2 class="center-text">Run your own server</h2>
-        <p class="modal-sub center-text">Ström has no central server that someone has to pay for. Each community is run by someone in it.</p>
+        <p class="modal-sub center-text">Hopp has no central server that someone has to pay for. Each community is run by someone in it.</p>
         <ol class="steps">
           <li>
             <strong>Start the server</strong>
@@ -509,7 +509,7 @@
         </section>
         <section data-spanel="bans" hidden>
           <h2>Bans</h2>
-          <p class="hint">Banned Ström IDs can't rejoin, not even with an invite.</p>
+          <p class="hint">Banned Hopp IDs can't rejoin, not even with an invite.</p>
           <ul id="ban-list" class="admin-list"></ul>
         </section>
       </div>
@@ -597,7 +597,7 @@
     <div class="settings-layout">
       <nav class="settings-nav">
         <div class="settings-nav-label">User settings</div>
-        <button type="button" class="settings-tab active" data-tab="profile"><svg class="i"><use href="#i-user"/></svg><span>My Ström ID</span></button>
+        <button type="button" class="settings-tab active" data-tab="profile"><svg class="i"><use href="#i-user"/></svg><span>My Hopp ID</span></button>
         <div class="settings-nav-label">App settings</div>
         <button type="button" class="settings-tab" data-tab="voice"><svg class="i"><use href="#i-mic"/></svg><span>Voice &amp; audio</span></button>
         <button type="button" class="settings-tab" data-tab="sounds"><svg class="i"><use href="#i-bell"/></svg><span>Sounds</span></button>
@@ -608,7 +608,7 @@
       <div class="settings-content">
 
         <section data-panel="profile" class="settings-page">
-          <h2 class="page-title">My Ström ID</h2>
+          <h2 class="page-title">My Hopp ID</h2>
           <div class="profile-preview">
             <div id="profile-banner" class="profile-banner"></div>
             <div class="profile-row">

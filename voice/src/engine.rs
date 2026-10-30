@@ -550,7 +550,7 @@ impl Drop for MicTest {
 }
 
 /// Plays a short chime on the chosen speakers (`None` = the system default),
-/// so people can check they hear Ström where they expect. Returns at once.
+/// so people can check they hear Hopp where they expect. Returns at once.
 pub fn play_test_sound(output: Option<String>, volume: f32) -> anyhow::Result<()> {
     let (ready_tx, ready_rx) = mpsc::channel();
     std::thread::Builder::new().name("strom-test-sound".into()).spawn(move || {

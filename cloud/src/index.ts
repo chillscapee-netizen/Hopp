@@ -1,4 +1,4 @@
-// Ström cloud: routes each server's WebSocket to its own Durable Object, and
+// Hopp cloud: routes each server's WebSocket to its own Durable Object, and
 // answers invite previews (server name, picture and member counts).
 
 export { StromServer } from "./server";
@@ -43,7 +43,7 @@ export default {
       return stub.fetch(forwarded);
     }
 
-    // An account: every device of one Ström ID connects to the same object.
+    // An account: every device of one Hopp ID connects to the same object.
     if (url.pathname === "/account/ws") {
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
       const key = (url.searchParams.get("key") ?? "").toLowerCase();
@@ -70,7 +70,7 @@ export default {
     }
 
     if (url.pathname === "/") {
-      return new Response("Ström cloud is running.\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      return new Response("Hopp cloud is running.\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
     }
     return new Response("Not found", { status: 404 });
   },

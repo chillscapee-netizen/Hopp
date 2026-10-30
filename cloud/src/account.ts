@@ -1,4 +1,4 @@
-// Accounts: one Durable Object per Ström ID (named by its public key) holds the
+// Accounts: one Durable Object per Hopp ID (named by its public key) holds the
 // profile, the encrypted account data every device syncs (server list, folders,
 // settings), friends, and the presence friends see. Any number of devices can be
 // connected at once. A global directory maps unique usernames to keys.
@@ -267,9 +267,9 @@ export class StromAccount extends DurableObject<Env> {
 
   private onHello(ws: WebSocket, msg: Msg) {
     if (msg.type !== "hello") return this.reject(ws, "Expected hello.");
-    if (msg.protocol !== ACCOUNT_PROTOCOL) return this.reject(ws, "Update Ström to keep using your account.");
+    if (msg.protocol !== ACCOUNT_PROTOCOL) return this.reject(ws, "Update Hopp to keep using your account.");
     const key = String(msg.public_key ?? "").toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(key)) return this.reject(ws, "Invalid Ström ID.");
+    if (!/^[0-9a-f]{64}$/.test(key)) return this.reject(ws, "Invalid Hopp ID.");
     const owner = this.meta("key");
     if (owner && owner !== key) return this.reject(ws, "Wrong account.");
     const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));

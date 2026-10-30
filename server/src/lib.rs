@@ -1,4 +1,4 @@
-//! The Ström server: accounts, invites, channels, chat and a voice relay that
+//! The Hopp server: accounts, invites, channels, chat and a voice relay that
 //! never decodes audio.
 
 mod storage;
@@ -375,7 +375,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
         return Err(reject(&mut wr, format!("Names must be 1–{MAX_NAME_LEN} characters.")).await);
     }
     let Some(key) = parse_key(&public_key) else {
-        return Err(reject(&mut wr, "Invalid Ström-ID.").await);
+        return Err(reject(&mut wr, "Invalid Hopp-ID.").await);
     };
 
     // 2. Challenge: prove you hold the private key. No password ever reaches the server.

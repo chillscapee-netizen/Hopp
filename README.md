@@ -1,4 +1,4 @@
-# Ström
+# Hopp
 
 Low-latency voice and text chat on servers you run yourself. No central service, no tracking.
 
@@ -14,7 +14,7 @@ npm install
 npm run dev
 ```
 
-In the app, create your Ström ID, then **+ → Run your own server → Connect to my server**.
+In the app, create your Hopp ID, then **+ → Run your own server → Connect to my server**.
 The first person to connect from the server's own computer becomes the owner. Everyone
 else needs an invite link (`strom://host:port/CODE`) from the owner.
 
@@ -25,10 +25,10 @@ Headless test client: `cargo run -p strom-voice --example cli -- localhost name 
 
 ## Security model
 
-- **Ström ID**: an Ed25519 key pair, encrypted on disk with your password (Argon2id +
+- **Hopp ID**: an Ed25519 key pair, encrypted on disk with your password (Argon2id +
   ChaCha20-Poly1305). Servers verify a signed challenge; passwords never leave the computer.
 - **Invite-only servers**: invites can expire and have a use limit; the owner can revoke
-  them, kick people and ban Ström IDs.
+  them, kick people and ban Hopp IDs.
 - **Flood limits**: chat messages, connection attempts per IP and voice packets are rate
   limited; chat files are compacted at startup.
 - Not yet: transport encryption (TLS / encrypted voice). People who connect see the
@@ -40,7 +40,7 @@ Headless test client: `cargo run -p strom-voice --example cli -- localhost name 
 |---|---|
 | `shared/` | The protocol: JSON lines over TCP for control, binary UDP packets for voice. |
 | `server/` | Accounts, invites, bans, channels and chat on disk; relays Opus packets without decoding them. |
-| `voice/` | Client library: Ström ID, control connection, and the audio engine (cpal → RNNoise → Opus, 10 ms frames, FEC → UDP → jitter buffer → mixer). |
+| `voice/` | Client library: Hopp ID, control connection, and the audio engine (cpal → RNNoise → Opus, 10 ms frames, FEC → UDP → jitter buffer → mixer). |
 | `client/` | Tauri 2 desktop app. Audio runs entirely in Rust; the web view is only UI. |
 
 ## Tests

@@ -27,7 +27,7 @@ pub fn show_main(app: &AppHandle) {
 
 /// Hands a `strom://` link to the page, which joins the server or opens the friend.
 fn open_link(app: &AppHandle, url: &str) {
-    if !url.starts_with("strom://") {
+    if !url.starts_with("hopp://") && !url.starts_with("strom://") {
         return;
     }
     show_main(app);
@@ -58,15 +58,15 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     }
 
     // The icon in the notification area.
-    let open = MenuItem::with_id(app, "open", "Open Ström", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Hopp", true, None::<&str>)?;
     let mute = MenuItem::with_id(app, "mute", "Mute / unmute", true, None::<&str>)?;
     let deafen = MenuItem::with_id(app, "deafen", "Deafen / undeafen", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit Ström", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit Hopp", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[&open, &PredefinedMenuItem::separator(app)?, &mute, &deafen, &PredefinedMenuItem::separator(app)?, &quit_item],
     )?;
-    let mut tray = TrayIconBuilder::with_id("main").tooltip("Ström").menu(&menu).show_menu_on_left_click(false);
+    let mut tray = TrayIconBuilder::with_id("main").tooltip("Hopp").menu(&menu).show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
