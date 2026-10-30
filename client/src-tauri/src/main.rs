@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+mod account;
 mod hello;
 mod ptt;
 mod shell;
@@ -36,9 +37,9 @@ struct Connection {
 }
 
 #[derive(Default)]
-struct AppState {
+pub struct AppState {
     identity_path: OnceLock<PathBuf>,
-    identity: Mutex<Option<Identity>>,
+    pub identity: Mutex<Option<Identity>>,
     conn: Mutex<Option<Connection>>,
     generation: Mutex<u64>,
     devices: Mutex<DeviceChoice>,
@@ -52,7 +53,7 @@ struct AppState {
     hello_verified_at: Mutex<Option<Instant>>,
 }
 
-type CmdResult<T = ()> = Result<T, String>;
+pub type CmdResult<T = ()> = Result<T, String>;
 
 fn with_conn<T>(state: &AppState, f: impl FnOnce(&mut Connection) -> T) -> CmdResult<T> {
     state.conn.lock().unwrap().as_mut().map(f).ok_or_else(|| "not connected".to_string())
@@ -187,8 +188,9 @@ async fn login(state: State<'_, AppState>, password: String, remember_me: bool) 
 
 /// Logging out also forgets a remembered login.
 #[tauri::command]
-fn logout(state: State<'_, AppState>) {
+fn logout(app: AppHandle, state: State<'_, AppState>) {
     disconnect(state.clone());
+    app.state::<account::Account>().stop();
     if let Some(identity) = state.identity.lock().unwrap().take() {
         remember(&identity, false);
     }
@@ -196,8 +198,8 @@ fn logout(state: State<'_, AppState>) {
 
 /// Moves the current account file aside (never deletes it) so a new account can be created.
 #[tauri::command]
-fn reset_account(state: State<'_, AppState>) -> CmdResult<String> {
-    logout(state.clone());
+fn reset_account(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
+    logout(app, state.clone());
     back_up_account(&state)
 }
 
@@ -246,6 +248,7 @@ fn check_recovery_phrase(state: State<'_, AppState>, phrase: String) -> CmdResul
 /// phrase under a new password. Another account on this computer is backed up, not deleted.
 #[tauri::command]
 async fn recover_account(
+    app: AppHandle,
     state: State<'_, AppState>,
     phrase: String,
     name: Option<String>,
@@ -262,7 +265,7 @@ async fn recover_account(
     let (identity, mut stored) = blocking(move || Identity::restore(&name, &phrase, &password)).await?;
     // They just typed the whole phrase, so they evidently have it.
     stored.backed_up = true;
-    logout(state.clone());
+    logout(app, state.clone());
     if existing.is_some_and(|s| s.public_key != key) {
         back_up_account(&state)?;
     }
@@ -997,6 +1000,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
         .manage(shell::PendingLink::default())
+        .manage(account::Account::default())
         .on_window_event(shell::on_window_event)
         .setup(|app| {
             init_logging(app);
@@ -1052,6 +1056,10 @@ fn main() {
             cancel_ptt_recording,
             set_ptt_release_delay,
             take_pending_link,
+            account::start_account,
+            account::account_send,
+            account::seal_private,
+            account::open_private,
             debug_info,
             quit_app,
             test_output,
