@@ -45,6 +45,8 @@ struct AppState {
     /// Shared with the voice engine and the mic test; changes apply at once, in or out of voice.
     audio: Arc<AudioSettings>,
     ptt: OnceLock<Arc<ptt::Ptt>>,
+    /// The audio devices, looked up ahead of time so device menus open at once.
+    device_list: Mutex<Option<DeviceList>>,
     mic_test: Mutex<Option<MicTest>>,
     /// When Windows Hello last confirmed the user; unlocks password reset and the phrase briefly.
     hello_verified_at: Mutex<Option<Instant>>,
@@ -883,8 +885,16 @@ fn set_user_volume(state: State<'_, AppState>, session_id: SessionId, volume: f3
 }
 
 #[tauri::command]
-fn list_devices() -> DeviceList {
-    strom_voice::list_devices()
+async fn list_devices(state: State<'_, AppState>, fresh: Option<bool>) -> CmdResult<DeviceList> {
+    // Asking Windows for every device is slow, so the last answer is kept; `fresh` asks again.
+    if !fresh.unwrap_or(false) {
+        if let Some(list) = state.device_list.lock().unwrap().clone() {
+            return Ok(list);
+        }
+    }
+    let list = blocking(|| Ok(strom_voice::list_devices())).await?;
+    *state.device_list.lock().unwrap() = Some(list.clone());
+    Ok(list)
 }
 
 /// Remembers the device choice and, while in voice, switches to it right away.
@@ -990,6 +1000,12 @@ fn main() {
         .on_window_event(shell::on_window_event)
         .setup(|app| {
             init_logging(app);
+            // Look the audio devices up now, off the main thread, so menus open instantly.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let list = strom_voice::list_devices();
+                *handle.state::<AppState>().device_list.lock().unwrap() = Some(list);
+            });
             shell::setup(app)?;
             let path = app.path().app_data_dir()?.join("identity.json");
             let state = app.state::<AppState>();

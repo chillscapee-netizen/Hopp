@@ -1172,6 +1172,8 @@ function removeServer(server) {
  */
 function openMenu(items, x, y, above) {
   const menu = $("server-menu");
+  // A tooltip left over from the button that opened the menu would sit on top of it.
+  document.getElementById("tooltip").hidden = true;
   delete menu.dataset.owner;
   menu.classList.toggle("wide", items.some((i) => i.checked !== undefined));
   menu.replaceChildren(
@@ -2653,10 +2655,28 @@ $("test-output").addEventListener("click", () => {
 });
 
 /** Quick device switching from the user panel, like the settings page but one click away. */
+let deviceCache = null;
+/** The device list: the saved one at once, then a fresh one in the background. */
+async function freshDevices() {
+  const list = await call("list_devices", { fresh: true });
+  if (list) deviceCache = list;
+  return list;
+}
+
 async function openDeviceMenu(kind, anchor) {
   if (!$("server-menu").hidden && $("server-menu").dataset.owner === kind) return closePopovers();
-  const list = await call("list_devices");
+  const list = deviceCache ?? (deviceCache = await call("list_devices"));
   if (!list) return;
+  renderDeviceMenu(kind, anchor, list);
+  // Devices may have come or gone since; update the open menu if so.
+  const before = JSON.stringify(list);
+  const now = await freshDevices();
+  if (now && JSON.stringify(now) !== before && !$("server-menu").hidden && $("server-menu").dataset.owner === kind) {
+    renderDeviceMenu(kind, anchor, now);
+  }
+}
+
+function renderDeviceMenu(kind, anchor, list) {
   const input = kind === "input";
   const names = input ? list.inputs : list.outputs;
   const current = input ? prefs.inputDevice : prefs.outputDevice;
@@ -2723,11 +2743,15 @@ function checkBluetooth(list) {
 }
 
 async function refreshDevices() {
-  const list = await call("list_devices");
-  if (!list) return;
-  checkBluetooth(list);
-  fillSelect($("input-device"), list.inputs, list.default_input, prefs.inputDevice);
-  fillSelect($("output-device"), list.outputs, list.default_output, prefs.outputDevice);
+  const show = (list) => {
+    checkBluetooth(list);
+    fillSelect($("input-device"), list.inputs, list.default_input, prefs.inputDevice);
+    fillSelect($("output-device"), list.outputs, list.default_output, prefs.outputDevice);
+  };
+  const cached = deviceCache ?? (deviceCache = await call("list_devices"));
+  if (cached) show(cached);
+  const fresh = await freshDevices();
+  if (fresh && JSON.stringify(fresh) !== JSON.stringify(cached)) show(fresh);
 }
 
 /** A device was plugged in or out, or Windows picked a new default: reopen and refresh the lists. */
