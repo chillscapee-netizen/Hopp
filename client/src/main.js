@@ -1492,6 +1492,12 @@ listen("chat-history", (e) => {
   if (server) noteHistory(server, ch, messages);
   if (ch === state.view) renderMessages(false);
   renderUnread();
+  // Opened from a message link: go to it once its channel is here.
+  if (state.pendingJump && ch === state.view) {
+    const id = state.pendingJump;
+    state.pendingJump = null;
+    setTimeout(() => jumpToMessage(id), 50);
+  }
 });
 
 listen("message-edited", (e) => {
@@ -2076,7 +2082,8 @@ function linkNode(href) {
   a.href = href;
   a.addEventListener("click", (e) => {
     e.preventDefault();
-    if (/^(?:hopp|strom):/i.test(href)) followInvite(href);
+    if (MESSAGE_LINK.test(href)) openMessageLink(href);
+    else if (/^(?:hopp|strom):/i.test(href)) followInvite(href);
     else openExternal(href);
   });
   return a;
@@ -2176,6 +2183,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     }
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
+    li.addEventListener("contextmenu", (e) => openMessageMenu(m, e));
     items.push(li);
     prev = m;
   }
@@ -3659,6 +3667,7 @@ listen("tray-action", (e) => {
 async function openLink(url) {
   if (!state.account || !/^(?:hopp|strom):\/\//i.test(url)) return;
   closePopovers();
+  if (MESSAGE_LINK.test(url)) return openMessageLink(url);
   await followInvite(url);
 }
 listen("open-url", async (e) => {
@@ -5697,3 +5706,60 @@ $("welcome-avatar").addEventListener("click", () => $("avatar-file").click());
 $("welcome-next").addEventListener("click", () => (state.onboarding?.step === "picture" ? showWelcomeStep("mic") : finishOnboarding()));
 $("welcome-skip").addEventListener("click", () => showWelcomeStep("mic"));
 $("welcome-dialog").addEventListener("close", finishOnboarding);
+
+// ---------- message menu and links to messages ----------
+
+var MESSAGE_LINK = /^(?:hopp|strom):\/\/message\/([A-Za-z0-9_-]+)\/(\d+)\/(\d+)\/?$/i;
+
+function base64url(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64url(text) {
+  const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+
+function messageLink(m) {
+  return `hopp://message/${base64url(activeServer()?.address ?? "")}/${m.channel}/${m.id}`;
+}
+
+async function openMessageLink(url) {
+  const [, server64, ch, id] = url.match(MESSAGE_LINK);
+  let address;
+  try {
+    address = fromBase64url(server64);
+  } catch {
+    return toast("That link is broken.", true);
+  }
+  const server = prefs.servers.find((s) => s.address === address);
+  if (!server) return toast("That message is in a server you haven't joined.", true);
+  if (server.id === state.activeId) {
+    openTextChannel(Number(ch));
+    jumpToMessage(Number(id));
+    return;
+  }
+  state.pendingView = Number(ch);
+  state.pendingJump = Number(id);
+  await connectTo(server);
+}
+
+function openMessageMenu(m, e) {
+  if (window.getSelection()?.toString()) return; // Let the normal menu copy a selection.
+  e.preventDefault();
+  const mine = m.author_key === state.account?.publicKey;
+  const copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy.", true));
+  openMenu(
+    [
+      { label: "Reply", icon: "reply", action: () => setReply(m) },
+      ...(mine ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
+      "sep",
+      { label: "Copy text", icon: "message", action: () => copy(plainText(m.text), "Text") },
+      { label: "Copy message link", icon: "link", action: () => copy(messageLink(m), "Link") },
+      ...(canDelete(m) ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteMessage(m) }] : []),
+    ],
+    e.clientX,
+    e.clientY,
+  );
+}
