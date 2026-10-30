@@ -9,12 +9,15 @@
   "durable_objects": {
     "bindings": [
       { "name": "SERVERS", "class_name": "StromServer" },
-      { "name": "INVITES", "class_name": "InviteIndex" }
+      { "name": "INVITES", "class_name": "InviteIndex" },
+      { "name": "ACCOUNTS", "class_name": "StromAccount" },
+      { "name": "DIRECTORY", "class_name": "UserDirectory" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["StromServer"] },
-    { "tag": "v2", "new_sqlite_classes": ["InviteIndex"] }
+    { "tag": "v2", "new_sqlite_classes": ["InviteIndex"] },
+    { "tag": "v3", "new_sqlite_classes": ["StromAccount", "UserDirectory"] }
   ],
   "observability": { "enabled": true }
 }

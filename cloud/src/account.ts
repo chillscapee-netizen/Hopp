@@ -1,0 +1,596 @@
+// Accounts: one Durable Object per Ström ID (named by its public key) holds the
+// profile, the encrypted account data every device syncs (server list, folders,
+// settings), friends, and the presence friends see. Any number of devices can be
+// connected at once. A global directory maps unique usernames to keys.
+//
+// Account objects talk to each other directly (friend requests, presence), so a
+// request reaches someone even while they're offline.
+
+import { DurableObject } from "cloudflare:workers";
+import type { Env } from "./index";
+
+const ACCOUNT_PROTOCOL = 1;
+const MAX_DISPLAY_NAME = 32;
+const MAX_BIO = 190;
+const MAX_ACTIVITY = 80;
+/** Small pictures only: 128 px WebP is about 10 KB. */
+const MAX_AVATAR = 40_000;
+const MAX_SYNC = 262_144;
+const FRIEND_REQUESTS_PER_DAY = 30;
+/** A username given up stays reserved for its old owner this long, so it can't be hijacked. */
+const NAME_HOLD_MS = 14 * 24 * 3_600_000;
+const RESERVED = new Set(["admin", "administrator", "strom", "ström", "support", "system", "everyone", "here", "moderator", "owner", "staff", "official", "help", "root"]);
+const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
+const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
+
+type Msg = { type: string; [field: string]: any };
+
+export interface PublicProfile {
+  key: string;
+  username: string | null;
+  display_name: string;
+  avatar: string | null;
+  bio: string;
+}
+
+/** What a friend sees of you right now. "offline" also covers invisible. */
+export interface Presence {
+  status: "online" | "idle" | "dnd" | "offline";
+  activity: string | null;
+}
+
+interface FriendRow {
+  key: string;
+  username: string | null;
+  display_name: string;
+  avatar: string | null;
+  /** friend: both agreed; incoming/outgoing: a request waiting; blocked: by us. */
+  state: "friend" | "incoming" | "outgoing" | "blocked";
+  since: number;
+  status: string;
+  activity: string | null;
+}
+
+interface Session {
+  stage: "hello" | "auth" | "joined" | "removed";
+  nonce?: string;
+  key?: string;
+}
+
+const hexToBytes = (hex: string): Uint8Array | null => {
+  if (!/^([0-9a-f]{2})*$/i.test(hex)) return null;
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+};
+const bytesToHex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+function authMessage(nonce: Uint8Array): Uint8Array {
+  const prefix = new TextEncoder().encode("strom-auth-v1\0");
+  const msg = new Uint8Array(prefix.length + nonce.length);
+  msg.set(prefix);
+  msg.set(nonce, prefix.length);
+  return msg;
+}
+
+/** Lowercase letters, digits, underscore and dot; 2–32 long; no dots at the ends or twice in a row. */
+export function validUsername(name: string): string | null {
+  if (!/^[a-z0-9_.]{2,32}$/.test(name)) return "Usernames are 2–32 characters: lowercase letters, numbers, _ and .";
+  if (name.startsWith(".") || name.endsWith(".") || name.includes("..")) return "A username can't start or end with a dot, or have two in a row.";
+  if (RESERVED.has(name)) return "That username is reserved.";
+  return null;
+}
+
+function validAvatar(avatar: string): boolean {
+  return avatar.length <= MAX_AVATAR && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar);
+}
+
+export function accountOf(env: Env, key: string) {
+  return env.ACCOUNTS.get(env.ACCOUNTS.idFromName(key));
+}
+
+export function directory(env: Env) {
+  return env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+}
+
+// ---------- the username directory ----------
+
+export class UserDirectory extends DurableObject<Env> {
+  private sql: SqlStorage;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec("CREATE TABLE IF NOT EXISTS names (name TEXT PRIMARY KEY, key TEXT NOT NULL, released_at INTEGER)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS names_by_key ON names (key)");
+  }
+
+  /** Gives `name` to `key`, releasing the key's previous name. Null on success, else why not. */
+  claim(name: string, key: string): string | null {
+    const invalid = validUsername(name);
+    if (invalid) return invalid;
+    const now = Date.now();
+    const row = this.sql.exec("SELECT key, released_at FROM names WHERE name = ?", name).toArray()[0];
+    if (row && row.key !== key) {
+      const held = row.released_at === null || now - Number(row.released_at) < NAME_HOLD_MS;
+      if (held) return "That username is taken.";
+    }
+    this.sql.exec("UPDATE names SET released_at = ? WHERE key = ? AND released_at IS NULL AND name != ?", now, key, name);
+    this.sql.exec(
+      "INSERT INTO names (name, key, released_at) VALUES (?, ?, NULL) ON CONFLICT(name) DO UPDATE SET key = excluded.key, released_at = NULL",
+      name,
+      key,
+    );
+    return null;
+  }
+
+  lookup(name: string): string | null {
+    const row = this.sql.exec("SELECT key FROM names WHERE name = ? AND released_at IS NULL", name).toArray()[0];
+    return row ? String(row.key) : null;
+  }
+
+  available(name: string, key: string): string | null {
+    const invalid = validUsername(name);
+    if (invalid) return invalid;
+    const row = this.sql.exec("SELECT key, released_at FROM names WHERE name = ?", name).toArray()[0];
+    if (row && row.key !== key && (row.released_at === null || Date.now() - Number(row.released_at) < NAME_HOLD_MS)) {
+      return "That username is taken.";
+    }
+    return null;
+  }
+}
+
+// ---------- one account ----------
+
+export class StromAccount extends DurableObject<Env> {
+  private sql: SqlStorage;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS friends (
+        key TEXT PRIMARY KEY, username TEXT, display_name TEXT NOT NULL, avatar TEXT,
+        state TEXT NOT NULL, since INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'offline', activity TEXT);
+    `);
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
+  }
+
+  // ---------- storage ----------
+
+  private meta(key: string): string | null {
+    const row = this.sql.exec("SELECT value FROM meta WHERE key = ?", key).toArray()[0];
+    return row ? String(row.value) : null;
+  }
+
+  private setMeta(key: string, value: string | null) {
+    if (value === null) this.sql.exec("DELETE FROM meta WHERE key = ?", key);
+    else this.sql.exec("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
+  }
+
+  private friendRows(): FriendRow[] {
+    return this.sql.exec("SELECT * FROM friends ORDER BY since").toArray() as unknown as FriendRow[];
+  }
+
+  private friend(key: string): FriendRow | undefined {
+    return this.sql.exec("SELECT * FROM friends WHERE key = ?", key).toArray()[0] as unknown as FriendRow | undefined;
+  }
+
+  private upsertFriend(row: Omit<FriendRow, "status" | "activity"> & Partial<Pick<FriendRow, "status" | "activity">>) {
+    this.sql.exec(
+      `INSERT INTO friends (key, username, display_name, avatar, state, since, status, activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET username = excluded.username, display_name = excluded.display_name,
+         avatar = excluded.avatar, state = excluded.state, since = excluded.since`,
+      row.key, row.username, row.display_name, row.avatar, row.state, row.since, row.status ?? "offline", row.activity ?? null,
+    );
+  }
+
+  private profile(): PublicProfile {
+    return {
+      key: this.meta("key") ?? "",
+      username: this.meta("username"),
+      display_name: this.meta("display_name") ?? "",
+      avatar: this.meta("avatar"),
+      bio: this.meta("bio") ?? "",
+    };
+  }
+
+  /** What friends see: invisible and no devices both look offline. */
+  private presence(): Presence {
+    const status = this.meta("status") ?? "online";
+    if (this.devices().length === 0 || status === "invisible") return { status: "offline", activity: null };
+    return { status: status as Presence["status"], activity: this.meta("activity") };
+  }
+
+  // ---------- sockets ----------
+
+  private session(ws: WebSocket): Session {
+    return (ws.deserializeAttachment() as Session) ?? { stage: "hello" };
+  }
+
+  private devices(): WebSocket[] {
+    return this.ctx.getWebSockets().filter((ws) => this.session(ws).stage === "joined");
+  }
+
+  private send(ws: WebSocket, msg: object) {
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      // Closing.
+    }
+  }
+
+  /** To every device of this account (except one, if given). */
+  private toDevices(msg: object, except?: WebSocket) {
+    for (const ws of this.devices()) if (ws !== except) this.send(ws, msg);
+  }
+
+  private reject(ws: WebSocket, message: string) {
+    this.send(ws, { type: "error", message });
+    ws.serializeAttachment({ stage: "removed" } satisfies Session);
+    ws.close(4000, "rejected");
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ stage: "hello" } satisfies Session);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+    if (typeof data !== "string" || data.length > MAX_SYNC + 4096) return this.reject(ws, "Message too large.");
+    let msg: Msg;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return this.reject(ws, "Malformed message.");
+    }
+    const s = this.session(ws);
+    if (s.stage === "hello") return this.onHello(ws, msg);
+    if (s.stage === "auth") return this.onAuth(ws, s, msg);
+    if (s.stage === "joined") return this.onMessage(ws, msg);
+  }
+
+  private onHello(ws: WebSocket, msg: Msg) {
+    if (msg.type !== "hello") return this.reject(ws, "Expected hello.");
+    if (msg.protocol !== ACCOUNT_PROTOCOL) return this.reject(ws, "Update Ström to keep using your account.");
+    const key = String(msg.public_key ?? "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(key)) return this.reject(ws, "Invalid Ström ID.");
+    const owner = this.meta("key");
+    if (owner && owner !== key) return this.reject(ws, "Wrong account.");
+    const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+    ws.serializeAttachment({ stage: "auth", nonce, key } satisfies Session);
+    this.send(ws, { type: "challenge", nonce });
+  }
+
+  private async onAuth(ws: WebSocket, s: Session, msg: Msg) {
+    if (msg.type !== "auth") return this.reject(ws, "Expected auth.");
+    const signature = hexToBytes(String(msg.signature ?? ""));
+    let valid = false;
+    if (signature?.length === 64) {
+      try {
+        const key = await crypto.subtle.importKey("raw", hexToBytes(s.key!)!, { name: "Ed25519" }, false, ["verify"]);
+        valid = await crypto.subtle.verify({ name: "Ed25519" }, key, signature, authMessage(hexToBytes(s.nonce!)!));
+      } catch {
+        valid = false;
+      }
+    }
+    if (!valid) return this.reject(ws, "Login failed: invalid signature.");
+
+    const wasOffline = this.devices().length === 0;
+    if (!this.meta("key")) {
+      this.setMeta("key", s.key!);
+      this.setMeta("created_at", String(Date.now()));
+    }
+    const name = String(msg.display_name ?? "").trim();
+    if (name && [...name].length <= MAX_DISPLAY_NAME && !this.meta("display_name")) this.setMeta("display_name", name);
+    ws.serializeAttachment({ stage: "joined", key: s.key } satisfies Session);
+
+    this.send(ws, {
+      type: "welcome",
+      me: { ...this.profile(), status: this.meta("status") ?? "online", privacy: this.meta("privacy") ?? "everyone" },
+      sync: { data: this.meta("sync_data"), version: Number(this.meta("sync_version") ?? 0) },
+      friends: this.friendRows(),
+    });
+    if (wasOffline) await this.announcePresence();
+  }
+
+  private async onMessage(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: msg.type });
+    switch (msg.type) {
+      case "set_profile": {
+        if (msg.display_name !== undefined) {
+          const name = String(msg.display_name).trim();
+          if (!name || [...name].length > MAX_DISPLAY_NAME) return error(`Display names are 1–${MAX_DISPLAY_NAME} characters.`);
+          this.setMeta("display_name", name);
+        }
+        if (msg.bio !== undefined) {
+          const bio = String(msg.bio).trim();
+          if ([...bio].length > MAX_BIO) return error(`Keep it under ${MAX_BIO} characters.`);
+          this.setMeta("bio", bio);
+        }
+        if (msg.avatar !== undefined) {
+          if (msg.avatar === null) this.setMeta("avatar", null);
+          else if (typeof msg.avatar === "string" && validAvatar(msg.avatar)) this.setMeta("avatar", msg.avatar);
+          else return error("That picture can't be used. Try a smaller PNG, JPEG or WebP.");
+        }
+        this.toDevices({ type: "profile", me: this.profile() });
+        await this.tellFriends((f) => f.profileChanged(myKey, this.profile()));
+        return;
+      }
+      case "check_username": {
+        const name = String(msg.name ?? "").toLowerCase();
+        const problem = await directory(this.env).available(name, myKey);
+        return this.send(ws, { type: "username_check", name, ok: problem === null, message: problem });
+      }
+      case "claim_username": {
+        const name = String(msg.name ?? "").toLowerCase();
+        const last = Number(this.meta("username_changed_at") ?? 0);
+        if (this.meta("username") && Date.now() - last < 24 * 3_600_000) {
+          return error("You can change your username once a day.");
+        }
+        const problem = await directory(this.env).claim(name, myKey);
+        if (problem) return error(problem);
+        this.setMeta("username", name);
+        this.setMeta("username_changed_at", String(Date.now()));
+        this.toDevices({ type: "profile", me: this.profile() });
+        await this.tellFriends((f) => f.profileChanged(myKey, this.profile()));
+        return;
+      }
+      case "set_status": {
+        const status = String(msg.status);
+        if (!STATUSES.has(status)) return error("Unknown status.");
+        this.setMeta("status", status);
+        this.toDevices({ type: "status", status });
+        return this.announcePresence();
+      }
+      case "set_activity": {
+        const activity = msg.activity == null ? null : String(msg.activity).slice(0, MAX_ACTIVITY);
+        if (activity === this.meta("activity")) return;
+        this.setMeta("activity", activity);
+        return this.announcePresence();
+      }
+      case "set_privacy": {
+        const privacy = String(msg.requests);
+        if (!PRIVACY.has(privacy)) return error("Unknown setting.");
+        this.setMeta("privacy", privacy);
+        return this.toDevices({ type: "privacy", requests: privacy });
+      }
+      case "set_sync": {
+        // Opaque to us: the account data is encrypted on the device.
+        const data = String(msg.data ?? "");
+        if (data.length > MAX_SYNC) return error("Too much account data.");
+        const version = Number(this.meta("sync_version") ?? 0);
+        if (Number(msg.base_version) !== version) {
+          // Another device changed it first: hand over the newer copy to merge with.
+          return this.send(ws, { type: "sync", data: this.meta("sync_data"), version, conflict: true });
+        }
+        this.setMeta("sync_data", data);
+        this.setMeta("sync_version", String(version + 1));
+        this.send(ws, { type: "sync_saved", version: version + 1 });
+        return this.toDevices({ type: "sync", data, version: version + 1 }, ws);
+      }
+      case "friend_request":
+        return this.sendFriendRequest(ws, msg);
+      case "friend_accept": {
+        const row = this.friend(String(msg.key));
+        if (row?.state !== "incoming") return error("That request is gone.");
+        // Friends first, so their presence (sent while they accept) isn't ignored.
+        this.upsertFriend({ ...row, state: "friend", since: Date.now() });
+        const them = accountOf(this.env, row.key);
+        const answer = await them.friendAccepted(this.snapshot());
+        if (answer !== "ok") {
+          this.sql.exec("DELETE FROM friends WHERE key = ?", row.key);
+          this.toDevices({ type: "friend_removed", key: row.key });
+          return error("That request is gone.");
+        }
+        await this.learnPresence(row.key);
+        this.toDevices({ type: "friend", friend: this.friend(row.key) });
+        return;
+      }
+      case "friend_decline":
+      case "friend_remove": {
+        const key = String(msg.key);
+        const row = this.friend(key);
+        if (!row || row.state === "blocked") return;
+        this.sql.exec("DELETE FROM friends WHERE key = ?", key);
+        this.toDevices({ type: "friend_removed", key });
+        await accountOf(this.env, key).friendRemoved(myKey);
+        return;
+      }
+      case "block": {
+        const key = String(msg.key ?? "").toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(key) || key === myKey) return error("Can't block that.");
+        const known = this.friend(key);
+        const profile = known ?? (await accountOf(this.env, key).publicProfile());
+        this.upsertFriend({
+          key,
+          username: profile.username ?? null,
+          display_name: profile.display_name || "Unknown",
+          avatar: profile.avatar ?? null,
+          state: "blocked",
+          since: Date.now(),
+        });
+        this.toDevices({ type: "friend", friend: this.friend(key) });
+        await accountOf(this.env, key).friendRemoved(myKey);
+        return;
+      }
+      case "unblock": {
+        const key = String(msg.key);
+        if (this.friend(key)?.state !== "blocked") return;
+        this.sql.exec("DELETE FROM friends WHERE key = ?", key);
+        return this.toDevices({ type: "friend_removed", key });
+      }
+      case "ping":
+        return this.send(ws, { type: "pong" });
+      default:
+        return error(`Unknown message type "${msg.type}".`);
+    }
+  }
+
+  private snapshot(): PublicProfile {
+    return this.profile();
+  }
+
+  private async sendFriendRequest(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: "friend_request" });
+    if (!this.meta("username")) return error("Pick a username first, so people know who's asking.");
+    let key = typeof msg.key === "string" ? msg.key.toLowerCase() : null;
+    if (!key) {
+      const name = String(msg.username ?? "").toLowerCase().replace(/^@/, "");
+      key = await directory(this.env).lookup(name);
+      if (!key) return error("Nobody has that username. Check the spelling.");
+    }
+    if (key === myKey) return error("That's you.");
+    const existing = this.friend(key);
+    if (existing?.state === "friend") return error("You're already friends.");
+    if (existing?.state === "blocked") return error("You've blocked them. Unblock them first.");
+    if (existing?.state === "outgoing") return error("You've already sent them a request.");
+
+    // Rate limit: a few dozen requests a day stops spam without bothering anyone.
+    const day = new Date().toISOString().slice(0, 10);
+    const [countDay, count] = (this.meta("requests_today") ?? `${day}:0`).split(":");
+    const sent = countDay === day ? Number(count) : 0;
+    if (sent >= FRIEND_REQUESTS_PER_DAY) return error("You've sent a lot of friend requests today. Try again tomorrow.");
+    this.setMeta("requests_today", `${day}:${sent + 1}`);
+
+    const them = accountOf(this.env, key);
+    const answer = await them.receiveFriendRequest(this.snapshot(), this.friendKeys());
+    if (answer === "closed" || answer === "blocked") {
+      // Never reveal a block; it just doesn't go through.
+      return error("They aren't accepting friend requests.");
+    }
+    if (answer === "missing") return error("Nobody has that username. Check the spelling.");
+    const profile = await them.publicProfile();
+    this.upsertFriend({
+      key,
+      username: profile.username,
+      display_name: profile.display_name,
+      avatar: profile.avatar,
+      state: answer === "accepted" ? "friend" : "outgoing",
+      since: Date.now(),
+    });
+    if (answer === "accepted") {
+      await them.presenceChanged(myKey, this.presence());
+      await this.learnPresence(key);
+    }
+    this.toDevices({ type: "friend", friend: this.friend(key) });
+  }
+
+  /** Asks a new friend how they are right now, and shows it. */
+  private async learnPresence(key: string) {
+    const p = await accountOf(this.env, key).currentPresence(this.meta("key")!);
+    if (!p) return;
+    this.sql.exec("UPDATE friends SET status = ?, activity = ? WHERE key = ?", p.status, p.activity, key);
+    this.toDevices({ type: "presence", key, ...p });
+  }
+
+  private friendKeys(): string[] {
+    return this.friendRows().filter((f) => f.state === "friend").map((f) => f.key);
+  }
+
+  /** Runs `call` on every friend's account object. */
+  private async tellFriends(call: (account: DurableObjectStub<StromAccount>) => Promise<unknown>) {
+    await Promise.allSettled(this.friendKeys().map((k) => call(accountOf(this.env, k))));
+  }
+
+  private async announcePresence() {
+    const myKey = this.meta("key")!;
+    const presence = this.presence();
+    const last = this.meta("last_presence");
+    const now = JSON.stringify(presence);
+    if (last === now) return;
+    this.setMeta("last_presence", now);
+    await this.tellFriends((f) => f.presenceChanged(myKey, presence));
+  }
+
+  async webSocketClose(ws: WebSocket) {
+    await this.leave(ws);
+  }
+
+  async webSocketError(ws: WebSocket) {
+    await this.leave(ws);
+  }
+
+  private async leave(ws: WebSocket) {
+    const was = this.session(ws).stage;
+    try {
+      ws.serializeAttachment({ stage: "removed" } satisfies Session);
+    } catch {
+      // Gone.
+    }
+    if (was === "joined" && this.devices().length === 0) {
+      this.setMeta("activity", null);
+      await this.announcePresence();
+    }
+  }
+
+  // ---------- called by other accounts ----------
+
+  async publicProfile(): Promise<PublicProfile> {
+    return this.profile();
+  }
+
+  /** Someone asks to be friends. "accepted" when we had asked them too. */
+  async receiveFriendRequest(from: PublicProfile, theirFriends: string[]): Promise<"sent" | "accepted" | "closed" | "blocked" | "missing"> {
+    if (!this.meta("key")) return "missing";
+    const existing = this.friend(from.key);
+    if (existing?.state === "blocked") return "blocked";
+    if (existing?.state === "friend") return "accepted";
+    const privacy = this.meta("privacy") ?? "everyone";
+    if (existing?.state !== "outgoing") {
+      if (privacy === "nobody") return "closed";
+      if (privacy === "friends_of_friends" && !theirFriends.some((k) => this.friend(k)?.state === "friend")) return "closed";
+    }
+    const mutual = existing?.state === "outgoing";
+    this.upsertFriend({
+      key: from.key,
+      username: from.username,
+      display_name: from.display_name,
+      avatar: from.avatar,
+      state: mutual ? "friend" : "incoming",
+      since: Date.now(),
+    });
+    this.toDevices({ type: "friend", friend: this.friend(from.key), request: !mutual });
+    return mutual ? "accepted" : "sent";
+  }
+
+  /** Our presence, for a friend who just became one. Nothing for anyone else. */
+  async currentPresence(askerKey: string): Promise<Presence | null> {
+    return this.friend(askerKey)?.state === "friend" ? this.presence() : null;
+  }
+
+  async friendAccepted(from: PublicProfile): Promise<"ok" | "gone"> {
+    const row = this.friend(from.key);
+    if (row?.state !== "outgoing") return "gone";
+    this.upsertFriend({ ...row, username: from.username, display_name: from.display_name, avatar: from.avatar, state: "friend", since: Date.now() });
+    this.toDevices({ type: "friend", friend: this.friend(from.key), accepted: true });
+    await accountOf(this.env, from.key).presenceChanged(this.meta("key")!, this.presence());
+    await this.learnPresence(from.key);
+    return "ok";
+  }
+
+  async friendRemoved(fromKey: string): Promise<void> {
+    const row = this.friend(fromKey);
+    if (!row || row.state === "blocked") return;
+    this.sql.exec("DELETE FROM friends WHERE key = ?", fromKey);
+    this.toDevices({ type: "friend_removed", key: fromKey });
+  }
+
+  async presenceChanged(fromKey: string, presence: Presence): Promise<void> {
+    if (this.friend(fromKey)?.state !== "friend") return;
+    this.sql.exec("UPDATE friends SET status = ?, activity = ? WHERE key = ?", presence.status, presence.activity, fromKey);
+    this.toDevices({ type: "presence", key: fromKey, ...presence });
+  }
+
+  async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {
+    const row = this.friend(fromKey);
+    if (!row || row.state === "blocked") return;
+    this.sql.exec("UPDATE friends SET username = ?, display_name = ?, avatar = ? WHERE key = ?", profile.username, profile.display_name, profile.avatar, fromKey);
+    this.toDevices({ type: "friend", friend: this.friend(fromKey) });
+  }
+}

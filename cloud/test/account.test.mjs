@@ -1,0 +1,245 @@
+// Accounts, usernames, sync across devices and friends, against a running Worker
+// (`npx wrangler dev`), with real Ed25519 keys like the app.
+//
+//   STROM_CLOUD_URL=ws://127.0.0.1:8787 node test/account.test.mjs
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+
+const BASE = process.env.STROM_CLOUD_URL ?? "ws://127.0.0.1:8787";
+const HTTP = BASE.replace(/^ws/, "http");
+const WAIT_MS = 3000;
+
+function newKey() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const pub = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
+  return { pub, privateKey };
+}
+
+const authMessage = (nonceHex) => Buffer.concat([Buffer.from("strom-auth-v1\0"), Buffer.from(nonceHex, "hex")]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const unique = (prefix) => `${prefix}${crypto.randomBytes(4).toString("hex")}`;
+
+class Device {
+  constructor(ws) {
+    this.ws = ws;
+    this.inbox = [];
+    this.waiters = [];
+    // Everything received, for checks that don't care about order.
+    this.log = [];
+    ws.addEventListener("message", (e) => {
+      const msg = JSON.parse(e.data);
+      this.log.push(msg);
+      const waiter = this.waiters.shift();
+      if (waiter) waiter(msg);
+      else this.inbox.push(msg);
+    });
+  }
+
+  static async open(key, displayName = "Tester") {
+    const ws = new WebSocket(`${BASE}/account/ws?key=${key.pub}`);
+    await new Promise((resolve, reject) => {
+      ws.addEventListener("open", resolve, { once: true });
+      ws.addEventListener("error", () => reject(new Error("could not connect; is `npx wrangler dev` running?")), { once: true });
+    });
+    const d = new Device(ws);
+    d.send({ type: "hello", public_key: key.pub, protocol: 1 });
+    const challenge = await d.next();
+    assert.equal(challenge.type, "challenge", JSON.stringify(challenge));
+    const signature = crypto.sign(null, authMessage(challenge.nonce), key.privateKey).toString("hex");
+    d.send({ type: "auth", signature, display_name: displayName });
+    d.welcome = await d.next();
+    assert.equal(d.welcome.type, "welcome", JSON.stringify(d.welcome));
+    return d;
+  }
+
+  next() {
+    if (this.inbox.length) return Promise.resolve(this.inbox.shift());
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.splice(this.waiters.indexOf(done), 1);
+        reject(new Error("timed out waiting for a message"));
+      }, WAIT_MS);
+      const done = (msg) => {
+        clearTimeout(timer);
+        resolve(msg);
+      };
+      this.waiters.push(done);
+    });
+  }
+
+  async waitFor(pred) {
+    for (;;) {
+      const msg = await this.next();
+      if (pred(msg)) return msg;
+    }
+  }
+
+  /** Received at any point, earlier or still to come. */
+  async saw(pred) {
+    if (this.log.some(pred)) return this.log.find(pred);
+    return this.waitFor(pred);
+  }
+
+  send(msg) {
+    this.ws.send(JSON.stringify(msg));
+  }
+
+  close() {
+    this.ws.close();
+  }
+}
+
+async function userWithName(prefix) {
+  const key = newKey();
+  const d = await Device.open(key, prefix);
+  const name = unique(prefix);
+  d.send({ type: "claim_username", name });
+  await d.waitFor((m) => m.type === "profile" && m.me.username === name);
+  return { key, d, name };
+}
+
+test("a new account starts empty and picks a unique username", async () => {
+  const key = newKey();
+  const d = await Device.open(key, "Bingu");
+  assert.equal(d.welcome.me.key, key.pub);
+  assert.equal(d.welcome.me.display_name, "Bingu");
+  assert.equal(d.welcome.me.username, null);
+  assert.deepEqual(d.welcome.sync, { data: null, version: 0 });
+  assert.deepEqual(d.welcome.friends, []);
+
+  d.send({ type: "claim_username", name: "Bad Name" });
+  assert.match((await d.waitFor((m) => m.type === "error")).message, /lowercase/);
+  d.send({ type: "claim_username", name: "admin" });
+  assert.match((await d.waitFor((m) => m.type === "error")).message, /reserved/);
+
+  const name = unique("bingu");
+  d.send({ type: "check_username", name });
+  assert.equal((await d.waitFor((m) => m.type === "username_check")).ok, true);
+  d.send({ type: "claim_username", name });
+  assert.equal((await d.waitFor((m) => m.type === "profile")).me.username, name);
+
+  const other = await Device.open(newKey());
+  other.send({ type: "claim_username", name });
+  assert.match((await other.waitFor((m) => m.type === "error")).message, /taken/);
+
+  const profile = await (await fetch(`${HTTP}/users/${name}`)).json();
+  assert.equal(profile.key, key.pub);
+  assert.equal(profile.display_name, "Bingu");
+  assert.equal((await fetch(`${HTTP}/users/${unique("nobody")}`)).status, 404);
+  d.close();
+  other.close();
+});
+
+test("every device sees the same account data, and stale writes are refused", async () => {
+  const key = newKey();
+  const a = await Device.open(key);
+  const b = await Device.open(key);
+  a.send({ type: "set_sync", data: "sealed-1", base_version: 0 });
+  assert.equal((await a.waitFor((m) => m.type === "sync_saved")).version, 1);
+  const seen = await b.waitFor((m) => m.type === "sync");
+  assert.deepEqual([seen.data, seen.version], ["sealed-1", 1]);
+
+  // b hasn't merged a newer copy: it's told about the newer one instead of overwriting it.
+  b.send({ type: "set_sync", data: "sealed-old", base_version: 0 });
+  const conflict = await b.waitFor((m) => m.type === "sync" && m.conflict);
+  assert.deepEqual([conflict.data, conflict.version], ["sealed-1", 1]);
+
+  const c = await Device.open(key);
+  assert.deepEqual(c.welcome.sync, { data: "sealed-1", version: 1 });
+  for (const d of [a, b, c]) d.close();
+});
+
+test("friend requests, accepting, presence and removing", async () => {
+  const alice = await userWithName("alice");
+  const bob = await userWithName("bob");
+
+  alice.d.send({ type: "friend_request", username: bob.name });
+  const out = await alice.d.waitFor((m) => m.type === "friend");
+  assert.equal(out.friend.state, "outgoing");
+  const incoming = await bob.d.waitFor((m) => m.type === "friend");
+  assert.deepEqual([incoming.friend.state, incoming.friend.username, incoming.request], ["incoming", alice.name, true]);
+
+  bob.d.send({ type: "friend_accept", key: alice.key.pub });
+  assert.equal((await bob.d.waitFor((m) => m.type === "friend")).friend.state, "friend");
+  const accepted = await alice.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+  assert.equal(accepted.accepted, true);
+  // Both see each other online.
+  await alice.d.saw((m) => m.type === "presence" && m.key === bob.key.pub && m.status === "online");
+  await bob.d.saw((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "online");
+
+  // Status and activity reach friends; invisible looks offline.
+  alice.d.send({ type: "set_activity", activity: "In voice: Lobby" });
+  const act = await bob.d.waitFor((m) => m.type === "presence" && m.activity);
+  assert.equal(act.activity, "In voice: Lobby");
+  alice.d.send({ type: "set_status", status: "invisible" });
+  await bob.d.waitFor((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "offline");
+  alice.d.send({ type: "set_status", status: "dnd" });
+  await bob.d.waitFor((m) => m.type === "presence" && m.status === "dnd");
+
+  // Leaving takes you offline for friends.
+  alice.d.close();
+  await bob.d.waitFor((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "offline");
+
+  // Friends survive reconnecting, and removing is mutual.
+  const again = await Device.open(alice.key);
+  assert.equal(again.welcome.friends.find((f) => f.key === bob.key.pub).state, "friend");
+  bob.d.send({ type: "friend_remove", key: alice.key.pub });
+  await again.waitFor((m) => m.type === "friend_removed" && m.key === bob.key.pub);
+  again.close();
+  bob.d.close();
+});
+
+test("asking each other at the same time makes you friends at once", async () => {
+  const a = await userWithName("ann");
+  const b = await userWithName("ben");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend" && m.friend.state === "incoming");
+  b.d.send({ type: "friend_request", username: a.name });
+  assert.equal((await b.d.waitFor((m) => m.type === "friend" && m.friend.key === a.key.pub)).friend.state, "friend");
+  assert.equal((await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend")).friend.key, b.key.pub);
+  a.d.close();
+  b.d.close();
+});
+
+test("privacy settings and blocking stop requests without telling why", async () => {
+  const quiet = await userWithName("quiet");
+  const asker = await userWithName("asker");
+  quiet.d.send({ type: "set_privacy", requests: "nobody" });
+  await quiet.d.waitFor((m) => m.type === "privacy");
+  asker.d.send({ type: "friend_request", username: quiet.name });
+  assert.match((await asker.d.waitFor((m) => m.type === "error")).message, /aren't accepting/);
+
+  quiet.d.send({ type: "set_privacy", requests: "everyone" });
+  await quiet.d.waitFor((m) => m.type === "privacy");
+  quiet.d.send({ type: "block", key: asker.key.pub });
+  assert.equal((await quiet.d.waitFor((m) => m.type === "friend")).friend.state, "blocked");
+  asker.d.send({ type: "friend_request", username: quiet.name });
+  assert.match((await asker.d.waitFor((m) => m.type === "error")).message, /aren't accepting/);
+
+  // A username is needed to ask anyone.
+  const anon = await Device.open(newKey());
+  anon.send({ type: "friend_request", username: quiet.name });
+  assert.match((await anon.waitFor((m) => m.type === "error")).message, /username first/);
+  for (const d of [quiet.d, asker.d, anon]) d.close();
+});
+
+test("profiles: name, bio and picture reach friends", async () => {
+  const a = await userWithName("pic");
+  const b = await userWithName("viewer");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+
+  const avatar = "data:image/png;base64,iVBORw0KGgo=";
+  a.d.send({ type: "set_profile", display_name: "Picture Person", bio: "hi", avatar });
+  await a.d.waitFor((m) => m.type === "profile" && m.me.avatar === avatar);
+  const seen = await b.d.waitFor((m) => m.type === "friend" && m.friend.display_name === "Picture Person");
+  assert.equal(seen.friend.avatar, avatar);
+  a.d.send({ type: "set_profile", avatar: "data:image/svg+xml;base64,PHN2Zz4=" });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /picture/);
+  a.d.close();
+  b.d.close();
+});

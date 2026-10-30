@@ -3,18 +3,23 @@
 
 export { StromServer } from "./server";
 export { InviteIndex } from "./invites";
+export { StromAccount, UserDirectory } from "./account";
 
 import { inviteIndex, type InviteIndex } from "./invites";
 import type { StromServer } from "./server";
+import { accountOf, directory, type StromAccount, type UserDirectory } from "./account";
 
 export interface Env {
   SERVERS: DurableObjectNamespace<StromServer>;
   INVITES: DurableObjectNamespace<InviteIndex>;
+  ACCOUNTS: DurableObjectNamespace<StromAccount>;
+  DIRECTORY: DurableObjectNamespace<UserDirectory>;
 }
 
 /** Server ids are long and random, so they can't be guessed. */
 const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
+const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -36,6 +41,22 @@ export default {
       const forwarded = new Request(request);
       forwarded.headers.set("X-Strom-Server", server[1]);
       return stub.fetch(forwarded);
+    }
+
+    // An account: every device of one Ström ID connects to the same object.
+    if (url.pathname === "/account/ws") {
+      if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
+      const key = (url.searchParams.get("key") ?? "").toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(key)) return new Response("Bad key", { status: 400 });
+      return accountOf(env, key).fetch(request);
+    }
+
+    // Someone's public profile by username, for "Add friend" and profile cards.
+    const user = url.pathname.match(USER_PATH);
+    if (user && request.method === "GET") {
+      const key = await directory(env).lookup(user[1]);
+      if (!key) return json({ error: "Nobody has that username." }, 404);
+      return json(await accountOf(env, key).publicProfile());
     }
 
     const invite = url.pathname.match(INVITE_PATH);
