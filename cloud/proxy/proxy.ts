@@ -1,4 +1,4 @@
-// Hopp's public address: passes every request (WebSockets included) to strom-cloud.
+// Hopp's public address: passes every request (WebSockets included) to hopp-cloud.
 
 interface Env {
   CLOUD: Fetcher;

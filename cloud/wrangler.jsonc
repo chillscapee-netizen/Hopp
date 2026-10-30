@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "strom-cloud",
+  "name": "hopp-cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   // Every Ström server is one Durable Object with its own SQLite database, and

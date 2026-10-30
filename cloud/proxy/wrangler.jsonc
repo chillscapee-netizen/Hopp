@@ -1,12 +1,12 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   // Hopp's public address (hopp.<subdomain>.workers.dev). Everything but the
-  // installer and update files goes on to strom-cloud, where all the data lives:
-  // that worker keeps its old name, because renaming it would start it empty.
+  // installer and update files goes on to hopp-cloud, where all the data lives;
+  // the data worker is "hopp-cloud" (renamed in the dashboard, which keeps its data).
   "name": "hopp",
   "main": "proxy.ts",
   "compatibility_date": "2026-10-01",
-  "services": [{ "binding": "CLOUD", "service": "strom-cloud" }],
+  "services": [{ "binding": "CLOUD", "service": "hopp-cloud" }],
   "assets": { "directory": "../public" },
   "observability": { "enabled": true }
 }
