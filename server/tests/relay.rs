@@ -653,13 +653,13 @@ async fn leaving_needs_a_new_invite_to_come_back() {
 async fn owner_renames_and_reorders_channels() {
     let mut server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
-    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()) }).await;
+    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()), category: None }).await;
     assert!(alice.error().await.contains("owner"));
 
-    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()) }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()), category: Some(" Info ".into()) }).await;
     let ServerMsg::ChannelsUpdated { channels } = alice.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { .. })).await else { unreachable!() };
     let general = channels.iter().find(|c| c.id == GENERAL).unwrap();
-    assert_eq!((general.name.as_str(), general.topic.as_deref()), ("main-chat", Some("Say hi")));
+    assert_eq!((general.name.as_str(), general.topic.as_deref(), general.category.as_deref()), ("main-chat", Some("Say hi"), Some("Info")));
 
     let mut order: Vec<ChannelId> = channels.iter().map(|c| c.id).collect();
     order.reverse();

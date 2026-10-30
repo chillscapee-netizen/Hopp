@@ -2499,3 +2499,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .group-friend input { flex: none; }
 .group-friend .ellipsis { min-width: 0; font-weight: 600; }
 .group-user { margin-left: auto; color: var(--faint); font-size: 13px; }
+
+.category.collapsible { cursor: pointer; }
+.category.collapsible:hover { color: var(--text-2); }
+.category.collapsible.closed .i:first-child { transform: rotate(-90deg); }

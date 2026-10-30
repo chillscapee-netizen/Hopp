@@ -34,7 +34,12 @@ pub struct Channel {
     /// What the channel is for, shown next to its name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
+    /// The heading it's listed under; `None`: the plain text and voice lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
+
+pub const MAX_CATEGORY_LEN: usize = 24;
 
 pub const MAX_TOPIC_LEN: usize = 200;
 
@@ -215,7 +220,14 @@ pub enum ClientMsg {
     /// Owner only.
     DeleteChannel { channel: ChannelId },
     /// Owner only: a new name and topic (`None` or empty: no topic).
-    UpdateChannel { channel: ChannelId, name: String, #[serde(default)] topic: Option<String> },
+    UpdateChannel {
+        channel: ChannelId,
+        name: String,
+        #[serde(default)]
+        topic: Option<String>,
+        #[serde(default)]
+        category: Option<String>,
+    },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },
     /// Allowed for the author and the owner.

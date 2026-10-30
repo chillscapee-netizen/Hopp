@@ -373,6 +373,11 @@
             <input id="channel-edit-name" maxlength="32" required autocomplete="off">
           </span>
         </label>
+        <label class="field">
+          <span class="field-label">Category</span>
+          <input id="channel-edit-category" maxlength="24" autocomplete="off" list="category-options" placeholder="None">
+          <datalist id="category-options"></datalist>
+        </label>
         <label id="channel-edit-topic-field" class="field">
           <span class="field-label">Topic</span>
           <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>

@@ -731,8 +731,8 @@ fn create_channel(state: State<'_, AppState>, name: String, kind: ChannelKind) -
 }
 
 #[tauri::command]
-fn update_channel(state: State<'_, AppState>, channel: ChannelId, name: String, topic: Option<String>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic }))
+fn update_channel(state: State<'_, AppState>, channel: ChannelId, name: String, topic: Option<String>, category: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category }))
 }
 
 #[tauri::command]

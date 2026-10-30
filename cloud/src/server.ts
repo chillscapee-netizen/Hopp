@@ -58,7 +58,8 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string }
+const MAX_CATEGORY_LEN = 24;
 const MAX_TOPIC_LEN = 200;
 interface User {
   session_id: number;
@@ -166,6 +167,7 @@ export class StromServer extends DurableObject<Env> {
     const channelColumns = new Set(this.sql.exec("PRAGMA table_info(channels)").toArray().map((c) => String(c.name)));
     if (!channelColumns.has("position")) this.sql.exec("ALTER TABLE channels ADD COLUMN position INTEGER");
     if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
+    if (!channelColumns.has("category")) this.sql.exec("ALTER TABLE channels ADD COLUMN category TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
     if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
@@ -208,11 +210,12 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec("SELECT id, name, kind, topic, category FROM channels ORDER BY coalesce(position, id + 100000), id")
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
         if (r.topic) c.topic = String(r.topic);
+        if (r.category) c.category = String(r.category);
         return c;
       });
   }
@@ -644,7 +647,9 @@ export class StromServer extends DurableObject<Env> {
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
         const topic = String(msg.topic ?? "").trim();
         if ([...topic].length > MAX_TOPIC_LEN) return this.error(ws, `Keep the topic under ${MAX_TOPIC_LEN} characters.`);
-        this.sql.exec("UPDATE channels SET name = ?, topic = ? WHERE id = ?", name, topic || null, ch.id);
+        const category = String(msg.category ?? "").trim();
+        if ([...category].length > MAX_CATEGORY_LEN) return this.error(ws, `Category names are at most ${MAX_CATEGORY_LEN} characters.`);
+        this.sql.exec("UPDATE channels SET name = ?, topic = ?, category = ? WHERE id = ?", name, topic || null, category || null, ch.id);
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "reorder_channels": {

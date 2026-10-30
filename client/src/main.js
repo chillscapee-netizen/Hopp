@@ -1443,6 +1443,12 @@ listen("roster", (e) => {
   state.pendingView = undefined;
   if (!textChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
   forgetDeletedChannels();
+  const pending = state.pendingCategory;
+  const made = pending && state.roster.channels.find((c) => !pending.known.has(c.id));
+  if (made) {
+    state.pendingCategory = null;
+    call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: pending.name });
+  }
   if (draftKey() !== state.draftAt) restoreDraft();
   applyUserVolumes();
   renderAll();
@@ -1736,11 +1742,10 @@ function renderSidebar() {
   const owner = isOwner();
   const items = [];
 
-  items.push(category("Text channels", owner ? () => openChannelDialog("text") : null));
-  for (const ch of textChannels()) {
+  const address = activeServer()?.address;
+  const textRow = (ch) => {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
-    const address = activeServer()?.address;
     row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
     row.append(icon("hash"), el("span", "ellipsis", ch.name));
     const mentions = channelMentions(address, ch.id);
@@ -1749,13 +1754,10 @@ function renderSidebar() {
     row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
     row.classList.toggle("muted", channelMuted(address, ch.id));
     if (owner) draggableChannel(row, ch);
-    items.push(row);
-  }
-  if (textChannels().length === 0) items.push(el("div", "empty-channels", "No text channels"));
-
-  items.push(category("Voice channels", owner ? () => openChannelDialog("voice") : null));
+    return row;
+  };
   const mine = myVoice();
-  for (const ch of voiceChannels()) {
+  const voiceRow = (ch) => {
     const wrap = el("div");
     const row = el("button", "channel-row");
     row.classList.toggle("in-voice", ch.id === mine);
@@ -1770,9 +1772,44 @@ function renderSidebar() {
     const list = el("ul", "voice-users");
     list.append(...users.map((u) => userRow(u, "voice-user", "s24")));
     wrap.append(row, list);
-    items.push(wrap);
+    return wrap;
+  };
+
+  // Channels without a category first, as text and voice lists; then each category.
+  const plainText = textChannels().filter((c) => !c.category);
+  const plainVoice = voiceChannels().filter((c) => !c.category);
+  const categories = [...new Set(r.channels.map((c) => c.category).filter(Boolean))];
+  if (plainText.length || !categories.length) {
+    items.push(category("Text channels", owner ? () => openChannelDialog("text") : null));
+    items.push(...plainText.map(textRow));
+    if (!plainText.length) items.push(el("div", "empty-channels", "No text channels"));
   }
-  if (voiceChannels().length === 0) items.push(el("div", "empty-channels", "No voice channels"));
+  if (plainVoice.length || !categories.length) {
+    items.push(category("Voice channels", owner ? () => openChannelDialog("voice") : null));
+    items.push(...plainVoice.map(voiceRow));
+    if (!plainVoice.length) items.push(el("div", "empty-channels", "No voice channels"));
+  }
+  for (const name of categories) {
+    const key = `${address}|${name}`;
+    const closed = !!prefs.closedCategories[key];
+    const head = category(name, owner ? () => openChannelDialog("text", name) : null);
+    head.classList.add("collapsible");
+    head.classList.toggle("closed", closed);
+    head.addEventListener("click", (e) => {
+      if (e.target.closest(".category-add")) return;
+      if (closed) delete prefs.closedCategories[key];
+      else prefs.closedCategories[key] = true;
+      save("closedCategories", JSON.stringify(prefs.closedCategories));
+      renderSidebar();
+    });
+    items.push(head);
+    const inside = r.channels.filter((c) => c.category === name);
+    for (const ch of inside) {
+      // A closed category still shows where you are and what's waiting.
+      const show = !closed || ch.id === state.view || ch.id === mine || channelUnread(address, ch.id);
+      if (show) items.push(ch.kind === "text" ? textRow(ch) : voiceRow(ch));
+    }
+  }
 
   body.replaceChildren(...items);
 }
@@ -2488,7 +2525,8 @@ function setChannelKind(kind) {
 }
 document.querySelectorAll(".type-option").forEach((b) => b.addEventListener("click", () => setChannelKind(b.dataset.kind)));
 
-function openChannelDialog(kind) {
+function openChannelDialog(kind, inCategory) {
+  state.newChannelCategory = inCategory ?? null;
   $("channel-dialog-sub").textContent = `in ${activeServer()?.label ?? state.roster.server_name}`;
   $("channel-name").value = "";
   setChannelKind(kind);
@@ -2501,7 +2539,10 @@ $("channel-name").addEventListener("input", (e) => {
 });
 $("channel-form").addEventListener("submit", () => {
   const name = $("channel-name").value.trim();
-  if (name) call("create_channel", { name, kind: channelKind });
+  if (!name) return;
+  // Made from a category's +: put it there once the server has made it.
+  if (state.newChannelCategory) state.pendingCategory = { name: state.newChannelCategory, known: new Set(state.roster.channels.map((c) => c.id)) };
+  call("create_channel", { name, kind: channelKind });
 });
 
 // ---------- invites ----------
@@ -5535,6 +5576,12 @@ function openChannelEdit(ch) {
   $("channel-edit-name").value = ch.name;
   $("channel-edit-topic").value = ch.topic ?? "";
   $("channel-edit-topic-field").hidden = !text;
+  $("channel-edit-category").value = ch.category ?? "";
+  $("category-options").replaceChildren(...[...new Set(state.roster.channels.map((c) => c.category).filter(Boolean))].map((c) => {
+    const o = el("option");
+    o.value = c;
+    return o;
+  }));
   openModal($("channel-edit-dialog"));
   $("channel-edit-name").focus();
   $("channel-edit-name").select();
@@ -5545,9 +5592,10 @@ $("channel-edit-name").addEventListener("input", (e) => {
 $("channel-edit-form").addEventListener("submit", () => {
   const name = $("channel-edit-name").value.trim();
   const topic = $("channel-edit-topic").value.trim();
+  const category = $("channel-edit-category").value.trim();
   if (!editingChannel || !name) return;
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "")) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null });
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "")) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -6159,3 +6207,5 @@ async function leaveGroup(id) {
   const ok = await confirmDialog({ title: `Leave ${groupName(state.groups.get(id))}`, text: "You won't get its messages anymore, and someone has to add you to come back.", ok: "Leave group" });
   if (ok) accountSend({ type: "group_leave", group: id }).catch(() => {});
 }
+
+prefs.closedCategories = loadJson("closedCategories", {});

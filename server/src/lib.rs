@@ -583,11 +583,12 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind, topic: None });
+                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None });
                         st.channels_changed();
                     }
                 }
-                ClientMsg::UpdateChannel { channel, name, topic } => {
+                ClientMsg::UpdateChannel { channel, name, topic, category } => {
+                    let category = category.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
                     let kind = st.channel(channel).map(|c| c.kind);
                     let name = kind.map(|k| normalize_channel_name(&name, k)).unwrap_or_default();
                     let topic = topic.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
@@ -599,10 +600,13 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         error(&format!("Channel names must be 1–{MAX_NAME_LEN} characters."));
                     } else if topic.as_ref().is_some_and(|t| t.chars().count() > MAX_TOPIC_LEN) {
                         error(&format!("Keep the topic under {MAX_TOPIC_LEN} characters."));
+                    } else if category.as_ref().is_some_and(|t| t.chars().count() > MAX_CATEGORY_LEN) {
+                        error(&format!("Category names are at most {MAX_CATEGORY_LEN} characters."));
                     } else {
                         let c = st.config.channels.iter_mut().find(|c| c.id == channel).expect("checked above");
                         c.name = name;
                         c.topic = topic;
+                        c.category = category;
                         st.channels_changed();
                     }
                 }

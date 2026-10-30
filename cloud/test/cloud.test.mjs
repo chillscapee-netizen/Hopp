@@ -462,9 +462,9 @@ test("the owner renames, describes and reorders channels", async () => {
   const general = channelId(owner, "general");
   bob.send({ type: "update_channel", channel: general, name: "x" });
   assert.match(await errorOf(bob), /owner/i);
-  owner.send({ type: "update_channel", channel: general, name: "Main Chat", topic: " Say hi " });
+  owner.send({ type: "update_channel", channel: general, name: "Main Chat", topic: " Say hi ", category: " Info " });
   const renamed = (await bob.waitFor((m) => m.type === "channels_updated")).channels.find((c) => c.id === general);
-  assert.deepEqual(renamed, { id: general, name: "main-chat", kind: "text", topic: "Say hi" });
+  assert.deepEqual(renamed, { id: general, name: "main-chat", kind: "text", topic: "Say hi", category: "Info" });
   const order = owner.welcome.channels.map((c) => c.id).reverse();
   owner.send({ type: "reorder_channels", order });
   const moved = (await bob.waitFor((m) => m.type === "channels_updated")).channels.map((c) => c.id);
