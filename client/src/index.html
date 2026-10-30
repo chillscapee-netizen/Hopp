@@ -616,6 +616,20 @@
   </dialog>
 
   <!-- ---------- confirm ---------- -->
+  <dialog id="link-dialog" class="modal small">
+    <div class="modal-body">
+      <h2>Leaving Hopp</h2>
+      <p class="modal-sub">This link takes you to the website below. Make sure you trust it.</p>
+      <div id="link-url" class="link-url"></div>
+      <p id="link-warn" class="link-warn" hidden></p>
+      <label id="link-trust-row" class="link-trust"><input id="link-trust" type="checkbox"> <span>Trust <b id="link-domain"></b> links from now on</span></label>
+    </div>
+    <div class="modal-foot">
+      <button type="button" id="link-cancel" class="btn-link">Go back</button>
+      <button type="button" id="link-ok" class="btn primary">Visit site</button>
+    </div>
+  </dialog>
+
   <dialog id="confirm-dialog" class="modal small">
     <div class="modal-body">
       <h2 id="confirm-title"></h2>

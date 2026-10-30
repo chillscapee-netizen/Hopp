@@ -2394,3 +2394,28 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 
 .channel-row.muted { opacity: 0.45; }
 .channel-row.muted:hover, .channel-row.muted.current { opacity: 0.8; }
+
+/* ---------- leaving Hopp ---------- */
+.link-url {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--deep);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.link-url b { color: var(--text); font-weight: 600; }
+.link-warn {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: 8px;
+  color: #f6b4b6;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.link-trust { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 13.5px; cursor: pointer; }
+.link-trust b { color: var(--text-2); }

@@ -2075,7 +2075,7 @@ function linkNode(href) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     if (/^(?:hopp|strom):/i.test(href)) followInvite(href);
-    else openUrl(href);
+    else openExternal(href);
   });
   return a;
 }
@@ -5504,4 +5504,103 @@ function setChannelMuted(address, channel, muted) {
   if (muted) prefs.notify.channels[key] = true;
   else delete prefs.notify.channels[key];
   saveNotify();
+}
+
+// ---------- links to other websites ----------
+
+/** Sites scammers like to imitate, and their real addresses. */
+var KNOWN_SITES = {
+  steam: ["steamcommunity.com", "steampowered.com", "steamgames.com"],
+  discord: ["discord.com", "discord.gg", "discordapp.com", "discord.gift"],
+  paypal: ["paypal.com"],
+  epicgames: ["epicgames.com"],
+  roblox: ["roblox.com"],
+  google: ["google.com"],
+  microsoft: ["microsoft.com", "live.com"],
+  twitch: ["twitch.tv"],
+  youtube: ["youtube.com", "youtu.be"],
+};
+
+/** Real sites with a famous name in theirs. */
+var REAL_SITES = new Set(["steamdb.info", "steamcharts.com", "steamspy.com", "discordstatus.com", "youtube-nocookie.com", "googleusercontent.com", "googleapis.com", "microsoftonline.com", "twitchtracker.com", "robloxdev.com"]);
+
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** Why an address looks like a trick, or null. */
+function linkWarning(host) {
+  if (/^xn--|\.xn--/.test(host)) return "This address uses unusual letters that can imitate another site.";
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) return "This link goes to a bare internet address, not a named website.";
+  const site = host.split(".").slice(-2).join(".");
+  if (REAL_SITES.has(site)) return null;
+  for (const [brand, domains] of Object.entries(KNOWN_SITES)) {
+    if (domains.some((d) => host === d || host.endsWith("." + d))) return null;
+    const name = site.split(".")[0];
+    const close = domains.some((d) => editDistance(site, d) <= 2) || (name !== brand && editDistance(name, brand) <= 1) || (name.includes(brand) && name !== brand);
+    if (close) return `This looks like ${brand[0].toUpperCase() + brand.slice(1)}, but it isn't their website. Scammers use addresses like this to steal accounts.`;
+  }
+  return null;
+}
+
+function trustedDomains() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("trustedDomains") ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+async function openExternal(href) {
+  let url;
+  try {
+    url = new URL(href);
+  } catch {
+    return;
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const warning = linkWarning(host);
+  if (!warning && trustedDomains().has(host)) return openUrl(href);
+  const box = $("link-url");
+  const rest = href.slice(href.indexOf(url.host) + url.host.length);
+  box.replaceChildren(url.protocol + "//", el("b", "", url.host), rest);
+  $("link-warn").hidden = !warning;
+  $("link-warn").textContent = warning ?? "";
+  $("link-trust-row").hidden = !!warning;
+  $("link-trust").checked = false;
+  $("link-domain").textContent = host;
+  $("link-ok").classList.toggle("danger", !!warning);
+  $("link-ok").classList.toggle("primary", !warning);
+  $("link-ok").textContent = warning ? "Visit anyway" : "Visit site";
+  const dialog = $("link-dialog");
+  openModal(dialog);
+  const go = await new Promise((resolve) => {
+    const done = (v) => {
+      dialog.close();
+      $("link-ok").onclick = $("link-cancel").onclick = dialog.oncancel = null;
+      resolve(v);
+    };
+    $("link-ok").onclick = () => done(true);
+    $("link-cancel").onclick = () => done(false);
+    dialog.oncancel = () => done(false);
+  });
+  if (!go) return;
+  if ($("link-trust").checked) {
+    const trusted = trustedDomains();
+    trusted.add(host);
+    try {
+      localStorage.setItem("trustedDomains", JSON.stringify([...trusted]));
+    } catch {}
+  }
+  openUrl(href);
 }
