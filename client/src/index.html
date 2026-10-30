@@ -650,6 +650,7 @@
         <div class="settings-nav-label">App settings</div>
         <button type="button" class="settings-tab" data-tab="voice"><svg class="i"><use href="#i-mic"/></svg><span>Voice &amp; audio</span></button>
         <button type="button" class="settings-tab" data-tab="sounds"><svg class="i"><use href="#i-bell"/></svg><span>Sounds</span></button>
+        <button type="button" class="settings-tab" data-tab="windows"><svg class="i"><use href="#i-settings"/></svg><span>Windows</span></button>
         <div class="settings-nav-sep"></div>
         <button type="button" id="logout-btn" class="settings-tab danger"><svg class="i"><use href="#i-logout"/></svg><span>Log out</span></button>
         <button type="button" id="copy-debug" class="settings-tab subtle"><svg class="i"><use href="#i-terminal"/></svg><span>Copy debug info</span></button>
@@ -891,6 +892,28 @@
               </div>
             </div>
           </details>
+        </section>
+
+        <section data-panel="windows" class="settings-page" hidden>
+          <h2 class="page-title">Windows</h2>
+          <div class="card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Open Hopp when Windows starts</span>
+                <span class="row-sub">It starts quietly in the notification area, so friends see you online.</span>
+              </span>
+              <input id="autostart" type="checkbox" class="switch">
+            </label>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">When I close the window</span>
+              </span>
+              <select id="close-action" class="row-select">
+                <option value="tray">Keep running by the clock</option>
+                <option value="quit">Quit Hopp</option>
+              </select>
+            </label>
+          </div>
         </section>
 
         <section data-panel="sounds" class="settings-page" hidden>

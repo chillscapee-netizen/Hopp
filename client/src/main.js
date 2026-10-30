@@ -3611,6 +3611,23 @@ window.addEventListener("keydown", (e) => {
 const appWindow = window.__TAURI__.window?.getCurrentWindow();
 $("win-min").addEventListener("click", () => appWindow?.minimize());
 $("win-max").addEventListener("click", () => appWindow?.toggleMaximize());
+// ---------- Windows settings ----------
+
+async function renderWindowsSettings() {
+  $("close-action").value = load("closeAction", "") === "quit" ? "quit" : "tray";
+  $("autostart").checked = await invoke("autostart_enabled").catch(() => false);
+}
+document.querySelector('.settings-tab[data-tab="windows"]').addEventListener("click", renderWindowsSettings);
+$("close-action").addEventListener("change", (e) => save("closeAction", e.target.value));
+$("autostart").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_autostart", { on: e.target.checked });
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    toast(friendlyError(err), true);
+  }
+});
+
 // Closing the window: keep running in the notification area (like Discord), or quit.
 // Asked once; the answer is kept.
 $("win-close").addEventListener("click", async () => {

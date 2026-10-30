@@ -38,6 +38,13 @@ fn open_link(app: &AppHandle, url: &str) {
 pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle().clone();
 
+    // Started with Windows: stay in the notification area until opened.
+    if std::env::args().any(|a| a == "--minimized") {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    }
+
     // Links: registered for this user (no admin needed), opened in the running app.
     #[cfg(any(windows, target_os = "linux"))]
     if let Err(e) = app.deep_link().register_all() {

@@ -815,6 +815,20 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
     Ok(body)
 }
 
+#[tauri::command]
+fn autostart_enabled(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Starts Hopp with Windows (minimized to the notification area), or stops doing so.
+#[tauri::command]
+fn set_autostart(app: AppHandle, on: bool) -> CmdResult {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    if on { launcher.enable() } else { launcher.disable() }.map_err(|e| format!("Couldn't change that: {e}"))
+}
+
 /// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
 #[tauri::command]
 async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
@@ -1057,7 +1071,13 @@ fn main() {
         // Must come first: a second copy hands its link to this one and quits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Size and place only: starting hidden (with Windows) is decided by the app.
+                .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
+                .build(),
+        )
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState::default())
@@ -1115,6 +1135,8 @@ fn main() {
             local_address,
             invite_preview,
             fetch_profile,
+            autostart_enabled,
+            set_autostart,
             update_server,
             set_muted,
             set_deafened,
