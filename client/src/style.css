@@ -2421,3 +2421,17 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .link-trust b { color: var(--text-2); }
 .dm-row.muted { opacity: 0.5; }
 .dm-row.muted:hover, .dm-row.muted.active { opacity: 0.85; }
+
+/* ---------- first steps ---------- */
+.welcome-modal .modal-body { min-height: 330px; }
+.welcome-dots { display: flex; justify-content: center; gap: 6px; margin-bottom: 18px; }
+.welcome-dots i { width: 24px; height: 4px; border-radius: 2px; background: var(--elev-2); }
+.welcome-dots i.done { background: var(--text-2); }
+.welcome-avatar { display: block; margin: 22px auto 14px; padding: 0; background: none; border: none; border-radius: 50%; cursor: pointer; }
+.welcome-avatar .avatar { width: 96px; height: 96px; font-size: 34px; }
+.welcome-avatar:hover { filter: brightness(1.1); }
+.welcome-mic-name { margin: 18px 0 10px; color: var(--text-2); font-size: 14px; font-weight: 600; }
+.welcome-meter { margin: 0 auto 14px; max-width: 340px; }
+.welcome-modal [data-wstep] { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.welcome-modal [data-wstep][hidden] { display: none; }
+.welcome-modal .welcome-meter { width: 100%; }

@@ -477,6 +477,30 @@
     </form>
   </dialog>
 
+  <!-- ---------- first steps ---------- -->
+  <dialog id="welcome-dialog" class="modal welcome-modal">
+    <div class="modal-body center">
+      <div class="welcome-dots"><i class="done"></i><i data-dot="picture"></i><i data-dot="mic"></i></div>
+      <section data-wstep="picture">
+        <h2>Add a profile picture</h2>
+        <p class="modal-sub">Friends recognise you faster. You can change it any time.</p>
+        <button id="welcome-avatar" type="button" class="welcome-avatar" aria-label="Upload a picture"></button>
+        <button id="welcome-upload" type="button" class="btn sm">Upload picture</button>
+      </section>
+      <section data-wstep="mic" hidden>
+        <h2>Check your microphone</h2>
+        <p class="modal-sub">Say something. The bar moves when Hopp hears you.</p>
+        <p id="welcome-mic-name" class="welcome-mic-name"></p>
+        <div class="meter wide welcome-meter" role="meter" aria-label="Microphone level"><div class="level"></div><div class="peak"></div></div>
+        <p class="hint">Nothing moving? Pick another microphone in Settings, under Voice &amp; audio.</p>
+      </section>
+    </div>
+    <div class="modal-foot">
+      <button id="welcome-skip" type="button" class="btn-link">Skip</button>
+      <button id="welcome-next" type="button" class="btn primary">Next</button>
+    </div>
+  </dialog>
+
   <!-- ---------- folder settings ---------- -->
   <dialog id="folder-dialog" class="modal">
     <form id="folder-form" method="dialog">

@@ -376,7 +376,8 @@ async function enterApp() {
   startAccount();
   // Started from a strom:// link (or one arrived while logged out): follow it now.
   const link = await invoke("take_pending_link");
-  if (link) openLink(link);
+  if (link && state.onboarding) state.onboarding.link = link;
+  else if (link) openLink(link);
 }
 
 function setBusy(btn, busy, label) {
@@ -461,6 +462,7 @@ $("create-form").addEventListener("submit", async (e) => {
       rememberMe: $("create-remember").checked,
     });
     $("create-password").value = $("create-confirm").value = "";
+    state.onboarding = { step: "backup", link: null };
     await enterApp();
     // Straight to the backup: a new account isn't safe until the phrase is saved.
     openBackup({ phrase: created.recovery_phrase });
@@ -3737,7 +3739,7 @@ listen("account", (e) => {
       syncState.version = m.sync.version;
       receiveSync(m.sync.data);
       // A Hopp ID made before usernames: ask once (it can wait).
-      if (!m.me.username && !usernameAsked) {
+      if (!m.me.username && !usernameAsked && !state.onboarding) {
         usernameAsked = true;
         openUsernameDialog(true);
       }
@@ -3757,6 +3759,7 @@ listen("account", (e) => {
       state.me = { ...state.me, ...m.me };
       renderPictures();
       if ($("username-dialog").open && m.me.username) $("username-dialog").close();
+      if ($("welcome-dialog").open) renderWelcomeAvatar();
       break;
     case "status":
       state.me.status = m.status;
@@ -5639,3 +5642,58 @@ function setDmMuted(peer, muted) {
   saveNotify();
   renderAll();
 }
+
+// ---------- first steps for a new account ----------
+//
+// Recovery phrase, then a username, a picture and a quick mic check; then on to
+// the invite or friend link that brought them here, if any.
+
+$("backup-dialog").addEventListener("close", () => {
+  if (state.onboarding?.step !== "backup") return;
+  state.onboarding.step = "username";
+  // Wait for the account, so the username can be checked as it's typed.
+  const ask = () => (state.accountConnected ? openUsernameDialog(true) : setTimeout(ask, 300));
+  ask();
+});
+
+$("username-dialog").addEventListener("close", () => {
+  if (state.onboarding?.step !== "username") return;
+  showWelcomeStep("picture");
+});
+
+function showWelcomeStep(step) {
+  state.onboarding.step = step;
+  const dialog = $("welcome-dialog");
+  dialog.querySelectorAll("[data-wstep]").forEach((n) => (n.hidden = n.dataset.wstep !== step));
+  dialog.querySelectorAll("[data-dot]").forEach((n) => n.classList.toggle("done", n.dataset.dot === step || (step === "mic" && n.dataset.dot === "picture")));
+  $("welcome-next").textContent = step === "mic" ? "Done" : "Next";
+  $("welcome-skip").hidden = step === "mic";
+  if (step === "picture") renderWelcomeAvatar();
+  if (step === "mic") {
+    refreshDevices().finally(() => ($("welcome-mic-name").textContent = $("input-device").selectedOptions[0]?.textContent ?? ""));
+    invoke("start_mic_test").catch(() => {});
+  }
+  if (!dialog.open) openModal(dialog);
+}
+
+function renderWelcomeAvatar() {
+  const name = state.account?.name ?? "?";
+  $("welcome-avatar").replaceChildren(avatar(name, "s80", undefined, state.me?.avatar));
+  $("welcome-upload").textContent = state.me?.avatar ? "Change picture" : "Upload picture";
+}
+
+function finishOnboarding() {
+  if (!state.onboarding) return;
+  const link = state.onboarding.link;
+  state.onboarding = null;
+  invoke("stop_mic_test").catch(() => {});
+  if ($("welcome-dialog").open) $("welcome-dialog").close();
+  if (link) openLink(link);
+  else toast("You're all set. Add a friend or join a server to get going.");
+}
+
+$("welcome-upload").addEventListener("click", () => $("avatar-file").click());
+$("welcome-avatar").addEventListener("click", () => $("avatar-file").click());
+$("welcome-next").addEventListener("click", () => (state.onboarding?.step === "picture" ? showWelcomeStep("mic") : finishOnboarding()));
+$("welcome-skip").addEventListener("click", () => showWelcomeStep("mic"));
+$("welcome-dialog").addEventListener("close", finishOnboarding);
