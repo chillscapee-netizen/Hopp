@@ -195,7 +195,8 @@ export class StromServer extends DurableObject<Env> {
     const name = this.meta("name");
     if (name === null || !this.invites().some((i) => i.code === code)) return null;
     const members = Number(this.sql.exec("SELECT count(*) AS n FROM accounts").one().n);
-    const inviter = this.sql.exec("SELECT inviter FROM invites WHERE code = ?", code).toArray()[0]?.inviter ?? null;
+    const found = this.sql.exec("SELECT inviter FROM invites WHERE code = ?", code).toArray()[0]?.inviter;
+    const inviter = typeof found === "string" ? found : null;
     return { name, icon: this.meta("icon"), members, online: this.members().length, inviter };
   }
 

@@ -23,6 +23,7 @@ const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
 const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
 const PROFILE_PATH = /^\/profiles\/([0-9a-f]{64})$/;
+const INVITE_PAGE = /^\/i\/([A-Za-z0-9]{6,16})\/?$/;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -71,6 +72,15 @@ export default {
       const p = await accountOf(env, profile[1]).publicProfile();
       if (!p.key) return json({ error: "No such account." }, 404);
       return json(p);
+    }
+
+    // An invite link anyone can click: the server, "Open in Hopp" and a download.
+    const page = url.pathname.match(INVITE_PAGE);
+    if (page && request.method === "GET") {
+      const code = page[1].toUpperCase();
+      const serverId = await inviteIndex(env).lookup(code);
+      const preview = serverId ? await env.SERVERS.get(env.SERVERS.idFromName(serverId)).preview(code) : null;
+      return new Response(invitePage(code, preview), { status: preview ? 200 : 404, headers: { "content-type": "text/html; charset=utf-8" } });
     }
 
     const invite = url.pathname.match(INVITE_PATH);
@@ -128,4 +138,33 @@ async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response
   res.headers.set("cache-control", `public, max-age=${q ? 3600 : 900}`);
   ctx.waitUntil(caches.default.put(cacheKey, res.clone()));
   return res;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** The page an invite link opens in a browser. */
+function invitePage(code: string, p: { name: string | null; icon: string | null; members: number; online: number; inviter: string | null } | null): string {
+  const name = p?.name ? escapeHtml(p.name) : "";
+  const icon = p?.icon && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(p.icon) ? `<img class="icon" src="${p.icon}" alt="">` : `<div class="icon letter">${name.slice(0, 1) || "?"}</div>`;
+  const body = p
+    ? `<p class="kicker">${p.inviter ? `${escapeHtml(p.inviter)} invited you to join` : "You've been invited to join"}</p>
+       ${icon}<h1>${name}</h1>
+       <p class="counts"><span class="dot on"></span>${p.online} Online <span class="dot"></span>${p.members} ${p.members === 1 ? "Member" : "Members"}</p>
+       <a class="btn primary" href="hopp://${code}">Open in Hopp</a>
+       <p class="small">Don't have Hopp yet?</p>
+       <a class="btn" href="/download/Hopp-setup.exe">Download Hopp for Windows</a>
+       <p class="hint">After installing, come back and press <b>Open in Hopp</b>. Windows may say it doesn't recognise the app: choose <b>More info</b>, then <b>Run anyway</b>.</p>`
+    : `<h1>This invite is invalid or has expired</h1><p class="small">Ask for a new one.</p>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${name ? `Join ${name} on Hopp` : "Hopp invite"}</title>
+<meta property="og:title" content="${name ? `Join ${name} on Hopp` : "Hopp invite"}"><meta property="og:description" content="Voice and chat for friends.">
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:#1c1c1f;color:#e9e9ec;font:15px/1.5 system-ui,"Segoe UI",sans-serif}
+main{width:min(420px,100%);padding:32px;text-align:center;background:#2a2a2e;border:1px solid #3f3f45;border-radius:16px;box-shadow:0 30px 80px rgb(0 0 0/.5)}
+.kicker{margin:0 0 16px;color:#a3a3ab;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.icon{width:80px;height:80px;margin:0 auto 12px;border-radius:24px;object-fit:cover}.letter{display:grid;place-items:center;background:#46564c;font-size:32px;font-weight:700}
+h1{margin:0 0 6px;font-size:24px}.counts{margin:0 0 24px;color:#a3a3ab;font-size:14px}.dot{display:inline-block;width:8px;height:8px;margin:0 6px 0 10px;border-radius:50%;background:#7b7b84}.dot.on{background:#3ccf8e}
+.btn{display:block;padding:12px;border-radius:8px;background:#3b3b40;color:#e9e9ec;font-weight:600;text-decoration:none}.btn:hover{background:#46464c}.btn.primary{background:#e9e9ec;color:#1c1c1f}.btn.primary:hover{background:#fff}
+.small{margin:20px 0 8px;color:#a3a3ab;font-size:14px}.hint{margin:14px 0 0;color:#7b7b84;font-size:12.5px}
+</style></head><body><main>${body}</main></body></html>`;
 }

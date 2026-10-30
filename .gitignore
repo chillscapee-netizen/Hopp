@@ -3,3 +3,4 @@ node_modules/
 dist/
 strom-data/
 .wrangler/
+cloud/public/download/

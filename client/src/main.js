@@ -254,8 +254,17 @@ function online() {
 const SHORT_INVITE = /^(?:(?:hopp|strom):\/\/)?([A-Za-z0-9]{6,16})\/?$/i;
 const INVITE_LINK = /\b(?:hopp|strom):\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
 
-/** The code of a short Hopp Cloud invite ("strom://K7P2QX9M"), or null. */
+/** Our invite page links: https://<Hopp Cloud>/i/CODE. */
+function invitePageCode(input) {
+  const m = input.trim().match(/^https:\/\/([^/\s]+)\/i\/([A-Za-z0-9]{6,16})\/?$/i);
+  const host = prefs.cloudUrl.replace(/^wss?:\/\//, "").split("/")[0].toLowerCase();
+  return m && m[1].toLowerCase() === host ? m[2].toUpperCase() : null;
+}
+
+/** The code of a short Hopp Cloud invite ("hopp://K7P2QX9M" or https://…/i/K7P2QX9M), or null. */
 function shortInviteCode(input) {
+  const page = invitePageCode(input);
+  if (page) return page;
   const m = input.trim().match(SHORT_INVITE);
   // A bare word could be a host name too; only "localhost" is likely, and it has no digits.
   return m && /\d/.test(m[1]) ? m[1].toUpperCase() : null;
@@ -2201,6 +2210,7 @@ function linkNode(href) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     if (MESSAGE_LINK.test(href)) openMessageLink(href);
+    else if (invitePageCode(href)) followInvite(href);
     else if (/^(?:hopp|strom):/i.test(href)) followInvite(href);
     else openExternal(href);
   });
@@ -2310,7 +2320,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       }
       li.append(body);
     }
-    for (const link of new Set([...m.text.matchAll(INVITE_LINK)].map((x) => x[0]).slice(0, 3))) {
+    for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => !/^https?:/i.test(l) || invitePageCode(l)).slice(0, 3))) {
       const code = shortInviteCode(link);
       if (code) li.append(inviteEmbed(code, link));
     }
@@ -2663,7 +2673,8 @@ async function showInvite(invite) {
   if (!$("invite-dialog").open) return;
   const { address } = await shareableAddress();
   // Cloud: strom://CODE. Self-hosted: strom://host:port/CODE.
-  $("invite-link").value = address ? `hopp://${address}/${invite.code}` : `hopp://${invite.code}`;
+  // Cloud invites are web links anyone can click; they open Hopp, or help install it.
+  $("invite-link").value = address ? `hopp://${address}/${invite.code}` : `${prefs.cloudUrl.replace(/^ws/, "http")}/i/${invite.code}`;
   $("invite-summary").textContent = inviteSummary(invite);
 }
 

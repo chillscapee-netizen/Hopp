@@ -19,5 +19,7 @@
     { "tag": "v2", "new_sqlite_classes": ["InviteIndex"] },
     { "tag": "v3", "new_sqlite_classes": ["StromAccount", "UserDirectory"] }
   ],
+  // The Windows installer (copied in by `npm run deploy`), served at /download/Hopp-setup.exe.
+  "assets": { "directory": "./public" },
   "observability": { "enabled": true }
 }
