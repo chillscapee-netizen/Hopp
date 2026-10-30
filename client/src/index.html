@@ -609,42 +609,58 @@
 
         <section data-panel="profile" class="settings-page">
           <h2 class="page-title">My Hopp ID</h2>
-          <div class="profile-preview">
-            <div id="profile-banner" class="profile-banner"></div>
-            <div class="profile-row">
-              <span id="profile-avatar-slot"></span>
-              <span class="profile-text">
-                <span id="profile-name" class="profile-name"></span>
-                <span id="profile-key" class="profile-key"></span>
-              </span>
-            </div>
-          </div>
-
           <p id="account-offline" class="row-note hint" hidden>Connecting to your account… Your username, picture and friends show up in a moment.</p>
-          <h3 class="card-title">Profile</h3>
-          <div class="card">
-            <div class="row">
-              <span class="row-label">
-                <span class="row-title">Username</span>
-                <span id="profile-username" class="row-sub"></span>
-              </span>
-              <button id="profile-username-btn" type="button" class="btn sm">Change</button>
-            </div>
-            <div class="row">
-              <span class="row-label"><span class="row-title">Profile picture</span></span>
-              <span class="row-control">
-                <button id="avatar-remove" type="button" class="btn-link sm">Remove</button>
-                <button id="avatar-upload" type="button" class="btn sm">Upload</button>
-                <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+
+          <div class="account-card">
+            <div id="profile-banner" class="profile-banner"></div>
+            <div class="account-head">
+              <button id="avatar-edit" type="button" class="avatar-edit" title="Change picture" aria-label="Change picture">
+                <span id="profile-avatar-slot"></span>
+                <span class="avatar-edit-overlay"><svg class="i"><use href="#i-camera"/></svg></span>
+              </button>
+              <span class="account-names">
+                <span id="profile-name" class="profile-name"></span>
+                <span id="profile-handle" class="profile-handle"></span>
               </span>
             </div>
-            <label class="row stacked">
-              <span class="row-label">
-                <span class="row-title">Display name</span>
-                <span id="rename-status" class="row-sub"></span>
-              </span>
-              <input id="settings-name" maxlength="32" autocomplete="off">
-            </label>
+            <div class="account-fields">
+              <div class="field-row">
+                <span class="row-label">
+                  <span class="field-row-title">Display name</span>
+                  <span id="profile-display" class="field-row-value"></span>
+                </span>
+                <button id="name-edit" type="button" class="btn sm">Edit</button>
+              </div>
+              <form id="name-form" class="field-row editing" hidden>
+                <span class="row-label">
+                  <label class="field-row-title" for="settings-name">Display name</label>
+                  <input id="settings-name" maxlength="32" autocomplete="off">
+                  <span id="rename-status" class="row-sub" hidden></span>
+                </span>
+                <span class="row-control">
+                  <button id="name-cancel" type="button" class="btn-link sm">Cancel</button>
+                  <button type="submit" class="btn primary sm">Save</button>
+                </span>
+              </form>
+              <div class="field-row">
+                <span class="row-label">
+                  <span class="field-row-title">Username</span>
+                  <span id="profile-username" class="field-row-value"></span>
+                </span>
+                <button id="profile-username-btn" type="button" class="btn sm">Edit</button>
+              </div>
+              <div class="field-row">
+                <span class="row-label">
+                  <span class="field-row-title">Profile picture</span>
+                  <span class="field-row-value muted">Shown to your friends and on servers.</span>
+                </span>
+                <span class="row-control">
+                  <button id="avatar-remove" type="button" class="btn-link sm">Remove</button>
+                  <button id="avatar-upload" type="button" class="btn sm">Upload</button>
+                  <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                </span>
+              </div>
+            </div>
           </div>
 
           <h3 class="card-title">Password and security</h3>
@@ -652,6 +668,7 @@
             <div class="row">
               <span class="row-label">
                 <span class="row-title">Password</span>
+                <span class="row-sub">Unlocks Hopp on this computer.</span>
               </span>
               <button id="change-password-btn" type="button" class="btn sm">Change password</button>
             </div>
@@ -692,18 +709,26 @@
               <button id="backup-btn" type="button" class="btn sm"></button>
             </div>
             <label class="row">
-              <span class="row-label"><span class="row-title">Who can send you friend requests</span></span>
+              <span class="row-label">
+                <span class="row-title">Stay logged in</span>
+                <span class="row-sub">Open Hopp without typing your password.</span>
+              </span>
+              <input id="remember-toggle" type="checkbox" class="switch">
+            </label>
+          </div>
+
+          <h3 class="card-title">Privacy</h3>
+          <div class="card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Friend requests</span>
+                <span class="row-sub">Who can send you one.</span>
+              </span>
               <select id="privacy-requests" class="row-select">
                 <option value="everyone">Everyone</option>
                 <option value="friends_of_friends">Friends of friends</option>
                 <option value="nobody">Nobody</option>
               </select>
-            </label>
-            <label class="row">
-              <span class="row-label">
-                <span class="row-title">Stay logged in</span>
-              </span>
-              <input id="remember-toggle" type="checkbox" class="switch">
             </label>
           </div>
         </section>

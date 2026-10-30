@@ -2603,29 +2603,75 @@ $("settings").addEventListener("close", stopRecordingPtt);
 
 function renderProfilePreview() {
   const name = state.account?.name ?? "?";
+  const picture = state.me?.avatar ?? null;
   $("profile-banner").style.setProperty("--hue", hue(name));
-  $("profile-avatar-slot").replaceChildren(avatar(name, "s80", undefined, state.me?.avatar));
+  bannerFrom(picture);
+  $("profile-avatar-slot").replaceChildren(avatar(name, "s80", undefined, picture));
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
-  const key = state.account?.publicKey ?? "";
-  $("profile-key").textContent = key ? `Hopp ID ${key.slice(0, 16).match(/.{4}/g).join(" ")}` : "";
+  $("profile-display").textContent = name;
+  $("profile-handle").textContent = state.me?.username ? `@${state.me.username}` : "";
 }
 
-$("settings-name").addEventListener("change", async (e) => {
+/** Colours the profile banner after the picture's average colour, softened into the grey. */
+let bannerFor = null;
+function bannerFrom(picture) {
+  if (picture === bannerFor) return;
+  bannerFor = picture;
+  const banner = $("profile-banner");
+  if (!picture) return banner.style.removeProperty("--banner");
+  const img = new Image();
+  img.onload = () => {
+    if (bannerFor !== picture) return;
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0, 1, 1);
+    const [r, gr, b] = g.getImageData(0, 0, 1, 1).data;
+    banner.style.setProperty("--banner", `color-mix(in srgb, rgb(${r} ${gr} ${b}) 45%, #2a2a2e)`);
+  };
+  img.src = picture;
+}
+
+function editName(open) {
+  $("name-form").hidden = !open;
+  $("name-form").previousElementSibling.hidden = open;
+  $("rename-status").hidden = true;
+  if (open) {
+    $("settings-name").value = state.account?.name ?? "";
+    $("settings-name").focus();
+    $("settings-name").select();
+  }
+}
+$("name-edit").addEventListener("click", () => editName(true));
+$("name-cancel").addEventListener("click", () => editName(false));
+$("settings-name").addEventListener("keydown", (e) => {
+  // Escape cancels the edit instead of closing settings.
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    editName(false);
+  }
+});
+$("name-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
   const status = $("rename-status");
+  const wanted = $("settings-name").value.trim();
+  if (!wanted || wanted === state.account.name) return editName(false);
   try {
-    const name = await invoke("rename_account", { name: e.target.value });
+    const name = await invoke("rename_account", { name: wanted });
     state.account.name = name;
     invoke("account_send", { msg: { type: "set_profile", display_name: name } }).catch(() => {});
-    e.target.value = name;
-    status.textContent = online() ? "Saved. Your new name shows up the next time you connect to a server." : "Saved.";
+    editName(false);
     renderProfilePreview();
     renderUserPanel();
   } catch (err) {
     status.textContent = String(err);
-    e.target.value = state.account.name;
+    status.hidden = false;
   }
 });
+$("avatar-edit").addEventListener("click", () => $("avatar-file").click());
+$("settings").addEventListener("close", () => editName(false));
 
 // The mic check: outside voice it opens the microphone just for the settings screen.
 function inVoice() {
@@ -3796,7 +3842,7 @@ $("username-later").addEventListener("click", () => $("username-dialog").close()
 function renderAccountSettings() {
   const me = state.me;
   $("profile-username").textContent = me?.username ? `@${me.username}` : "Not picked yet";
-  $("profile-username-btn").textContent = me?.username ? "Change" : "Pick one";
+  $("profile-username-btn").textContent = me?.username ? "Edit" : "Pick one";
   $("privacy-requests").value = me?.privacy ?? "everyone";
   $("avatar-remove").hidden = !me?.avatar;
   $("account-offline").hidden = state.accountConnected;

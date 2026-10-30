@@ -2020,19 +2020,51 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .dm-row.unread .row-title { color: var(--text); font-weight: 700; }
 .friend-row.clickable { cursor: pointer; }
 .rail-badge {
-  position: absolute; right: 8px; bottom: -2px;
-  min-width: 18px; height: 18px;
-  padding: 0 5px;
-  border: 3px solid var(--frame);
-  border-radius: 10px;
+  position: absolute; right: 6px; bottom: -2px;
+  min-width: 8px; height: 16px;
+  padding: 0 4px;
+  border: 4px solid var(--frame);
+  border-radius: 12px;
   background: var(--red);
-  color: var(--on-color);
-  font-size: 11px;
+  color: #fff;
+  font-size: 11.5px;
   font-weight: 700;
-  line-height: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
   text-align: center;
   box-sizing: content-box;
+  pointer-events: none;
 }
 #home.dm-open .friend-tabs, #home.dm-open .friends-head .head-sep { display: none; }
 
-#home-btn .rail-badge { right: 10px; bottom: -3px; }
+#home-btn .rail-badge { right: 6px; bottom: -2px; }
+
+/* ---------- My Hopp ID ---------- */
+.account-card { overflow: hidden; background: var(--frame); border: 1px solid var(--border); border-radius: 12px; }
+.account-card .profile-banner { height: 100px; background: var(--banner, hsl(var(--hue, 0) 10% 32%)); transition: background 200ms; }
+.account-head { display: flex; align-items: flex-start; gap: 16px; padding: 0 20px; margin-top: -40px; }
+.avatar-edit { position: relative; flex: none; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; box-shadow: 0 0 0 7px var(--frame); }
+.avatar-edit .avatar { display: grid; }
+.avatar-edit-overlay {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.5);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.avatar-edit-overlay .i { width: 24px; height: 24px; }
+.avatar-edit:hover .avatar-edit-overlay, .avatar-edit:focus-visible .avatar-edit-overlay { opacity: 1; }
+.account-names { display: grid; gap: 1px; min-width: 0; padding-top: 48px; }
+.account-names .profile-name { overflow: hidden; font-size: 20px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.profile-handle { color: var(--muted); font-size: 14px; }
+.account-fields { margin: 20px 16px 16px; padding: 4px 16px; background: var(--side); border-radius: 8px; }
+.field-row { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 12px 0; border-top: 1px solid var(--border); }
+.field-row:first-child, .field-row[hidden] + .field-row.editing { border-top: none; }
+.field-row-title { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.field-row-value { overflow: hidden; color: var(--text); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.field-row-value.muted { color: var(--muted); font-size: 14px; }
+.field-row.editing { align-items: flex-end; }
+.field-row.editing input { margin-top: 6px; }
+.field-row.editing .row-sub { margin-top: 4px; }
