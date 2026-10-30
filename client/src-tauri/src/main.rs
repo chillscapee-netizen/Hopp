@@ -436,6 +436,12 @@ async fn connect(
                 ServerMsg::Reactions { channel, id, reactions } => {
                     let _ = ui.emit("reactions", serde_json::json!({ "channel": channel, "id": id, "reactions": reactions }));
                 }
+                ServerMsg::Pinned { channel, id, on } => {
+                    let _ = ui.emit("pinned", serde_json::json!({ "channel": channel, "id": id, "on": on }));
+                }
+                ServerMsg::Pins { channel, messages } => {
+                    let _ = ui.emit("pins", serde_json::json!({ "channel": channel, "messages": messages }));
+                }
                 ServerMsg::OlderHistory { channel, messages, done } => {
                     let _ = ui.emit("older-history", serde_json::json!({ "channel": channel, "messages": messages, "done": done }));
                 }
@@ -713,6 +719,16 @@ fn react(state: State<'_, AppState>, channel: ChannelId, id: u64, emoji: String,
 #[tauri::command]
 fn leave_server(state: State<'_, AppState>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::LeaveServer))
+}
+
+#[tauri::command]
+fn pin_message(state: State<'_, AppState>, channel: ChannelId, id: u64, on: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::Pin { channel, id, on }))
+}
+
+#[tauri::command]
+fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::GetPins { channel }))
 }
 
 #[tauri::command]
@@ -1171,6 +1187,8 @@ fn main() {
             edit_message,
             react,
             load_older,
+            pin_message,
+            get_pins,
             start_call,
             call_peer,
             end_call,

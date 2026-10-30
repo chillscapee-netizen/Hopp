@@ -52,6 +52,7 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
   }
   if (r.edited_at !== null && r.edited_at !== undefined) m.edited_at = Number(r.edited_at);
   if (r.reactions) m.reactions = JSON.parse(String(r.reactions));
+  if (r.pinned) m.pinned = true;
   return m;
 }
 /** A mention in message text: <@hex key of their Hopp ID>. */
@@ -83,6 +84,7 @@ interface ChatMessage {
   reply?: Reply;
   edited_at?: number;
   reactions?: Reaction[];
+  pinned?: boolean;
 }
 interface Invite { code: string; created_at: number; expires_at: number | null; max_uses: number | null; uses: number }
 interface Ban { public_key: string; name: string; banned_at: number }
@@ -172,7 +174,7 @@ export class StromServer extends DurableObject<Env> {
     if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
     const columns = new Set(this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => String(c.name)));
-    for (const [name, type] of [["reply_id", "INTEGER"], ["reply_name", "TEXT"], ["reply_key", "TEXT"], ["reply_text", "TEXT"], ["edited_at", "INTEGER"], ["reactions", "TEXT"]]) {
+    for (const [name, type] of [["pinned", "INTEGER"], ["reply_id", "INTEGER"], ["reply_name", "TEXT"], ["reply_key", "TEXT"], ["reply_text", "TEXT"], ["edited_at", "INTEGER"], ["reactions", "TEXT"]]) {
       if (!columns.has(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
     }
     // Keep-alive pings are answered without waking the object.
@@ -597,6 +599,19 @@ export class StromServer extends DurableObject<Env> {
         }
         this.sql.exec("UPDATE messages SET reactions = ? WHERE id = ?", reactions.length ? JSON.stringify(reactions) : null, id);
         return this.broadcast({ type: "reactions", channel, id, reactions });
+      }
+      case "pin": {
+        if (!ownerOnly()) return;
+        const channel = Number(msg.channel);
+        const id = Number(msg.id);
+        if (!this.message(channel, id)) return this.error(ws, "That message no longer exists.");
+        this.sql.exec("UPDATE messages SET pinned = ? WHERE id = ?", msg.on ? 1 : null, id);
+        return this.broadcast({ type: "pinned", channel, id, on: !!msg.on });
+      }
+      case "get_pins": {
+        const channel = Number(msg.channel);
+        const messages = this.sql.exec("SELECT * FROM messages WHERE channel = ? AND pinned = 1 ORDER BY id DESC LIMIT 50", channel).toArray().map(rowToMessage);
+        return this.send(ws, { type: "pins", channel, messages });
       }
       case "load_older": {
         const channel = Number(msg.channel);

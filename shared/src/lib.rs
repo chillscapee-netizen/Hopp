@@ -120,6 +120,9 @@ pub struct ChatMessage {
     pub edited_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
+    /// Pinned by the owner, to keep it easy to find.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 /// What a reply shows of the message it answers.
@@ -213,6 +216,10 @@ pub enum ClientMsg {
     EditMessage { channel: ChannelId, id: u64, text: String },
     /// Adds (`on`) or removes your reaction.
     React { channel: ChannelId, id: u64, emoji: String, on: bool },
+    /// Owner only: pin a message to its channel, or unpin it.
+    Pin { channel: ChannelId, id: u64, on: bool },
+    /// Answered with `Pins`: a channel's pinned messages.
+    GetPins { channel: ChannelId },
     /// Answered with `OlderHistory`: up to [`OLDER_PAGE`] messages before `before`.
     LoadOlder { channel: ChannelId, before: u64 },
     /// Owner only.
@@ -297,6 +304,8 @@ pub enum ServerMsg {
     MessageDeleted { channel: ChannelId, id: u64 },
     MessageEdited { channel: ChannelId, id: u64, text: String, edited_at: u64 },
     Reactions { channel: ChannelId, id: u64, reactions: Vec<Reaction> },
+    Pinned { channel: ChannelId, id: u64, on: bool },
+    Pins { channel: ChannelId, messages: Vec<ChatMessage> },
     /// Older messages, oldest first. `done`: there are none before these.
     OlderHistory { channel: ChannelId, messages: Vec<ChatMessage>, done: bool },
     Typing { channel: ChannelId, session_id: SessionId },

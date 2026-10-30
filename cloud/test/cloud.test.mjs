@@ -472,3 +472,20 @@ test("the owner renames, describes and reorders channels", async () => {
   owner.close();
   bob.close();
 });
+
+test("the owner pins messages; everyone can list them", async () => {
+  const { id, owner, invite } = await newServer();
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+  bob.send({ type: "send_chat", channel: general, text: "remember this" });
+  const m = (await owner.waitFor((x) => x.type === "chat")).message;
+  bob.send({ type: "pin", channel: general, id: m.id, on: true });
+  assert.match(await errorOf(bob), /owner/i);
+  owner.send({ type: "pin", channel: general, id: m.id, on: true });
+  assert.equal((await bob.waitFor((x) => x.type === "pinned")).on, true);
+  bob.send({ type: "get_pins", channel: general });
+  const pins = await bob.waitFor((x) => x.type === "pins");
+  assert.deepEqual(pins.messages.map((x) => [x.text, x.pinned]), [["remember this", true]]);
+  owner.close();
+  bob.close();
+});

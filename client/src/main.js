@@ -2212,6 +2212,11 @@ function renderMessages(keepScrollUnlessAtBottom) {
       const author = el("span", "msg-author", m.sender_name);
       author.style.color = `hsl(${hue(m.sender_name)} 22% 80%)`;
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
+      if (m.pinned) {
+        const pin = icon("pin", "xs msg-pin");
+        pin.dataset.tip = "Pinned";
+        head.append(pin);
+      }
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
@@ -5877,6 +5882,7 @@ function openMessageMenu(m, e) {
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
       ...(mine ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(isOwner() ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
       { label: "Copy text", icon: "message", action: () => copy(plainText(m.text), "Text") },
@@ -6209,3 +6215,45 @@ async function leaveGroup(id) {
 }
 
 prefs.closedCategories = loadJson("closedCategories", {});
+
+// ---------- pinned messages ----------
+
+listen("pinned", (e) => {
+  const { channel: ch, id, on } = e.payload;
+  const m = state.chats.get(ch)?.find((x) => x.id === id);
+  if (m) m.pinned = on;
+  if (ch === state.view) renderMessages(true);
+  if (!$("pins-pop").hidden && ch === state.view) call("get_pins", { channel: ch });
+  if (on && ch === state.view) toast("Message pinned.");
+});
+
+listen("pins", (e) => {
+  const { channel: ch, messages } = e.payload;
+  if (ch !== state.view) return;
+  const pop = $("pins-pop");
+  const list = el("div", "pins-list");
+  for (const m of messages) {
+    const item = el("button", "pin-item");
+    item.type = "button";
+    const head = el("div", "pin-head");
+    head.append(avatar(m.sender_name, "s24", undefined, pictureFor(m.author_key)), el("strong", "ellipsis", m.sender_name), el("span", "pin-date", dayLabel(m.sent_at)));
+    item.append(head, el("div", "pin-text", previewText(m.text)));
+    item.addEventListener("click", () => {
+      pop.hidden = true;
+      jumpToMessage(m.id);
+    });
+    list.append(item);
+  }
+  if (!messages.length) list.append(el("div", "pins-empty", isOwner() ? "Nothing pinned yet. Right-click a message to pin it." : "Nothing pinned in this channel yet."));
+  pop.replaceChildren(el("div", "pins-title", `Pinned in #${channelName(ch)}`), list);
+});
+
+$("pins-btn").addEventListener("click", (e) => {
+  const pop = $("pins-pop");
+  if (!pop.hidden) return closePopovers();
+  if (state.view === null) return;
+  pop.replaceChildren(el("div", "pins-title", "Pinned messages"), el("div", "pins-empty", "Loading…"));
+  const r = e.currentTarget.getBoundingClientRect();
+  placePopover(pop, r.right - 380, r.bottom + 8);
+  call("get_pins", { channel: state.view });
+});

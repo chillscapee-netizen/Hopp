@@ -623,7 +623,7 @@ async fn older_messages_come_in_pages() {
 fn edits_and_reactions_survive_a_restart() {
     let dir = temp_dir("edits");
     let storage = Storage::at(&dir).unwrap();
-    let mut m = ChatMessage { id: 1, channel: GENERAL, sender: 1, sender_name: "a".into(), author_key: "k".into(), text: "one".into(), sent_at: 1, reply: None, edited_at: None, reactions: vec![] };
+    let mut m = ChatMessage { id: 1, channel: GENERAL, sender: 1, sender_name: "a".into(), author_key: "k".into(), text: "one".into(), sent_at: 1, reply: None, edited_at: None, reactions: vec![], pinned: false };
     storage.append_chat(&m);
     storage.append_chat(&ChatMessage { id: 2, text: "two".into(), ..m.clone() });
     m.text = "one, edited".into();
@@ -668,4 +668,18 @@ async fn owner_renames_and_reorders_channels() {
     assert_eq!(channels.iter().map(|c| c.id).collect::<Vec<_>>(), order);
     server.admin.send(ClientMsg::ReorderChannels { order: vec![GENERAL] }).await;
     assert!(server.admin.error().await.contains("changed"));
+}
+
+#[tokio::test]
+async fn owner_pins_messages() {
+    let mut server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let m = alice.chat("remember this").await;
+    alice.send(ClientMsg::Pin { channel: GENERAL, id: m.id, on: true }).await;
+    assert!(alice.error().await.contains("owner"));
+    server.admin.send(ClientMsg::Pin { channel: GENERAL, id: m.id, on: true }).await;
+    alice.wait_for(|x| matches!(x, ServerMsg::Pinned { on: true, .. })).await;
+    alice.send(ClientMsg::GetPins { channel: GENERAL }).await;
+    let ServerMsg::Pins { messages, .. } = alice.wait_for(|x| matches!(x, ServerMsg::Pins { .. })).await else { unreachable!() };
+    assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["remember this"]);
 }

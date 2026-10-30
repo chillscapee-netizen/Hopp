@@ -492,6 +492,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             reply,
                             edited_at: None,
                             reactions: Vec::new(),
+                            pinned: false,
                         };
                         st.post_chat(message);
                     }
@@ -550,6 +551,28 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             }
                         }
                     }
+                }
+                ClientMsg::Pin { channel, id, on } => {
+                    if !is_owner {
+                        error("Only the server owner can pin messages.");
+                    } else {
+                        let pinned = st.history.get_mut(&channel).and_then(|h| h.iter_mut().find(|m| m.id == id)).map(|m| {
+                            m.pinned = on;
+                            m.clone()
+                        });
+                        match pinned {
+                            None => error("That message is too old to pin."),
+                            Some(m) => {
+                                st.storage.append_chat(&m);
+                                st.broadcast(&ServerMsg::Pinned { channel, id, on });
+                            }
+                        }
+                    }
+                }
+                ClientMsg::GetPins { channel } => {
+                    let all = st.storage.load_before(channel, u64::MAX, 100_000).unwrap_or_else(|| st.history.get(&channel).map(|h| h.iter().cloned().collect()).unwrap_or_default());
+                    let messages = all.into_iter().filter(|m| m.pinned).collect();
+                    let _ = tx.send(ServerMsg::Pins { channel, messages });
                 }
                 ClientMsg::LoadOlder { channel, before } => {
                     let mut messages = st.storage.load_before(channel, before, OLDER_PAGE + 1).unwrap_or_else(|| {
