@@ -6778,5 +6778,12 @@ function gettingStarted() {
     card("link", "Join a server", "Got an invite link from someone? Paste it here.", "Join with invite", () => openAddDialog("join")),
   );
   box.append(grid);
+  // Friends who don't have Hopp yet get it from Hopp's page.
+  const share = el("p", "gs-share");
+  const copy = el("button", "link", "Copy the download link");
+  copy.type = "button";
+  copy.addEventListener("click", () => navigator.clipboard.writeText(prefs.cloudUrl.replace(/^ws/, "http") + "/").then(() => toast("Link copied. Friends can download Hopp from it.")));
+  share.append("Friends don't have Hopp yet? ", copy);
+  box.append(share);
   return box;
 }

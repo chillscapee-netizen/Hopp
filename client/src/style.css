@@ -2683,3 +2683,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .gs-handle:hover { border-color: var(--border-active); }
 .sidebar-empty .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
 .sidebar-empty .link:hover { text-decoration: underline; }
+.gs-share { margin: 22px 0 0; color: var(--muted); font-size: 14px; }
+.gs-share .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
+.gs-share .link:hover { text-decoration: underline; }

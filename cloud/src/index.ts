@@ -93,8 +93,9 @@ export default {
       return json({ ...preview, server_id: serverId, code });
     }
 
+    // Hopp's home page: what it is and where to get it.
     if (url.pathname === "/") {
-      return new Response("Hopp cloud is running.\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      return new Response(landingPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     return new Response("Not found", { status: 404 });
   },
@@ -167,4 +168,34 @@ h1{margin:0 0 6px;font-size:24px}.counts{margin:0 0 24px;color:#a3a3ab;font-size
 .btn{display:block;padding:12px;border-radius:8px;background:#3b3b40;color:#e9e9ec;font-weight:600;text-decoration:none}.btn:hover{background:#46464c}.btn.primary{background:#e9e9ec;color:#1c1c1f}.btn.primary:hover{background:#fff}
 .small{margin:20px 0 8px;color:#a3a3ab;font-size:14px}.hint{margin:14px 0 0;color:#7b7b84;font-size:12.5px}
 </style></head><body><main>${body}</main></body></html>`;
+}
+
+/** The page anyone gets at Hopp's address. */
+function landingPage(): string {
+  const bunny = `<svg viewBox="0 0 24 24" fill="none" stroke="#3ccf8e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 9.6C8 6.4 7.7 3.4 8.6 2.1c1.4.4 2.3 3.4 2.4 7"/><path d="M14.8 9.6c1.2-3.2 1.5-6.2.6-7.5-1.4.4-2.3 3.4-2.4 7"/><circle cx="12" cy="15.2" r="6.3"/><path d="M9.6 14.4h.01M14.4 14.4h.01"/><path d="M11 17.2l1 .9 1-.9"/></svg>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hopp: voice and chat for friends</title>
+<meta property="og:title" content="Hopp"><meta property="og:description" content="Voice and chat for friends. Free, private, light.">
+<!-- Hopp cloud is running. -->
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:#1c1c1f;color:#e9e9ec;font:15px/1.5 system-ui,"Segoe UI",sans-serif}
+main{width:min(560px,100%);text-align:center}
+.logo{width:88px;height:88px;margin:0 auto 18px;display:grid;place-items:center;border-radius:26px;background:#323236;border:1px solid #3f3f45}.logo svg{width:52px;height:52px}
+h1{margin:0 0 8px;font-size:40px;letter-spacing:-.02em}.lead{margin:0 0 28px;color:#a3a3ab;font-size:17px}
+.btn{display:inline-block;padding:13px 26px;border-radius:10px;background:#e9e9ec;color:#1c1c1f;font-weight:700;text-decoration:none}.btn:hover{background:#fff}
+.small{margin:12px 0 36px;color:#7b7b84;font-size:13px}
+.points{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;text-align:left}
+.point{padding:16px;background:#2a2a2e;border:1px solid #323236;border-radius:12px}.point b{display:block;margin-bottom:4px}.point span{color:#a3a3ab;font-size:14px}
+</style></head><body><main>
+<div class="logo">${bunny}</div>
+<h1>Hopp</h1>
+<p class="lead">Voice and chat for you and your friends.</p>
+<a class="btn" href="/download/Hopp-setup.exe">Download for Windows</a>
+<p class="small">Windows may say it doesn't recognise the app: choose <b>More info</b>, then <b>Run anyway</b>.</p>
+<div class="points">
+<div class="point"><b>Clear voice</b><span>Low delay, noise removed, straight between friends.</span></div>
+<div class="point"><b>Private</b><span>Direct messages and calls are end-to-end encrypted.</span></div>
+<div class="point"><b>Free</b><span>No ads, no paid extras. Light on your computer.</span></div>
+</div>
+</main></body></html>`;
 }
