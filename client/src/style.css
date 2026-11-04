@@ -828,9 +828,9 @@ input[type=range]::-webkit-slider-thumb {
   border-radius: 16px;
   background: var(--elev);
   border: 1px solid var(--border-strong);
-  color: var(--green);
+  color: var(--text);
 }
-.auth-logo .i { width: 30px; height: 30px; }
+.auth-logo .i { width: 36px; height: 36px; }
 .auth-switch { margin: 16px 0 0; color: var(--muted); font-size: 14px; text-align: center; }
 .auth-note {
   display: flex; gap: 10px;
@@ -1851,7 +1851,7 @@ details.advanced-card > summary:hover { color: var(--text); }
 #server-list .rail-item { touch-action: none; -webkit-user-drag: none; }
 #server-list img { -webkit-user-drag: none; pointer-events: none; }
 
-/* Closed folders like Discord's: a fixed two-by-two grid, filled from the top left. */
+/* Closed folders: a fixed two-by-two grid, filled from the top left. */
 .folder-closed {
   grid-template-columns: repeat(2, 18px) !important;
   grid-template-rows: repeat(2, 18px);
@@ -2203,7 +2203,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   text-align: left;
   cursor: pointer;
 }
-/* The little hook from the reply to the avatar, like Discord. */
+/* The little hook from the reply to the avatar. */
 .msg-reply::before {
   content: "";
   position: absolute;
@@ -2532,11 +2532,11 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   border-radius: 20px;
   background: var(--elev);
   border: 1px solid var(--border-strong);
-  color: var(--green);
+  color: var(--text);
   transform-origin: 50% 100%;
   animation: hop 0.9s cubic-bezier(0.3, 0, 0.5, 1) infinite;
 }
-.splash-bunny .i { width: 40px; height: 40px; }
+.splash-bunny .i { width: 48px; height: 48px; }
 .splash-shadow {
   position: absolute; bottom: 2px;
   width: 54px; height: 8px;
@@ -2605,22 +2605,52 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .splash-retry { margin-top: 14px; }
 .voice-user .unreachable { flex: none; margin-left: auto; color: var(--yellow); }
 
-.update-pill {
+/* A newer Hopp is ready: a green arrow in the top bar. */
+.update-btn {
   position: absolute; right: 150px; top: 50%;
-  height: 22px;
-  padding: 0 10px;
+  display: grid; place-items: center;
+  width: 28px; height: 24px;
+  padding: 0;
   transform: translateY(-50%);
-  background: color-mix(in srgb, var(--green) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--green) 50%, transparent);
-  border-radius: 11px;
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+  border-radius: 7px;
   color: var(--green);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
   cursor: pointer;
+  transition: background 120ms;
 }
-.update-pill:hover { background: color-mix(in srgb, var(--green) 24%, transparent); }
-.update-pill[hidden] { display: none; }
+.update-btn:hover { background: color-mix(in srgb, var(--green) 24%, transparent); }
+.update-btn .i { width: 16px; height: 16px; stroke-width: 2.2; }
+.update-btn[hidden] { display: none; }
+.update-pop {
+  position: fixed; z-index: 60;
+  width: 300px;
+  display: grid; gap: 10px;
+  padding: 16px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
+  animation: pop-in 120ms ease-out;
+}
+.update-pop-head { display: flex; align-items: center; gap: 12px; }
+.update-pop-mark { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 11px; background: var(--deep); border: 1px solid var(--border); color: var(--text); }
+.update-pop-mark .i { width: 28px; height: 28px; }
+.update-pop-title { display: grid; gap: 1px; }
+.update-pop-title strong { font-size: 15px; }
+.update-pop-title span { color: var(--muted); font-size: 13px; }
+.update-pop-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.update-notes { margin: -4px 0 0; max-height: 160px; overflow-y: auto; color: var(--text-2); font-size: 13.5px; line-height: 1.45; white-space: pre-line; }
+.update-pop-warn, .update-pop-status, .update-pop-error { margin: 0; color: var(--muted); font-size: 13px; }
+.update-pop-error { color: var(--red); }
+.update-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.update-bar { height: 6px; overflow: hidden; background: var(--deep); border-radius: 3px; }
+.update-bar[hidden] { display: none; }
+.update-bar span { display: block; height: 100%; width: 0; background: var(--green); border-radius: 3px; transition: width 200ms; }
+.update-bar.unknown span { width: 35% !important; animation: bar-slide 1.1s ease-in-out infinite; }
+#version-bar { margin: 0 16px 14px; }
+@keyframes bar-slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px); } }
 .msg-invite-link { font-weight: 600; }
 .msg-invite-link::before { content: "↗ "; }
 
@@ -2714,7 +2744,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .blocked-msg .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
 .blocked-msg .link:hover { text-decoration: underline; }
 
-/* Room for your name in the user panel: a smaller avatar and slimmer buttons, like Discord. */
+/* Room for your name in the user panel: a smaller avatar and slimmer buttons. */
 .user-panel .me-card .avatar { width: 32px; height: 32px; font-size: 12px; }
 .user-panel .me-card { gap: 8px; padding: 0 4px 0 2px; }
 .panel-controls { gap: 0; }

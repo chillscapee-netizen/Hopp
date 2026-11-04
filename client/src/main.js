@@ -1602,7 +1602,7 @@ listen("voice", (e) => {
   const ev = e.payload;
   if (ev.type === "speaking") {
     ev.speaking ? state.speaking.add(ev.session_id) : state.speaking.delete(ev.session_id);
-    // Who is talking shows in the voice channel (and on your own panel), like Discord; not in the member list.
+    // Who is talking shows in the voice channel (and on your own panel); not in the member list.
     document.querySelectorAll(`.voice-user[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
     if (state.roster && ev.session_id === state.roster.me) renderUserPanel();
   } else if (ev.type === "latency") {
@@ -2568,7 +2568,7 @@ function renderHome() {
 
   renderFriendTabs();
   sections.push(friendsPanel());
-  // The friends page with "Active now" beside it, like Discord.
+  // The friends page with "Active now" beside it.
   const main = el("div", "home-main");
   main.append(...sections);
   const layout = el("div", "home-layout");
@@ -2884,7 +2884,7 @@ function showServerTab(tab) {
 }
 document.querySelectorAll("[data-stab]").forEach((t) => t.addEventListener("click", () => showServerTab(t.dataset.stab)));
 
-// Overview: the owner edits the server's name and picture; saved together, like Discord.
+// Overview: the owner edits the server's name and picture; saved together.
 const overview = { icon: null };
 
 function resetOverview() {
@@ -3049,7 +3049,7 @@ chatInput.addEventListener("keydown", (e) => {
     setReply(null);
     return;
   }
-  // Up in an empty box edits your last message, like Discord.
+  // Up in an empty box edits your last message.
   if (e.key === "ArrowUp" && !chatInput.value && state.view !== null) {
     const mine = (state.chats.get(state.view) ?? []).findLast((m) => m.author_key === state.account?.publicKey);
     if (mine) {
@@ -3103,7 +3103,7 @@ async function setDeafened(deafened) {
   renderUserPanel();
 }
 
-// Like Discord: unmuting while deafened undeafens too.
+// Unmuting while deafened undeafens too.
 $("mute-btn").addEventListener("click", async () => {
   if (state.deafened) {
     await setDeafened(false);
@@ -3931,7 +3931,7 @@ $("autostart").addEventListener("change", async (e) => {
   }
 });
 
-// Closing the window: keep running in the notification area (like Discord), or quit.
+// Closing the window: keep running in the notification area, or quit.
 // Asked once; the answer is kept.
 $("win-close").addEventListener("click", async () => {
   // Not logged in: nothing to keep running.
@@ -4997,7 +4997,7 @@ window.addEventListener("focus", () => {
 //
 // Every member's account hears about new messages in their cloud servers (even
 // while they're in another one), so the rail shows a dot for unread servers and
-// a red count only for mentions, like Discord. Read marks live in the account,
+// a red count only for mentions. Read marks live in the account,
 // so they follow you between computers. Self-hosted servers count while you're in them.
 
 var MENTION = /<@([0-9a-f]{64})>/g;
@@ -6738,39 +6738,154 @@ state.unreachable = new Set();
 // ---------- updates ----------
 //
 // Hopp looks for a newer version at start and every few hours. Updates are
-// signed; anything not signed with Hopp's key is refused.
+// signed; anything not signed with Hopp's key is refused. When one is found,
+// a green arrow shows in the top bar; it opens what's new and installs it.
 
-var updateFound = null;
+var updates = {
+  version: "", // the running version
+  found: null, // { version, notes } when a newer one is out
+  status: "idle", // idle | checking | newest | failed | installing
+  progress: null, // 0–1 while downloading, when the size is known
+  error: "",
+};
 
-async function checkForUpdate() {
+async function checkForUpdate(manual) {
+  if (updates.status === "installing" || updates.status === "checking") return;
+  if (manual) {
+    updates.status = "checking";
+    renderUpdates();
+  }
   try {
-    updateFound = await invoke("check_update");
-  } catch {
-    updateFound = null;
+    updates.found = await invoke("check_update");
+    updates.status = updates.found ? "idle" : manual ? "newest" : updates.status === "checking" ? "idle" : updates.status;
+  } catch (err) {
+    // A quiet check that fails (offline) says nothing; one you asked for does.
+    updates.status = manual ? "failed" : "idle";
+    updates.error = friendlyError(err);
   }
-  const pill = $("update-pill");
-  pill.hidden = !updateFound;
-  if (updateFound) {
-    pill.textContent = "Update ready: restart";
-    pill.dataset.tip = `Hopp ${updateFound.version} is ready. Click to restart into it.`;
-  }
+  renderUpdates();
 }
 
-$("update-pill").addEventListener("click", async () => {
-  const pill = $("update-pill");
-  if (state.call || myVoice() !== null) {
-    const ok = await confirmDialog({ title: "Restart to update?", text: "You'll leave voice for a moment while Hopp restarts.", ok: "Restart", danger: false });
-    if (!ok) return;
-  }
-  pill.disabled = true;
-  pill.textContent = "Updating…";
+function installUpdate() {
+  if (updates.status === "installing") return;
+  updates.status = "installing";
+  updates.progress = null;
+  renderUpdates();
   invoke("install_update").catch((err) => {
-    pill.disabled = false;
-    pill.textContent = "Update ready: restart";
-    toast(friendlyError(err), true);
+    updates.status = "failed";
+    updates.error = friendlyError(err);
+    renderUpdates();
   });
+}
+
+listen("update-progress", (e) => {
+  const { done, total } = e.payload ?? {};
+  updates.progress = total ? Math.min(done / total, 1) : null;
+  renderUpdates();
 });
 
+function updateProgressText() {
+  if (updates.progress === null) return "Downloading…";
+  return updates.progress >= 1 ? "Installing… Hopp restarts in a moment." : `Downloading… ${Math.round(updates.progress * 100)}%`;
+}
+
+function setBar(bar, show) {
+  bar.hidden = !show;
+  bar.classList.toggle("unknown", updates.progress === null);
+  bar.firstElementChild.style.width = `${Math.round((updates.progress ?? 0) * 100)}%`;
+}
+
+/** The top bar arrow, its popup and the App settings card. */
+function renderUpdates() {
+  const installing = updates.status === "installing";
+  const btn = $("update-btn");
+  btn.hidden = !updates.found;
+  btn.dataset.tip = updates.found ? `Hopp ${updates.found.version} is ready` : "";
+
+  $("version-title").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
+  $("version-sub").textContent = installing
+    ? updateProgressText()
+    : updates.status === "checking"
+    ? "Looking for updates…"
+    : updates.status === "failed"
+    ? updates.error || "Couldn't check for updates."
+    : updates.found
+    ? `Hopp ${updates.found.version} is ready to install.`
+    : updates.status === "newest"
+    ? "You have the newest version."
+    : "Updates are checked automatically.";
+  const vbtn = $("version-btn");
+  vbtn.textContent = installing ? "Updating…" : updates.found ? "Update now" : "Check for updates";
+  vbtn.classList.toggle("primary", !!updates.found);
+  vbtn.disabled = installing || updates.status === "checking";
+  setBar($("version-bar"), installing);
+
+  const pop = document.querySelector(".update-pop");
+  if (pop) fillUpdatePop(pop);
+}
+
+function fillUpdatePop(pop) {
+  const installing = updates.status === "installing";
+  const head = el("div", "update-pop-head");
+  const mark = el("span", "update-pop-mark");
+  mark.append(icon("logo"));
+  const title = el("div", "update-pop-title");
+  title.append(el("strong", "", "Update available"), el("span", "", `Hopp ${updates.version || "?"} → ${updates.found?.version ?? "?"}`));
+  head.append(mark, title);
+  const parts = [head];
+  const notes = updates.found?.notes?.trim();
+  if (notes) {
+    parts.push(el("div", "update-pop-label", "What's new"), el("p", "update-notes", notes));
+  }
+  if (installing) {
+    const bar = el("div", "update-bar");
+    bar.append(el("span"));
+    setBar(bar, true);
+    parts.push(bar, el("p", "update-pop-status", updateProgressText()));
+  } else {
+    if (updates.status === "failed") parts.push(el("p", "update-pop-error", updates.error));
+    if (state.call || myVoice() !== null) parts.push(el("p", "update-pop-warn", "You'll leave voice for a moment while Hopp restarts."));
+    const actions = el("div", "update-pop-actions");
+    const later = el("button", "btn sm", "Later");
+    later.type = "button";
+    later.addEventListener("click", closeUpdatePop);
+    const go = el("button", "btn sm primary", "Restart and update");
+    go.type = "button";
+    go.addEventListener("click", installUpdate);
+    actions.append(later, go);
+    parts.push(actions);
+  }
+  pop.replaceChildren(...parts);
+}
+
+function closeUpdatePop() {
+  document.querySelector(".update-pop")?.remove();
+}
+
+$("update-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (document.querySelector(".update-pop")) return closeUpdatePop();
+  const pop = el("div", "update-pop");
+  pop.addEventListener("click", (ev) => ev.stopPropagation());
+  fillUpdatePop(pop);
+  document.body.append(pop);
+  const r = $("update-btn").getBoundingClientRect();
+  pop.style.top = `${r.bottom + 8}px`;
+  pop.style.right = `${Math.max(8, innerWidth - r.right - 8)}px`;
+});
+document.addEventListener("click", () => {
+  if (updates.status !== "installing") closeUpdatePop();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && updates.status !== "installing") closeUpdatePop();
+});
+
+$("version-btn").addEventListener("click", () => (updates.found ? installUpdate() : checkForUpdate(true)));
+
+invoke("app_version").then((v) => {
+  updates.version = v ?? "";
+  renderUpdates();
+}).catch(() => {});
 setTimeout(checkForUpdate, 8000);
 setInterval(checkForUpdate, 4 * 3600 * 1000);
 

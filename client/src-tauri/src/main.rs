@@ -898,9 +898,27 @@ async fn install_update(app: AppHandle) -> CmdResult {
     use tauri_plugin_updater::UpdaterExt;
     let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
     let Some(update) = update else { return Err("You already have the newest Hopp.".into()) };
-    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| format!("Couldn't update: {e}"))?;
+    // How far the download has come, for the progress bar.
+    let mut done = 0u64;
+    let progress = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                done += chunk as u64;
+                let _ = progress.emit("update-progress", serde_json::json!({ "done": done, "total": total }));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("Couldn't update: {e}"))?;
     shell::prepare_quit();
     app.restart();
+}
+
+/// The version of Hopp that's running.
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
 }
 
 #[tauri::command]
@@ -1251,6 +1269,7 @@ fn main() {
             autostart_enabled,
             check_update,
             install_update,
+            app_version,
             set_autostart,
             shell::window_compact,
             shell::window_full,

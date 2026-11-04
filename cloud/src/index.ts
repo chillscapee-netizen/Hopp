@@ -156,7 +156,7 @@ function invitePage(code: string, p: { name: string | null; icon: string | null;
        <a class="btn" href="/download/Hopp-setup.exe">Download Hopp for Windows</a>
        <p class="hint">After installing, come back and press <b>Open in Hopp</b>. Windows may say it doesn't recognise the app: choose <b>More info</b>, then <b>Run anyway</b>.</p>`
     : `<h1>This invite is invalid or has expired</h1><p class="small">Ask for a new one.</p>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="${FAVICON}">
 <title>${name ? `Join ${name} on Hopp` : "Hopp invite"}</title>
 <meta property="og:title" content="${name ? `Join ${name} on Hopp` : "Hopp invite"}"><meta property="og:description" content="Voice and chat for friends.">
 <style>
@@ -172,22 +172,21 @@ h1{margin:0 0 6px;font-size:24px}.counts{margin:0 0 24px;color:#a3a3ab;font-size
 
 /** The page anyone gets at Hopp's address. */
 function landingPage(): string {
-  const bunny = `<svg viewBox="0 0 24 24" fill="none" stroke="#3ccf8e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 9.6C8 6.4 7.7 3.4 8.6 2.1c1.4.4 2.3 3.4 2.4 7"/><path d="M14.8 9.6c1.2-3.2 1.5-6.2.6-7.5-1.4.4-2.3 3.4-2.4 7"/><circle cx="12" cy="15.2" r="6.3"/><path d="M9.6 14.4h.01M14.4 14.4h.01"/><path d="M11 17.2l1 .9 1-.9"/></svg>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="${FAVICON}">
 <title>Hopp: voice and chat for friends</title>
 <meta property="og:title" content="Hopp"><meta property="og:description" content="Voice and chat for friends. Free, private, light.">
 <!-- Hopp cloud is running. -->
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:#1c1c1f;color:#e9e9ec;font:15px/1.5 system-ui,"Segoe UI",sans-serif}
 main{width:min(560px,100%);text-align:center}
-.logo{width:88px;height:88px;margin:0 auto 18px;display:grid;place-items:center;border-radius:26px;background:#323236;border:1px solid #3f3f45}.logo svg{width:52px;height:52px}
+.logo{width:96px;height:96px;margin:0 auto 18px}.logo svg{display:block;width:100%;height:100%}
 h1{margin:0 0 8px;font-size:40px;letter-spacing:-.02em}.lead{margin:0 0 28px;color:#a3a3ab;font-size:17px}
 .btn{display:inline-block;padding:13px 26px;border-radius:10px;background:#e9e9ec;color:#1c1c1f;font-weight:700;text-decoration:none}.btn:hover{background:#fff}
 .small{margin:12px 0 36px;color:#7b7b84;font-size:13px}
 .points{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;text-align:left}
 .point{padding:16px;background:#2a2a2e;border:1px solid #323236;border-radius:12px}.point b{display:block;margin-bottom:4px}.point span{color:#a3a3ab;font-size:14px}
 </style></head><body><main>
-<div class="logo">${bunny}</div>
+<div class="logo">${HOPP_MARK}</div>
 <h1>Hopp</h1>
 <p class="lead">Voice and chat for you and your friends.</p>
 <a class="btn" href="/download/Hopp-setup.exe">Download for Windows</a>
@@ -199,3 +198,7 @@ h1{margin:0 0 8px;font-size:40px;letter-spacing:-.02em}.lead{margin:0 0 28px;col
 </div>
 </main></body></html>`;
 }
+
+/** Hopp's logo (client/src-tauri/icons/hopp.svg): a speech bubble with bunny ears. */
+const HOPP_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3a41"/><stop offset="1" stop-color="#1c1c20"/></linearGradient><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e4e4ea"/></linearGradient></defs><rect width="1024" height="1024" rx="232" fill="url(#bg)"/><rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#ffffff" stroke-opacity=".09" stroke-width="12"/><g fill="url(#fg)"><rect x="352" y="140" width="136" height="380" rx="68" transform="rotate(-9 420 500)"/><rect x="536" y="140" width="136" height="380" rx="68" transform="rotate(9 604 500)"/><path d="M512 404c-172 0-282 92-282 214 0 122 110 212 282 212 38 0 74-4 106-12l96 58c18 11 39-6 32-26l-24-72c46-40 72-96 72-160 0-122-110-214-282-214z"/></g><g fill="#3ccf8e"><rect x="394" y="196" width="52" height="262" rx="26" transform="rotate(-9 420 500)"/><rect x="578" y="196" width="52" height="262" rx="26" transform="rotate(9 604 500)"/></g><g fill="#1c1c20"><circle cx="436" cy="618" r="32"/><circle cx="588" cy="618" r="32"/></g></svg>`;
+const FAVICON = `data:image/svg+xml,${encodeURIComponent(HOPP_MARK)}`;
