@@ -3,6 +3,7 @@
 // WebSockets. Speaks the same JSON messages as the self-hosted Rust server.
 
 import { DurableObject } from "cloudflare:workers";
+import { troubleMessage } from "./trouble";
 import type { Env } from "./index";
 import { inviteIndex } from "./invites";
 import { accountOf } from "./account";
@@ -170,6 +171,7 @@ export class StromServer extends DurableObject<Env> {
         id INTEGER PRIMARY KEY AUTOINCREMENT, channel INTEGER NOT NULL, sender INTEGER NOT NULL,
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
+      CREATE TABLE IF NOT EXISTS notified (key TEXT NOT NULL, channel INTEGER NOT NULL, PRIMARY KEY (key, channel));
     `);
     // Channel order and topics came later too.
     const channelColumns = new Set(this.sql.exec("PRAGMA table_info(channels)").toArray().map((c) => String(c.name)));
@@ -345,12 +347,16 @@ export class StromServer extends DurableObject<Env> {
       author_key: m.author_key,
       author_name: m.sender_name,
     };
-    // People in the server right now already have the message; their accounts only
-    // hear about mentions (for their other devices). That keeps busy servers cheap.
+    // Each call to an account counts against Cloudflare's free daily limit, so they're few:
+    // people in the server already have the message, and the author has read it. Everyone
+    // else hears once that a channel has news, until they next come in; mentions always.
     const here = new Set(this.members().map(([, s]) => s.key));
+    const told = new Set(this.sql.exec("SELECT key FROM notified WHERE channel = ?", m.channel).toArray().map((r) => String(r.key)));
     for (const key of keys) {
-      const mention = mentioned.has(key) && key !== m.author_key;
-      if (here.has(key) && !mention && key !== m.author_key) continue;
+      if (key === m.author_key) continue;
+      const mention = mentioned.has(key);
+      if (!mention && (here.has(key) || told.has(key))) continue;
+      if (!here.has(key)) this.sql.exec("INSERT OR IGNORE INTO notified (key, channel) VALUES (?, ?)", key, m.channel);
       const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview });
       this.ctx.waitUntil(call.catch(() => {}));
     }
@@ -399,7 +405,11 @@ export class StromServer extends DurableObject<Env> {
     const s = this.session(ws);
     if (s.stage === "hello") return this.onHello(ws, msg);
     if (s.stage === "auth") return this.onAuth(ws, s, msg);
-    if (s.stage === "joined") return await this.onMember(ws, s, msg);
+    try {
+      if (s.stage === "joined") return await this.onMember(ws, s, msg);
+    } catch (err) {
+      this.error(ws, troubleMessage(err));
+    }
   }
 
   private onHello(ws: WebSocket, msg: ClientMsg) {
@@ -451,6 +461,8 @@ export class StromServer extends DurableObject<Env> {
       if ([...serverName].length > MAX_SERVER_NAME_LEN) {
         return this.reject(ws, `Server names must be 1–${MAX_SERVER_NAME_LEN} characters.`);
       }
+      if (this.env.PAUSE_NEW === "1") return this.reject(ws, "New servers are paused right now. Try again in a while.");
+      if (!(await accountOf(this.env, key).allowNewServer())) return this.reject(ws, "You've created a lot of servers today. Try again tomorrow.");
       this.setMeta("name", serverName);
       this.setMeta("owner", key);
       this.setMeta("created_at", String(now));
@@ -497,6 +509,8 @@ export class StromServer extends DurableObject<Env> {
       key, name, now,
     );
 
+    // Back in the server: the next news in each channel reaches their account again.
+    this.sql.exec("DELETE FROM notified WHERE key = ?", key);
     const user: User = {
       session_id: crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff,
       name,
@@ -681,6 +695,7 @@ export class StromServer extends DurableObject<Env> {
       case "leave_server": {
         if (owner) return this.error(ws, "You own this server, so you can't leave it.");
         this.sql.exec("DELETE FROM accounts WHERE key = ?", s.key!);
+        this.sql.exec("DELETE FROM notified WHERE key = ?", s.key!);
         this.send(ws, { type: "left" });
         ws.serializeAttachment({ stage: "removed" } satisfies Session);
         this.broadcast({ type: "user_left", session_id: user.session_id }, ws);
@@ -810,7 +825,7 @@ export class StromServer extends DurableObject<Env> {
           }
         }
         // Without a name the server no longer exists: nobody can join it again.
-        for (const table of ["messages", "channels", "accounts", "invites", "bans", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
+        for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
         return;
       }
       case "revoke_invite": {

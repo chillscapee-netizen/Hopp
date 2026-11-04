@@ -334,17 +334,25 @@ test("server messages mark channels unread on every member's account, and mentio
   assert.equal(read.read_id, mention.last_id);
   assert.equal(read.mentions, 0);
 
-  // Your own messages count as read.
+  // Further news in that channel costs nothing until Alice has been back in the server.
+  member.send({ type: "send_chat", channel: general, text: "more chatter" });
+  await sleep(400);
+  account.inbox = account.inbox.filter((m) => m.type !== "channel_activity");
+  member.send({ type: "send_chat", channel: general, text: "and more" });
+  await sleep(400);
+  assert.ok(!account.inbox.some((m) => m.type === "channel_activity"), "no second notice before Alice comes back");
   const back = await joinServer(serverId, "alice", alice);
-  back.send({ type: "send_chat", channel: general, text: "my reply" });
-  const own = await account.waitFor((m) => m.type === "channel_read" && m.last_id > mention.last_id);
-  assert.equal(own.read_id, own.last_id);
+  back.close();
+  await sleep(200);
+  member.send({ type: "send_chat", channel: general, text: "after your visit" });
+  const fresh = await account.waitFor((m) => m.type === "channel_activity");
+  assert.equal(fresh.mention, false);
 
   // Pictures for people in servers: anyone's public profile by Hopp ID.
   const profile = await (await fetch(`${HTTP}/profiles/${alice.pub}`)).json();
   assert.equal(profile.key, alice.pub);
   assert.equal(profile.display_name, "Alice");
-  for (const d of [back, member, account, again]) d.close();
+  for (const d of [member, account, again]) d.close();
 });
 
 test("people in the server aren't sent unread marks, only mentions", async () => {
@@ -445,4 +453,19 @@ test("group conversations: create, send to everyone, rename, leave", async () =>
   const again = await Device.open(a.key, "A");
   assert.equal(again.welcome.groups[0].id, group.id);
   for (const d of [a.d, b.d, c.d, again]) d.close();
+});
+
+test("an account creates at most ten servers a day", async () => {
+  const key = newKey();
+  for (let i = 0; i < 10; i++) (await joinServer(crypto.randomBytes(12).toString("hex"), "maker", key, { create: "S" + i })).close();
+  const ws = new WebSocket(`${BASE}/servers/${crypto.randomBytes(12).toString("hex")}/ws`);
+  await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+  const c = new Device(ws);
+  c.send({ type: "hello", name: "maker", protocol_version: 5, public_key: key.pub, create: "one too many" });
+  const challenge = await c.next();
+  c.send({ type: "auth", signature: crypto.sign(null, authMessage(challenge.nonce), key.privateKey).toString("hex") });
+  const reply = await c.next();
+  c.close();
+  assert.equal(reply.type, "error");
+  assert.match(reply.message, /lot of servers today/);
 });

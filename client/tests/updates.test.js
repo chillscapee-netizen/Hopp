@@ -2,14 +2,14 @@
 
 (async () => {
   await inServer();
-  check("no arrow without an update", $("update-btn").hidden);
+  check("grey arrow without an update", !$("update-btn").hidden && !$("update-btn").classList.contains("ready"));
 
   updates.version = "0.2.1";
   let installed = 0;
   commands.check_update = () => ({ version: "0.2.2", notes: "• Cleaner logo\n• Update arrow" });
   commands.install_update = () => { installed++; return new Promise(() => {}); };
   await checkForUpdate();
-  check("arrow shows when an update is out", !$("update-btn").hidden);
+  check("arrow turns green when an update is out", $("update-btn").classList.contains("ready"));
 
   $("update-btn").click();
   const pop = document.querySelector(".update-pop");
@@ -32,8 +32,11 @@
   closeUpdatePop();
   commands.check_update = () => null;
   await checkForUpdate(true);
-  check("says you have the newest", $("version-sub").textContent === "You have the newest version." && $("update-btn").hidden);
+  check("says you have the newest", $("version-sub").textContent === "You have the newest version." && !$("update-btn").classList.contains("ready"));
   check("version shown", $("version-title").textContent === "Hopp 0.2.1");
+  $("update-btn").click();
+  check("grey arrow opens up to date and Check", document.querySelector(".update-pop")?.textContent.includes("newest version") && document.querySelector(".update-pop")?.textContent.includes("Check for updates"));
+  closeUpdatePop();
 
   commands.check_update = () => { throw "network down"; };
   await checkForUpdate(true);

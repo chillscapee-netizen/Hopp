@@ -16,6 +16,11 @@ export interface Env {
   DIRECTORY: DurableObjectNamespace<UserDirectory>;
   /** KLIPY API key for GIF search (`npx wrangler secret put KLIPY_KEY`); GIFs are off without it. */
   KLIPY_KEY?: string;
+  /**
+   * The emergency brake: "1" stops new accounts and new servers (everyone else carries on).
+   * Set it under the Worker's Settings → Variables in the Cloudflare dashboard.
+   */
+  PAUSE_NEW?: string;
 }
 
 /** Server ids are long and random, so they can't be guessed. */

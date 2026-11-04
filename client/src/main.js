@@ -248,11 +248,13 @@ function toast(text, isError) {
 /** Turns OS and protocol errors into something a person can act on. */
 function friendlyError(raw) {
   const s = String(raw);
+  // Hopp Cloud runs on a free plan with a daily limit; past it, Cloudflare turns requests away.
+  if (/\b(429|503|1027)\b|too many requests|exceeded|daily limit|overloaded/i.test(s)) return "Hopp Cloud is overloaded right now. It usually comes back within a few hours. Your messages and servers are safe.";
   if (/10061|refused/i.test(s)) return "The server isn't answering. Check that it's running and that the address is right.";
   if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check the address and that port 7777 is open.";
   if (/resolve|11001|no such host/i.test(s)) return "Couldn't find a server at that address.";
   if (/unknown message type/i.test(s)) return "This server doesn't have that yet. It needs an update from its owner.";
-  const versions = s.match(/protocol (d+), the app speaks (d+)/i);
+  const versions = s.match(/protocol (\d+), the app speaks (\d+)/i);
   if (versions) {
     return Number(versions[1]) > Number(versions[2])
       ? "This server needs a newer version of Hopp. Update the app to join it."
@@ -4420,7 +4422,7 @@ function friendsPanel() {
   const wrap = el("section", "friends");
   if (!state.accountConnected && !state.me) {
     const box = el("div", "friends-empty");
-    box.append(el("span", "spinner"), el("p", "", state.accountError ? "Can't reach your account right now. Trying again…" : "Connecting to your account…"));
+    box.append(el("span", "spinner"), el("p", "", state.accountError ? (/overloaded/.test(friendlyError(state.accountError)) ? friendlyError(state.accountError) : "Can't reach your account right now. Trying again…") : "Connecting to your account…"));
     wrap.append(box);
     return wrap;
   }
@@ -6852,8 +6854,10 @@ function setBar(bar, show) {
 function renderUpdates() {
   const installing = updates.status === "installing";
   const btn = $("update-btn");
-  btn.hidden = !updates.found;
-  btn.dataset.tip = updates.found ? `Hopp ${updates.found.version} is ready` : "";
+  // Always there: grey when Hopp is up to date, green when a newer one is ready.
+  btn.classList.toggle("ready", !!updates.found);
+  btn.setAttribute("aria-label", updates.found ? "Update available" : "Updates");
+  btn.dataset.tip = updates.found ? `Hopp ${updates.found.version} is ready` : `Hopp ${updates.version} · up to date`;
 
   $("version-title").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
   $("version-sub").textContent = installing
@@ -6878,6 +6882,7 @@ function renderUpdates() {
 }
 
 function fillUpdatePop(pop) {
+  if (!updates.found) return fillUpToDatePop(pop);
   const installing = updates.status === "installing";
   const head = el("div", "update-pop-head");
   const mark = el("span", "update-pop-mark");
@@ -7230,3 +7235,21 @@ $("jump-bar").addEventListener("click", () => {
     updateJumpBar();
   }, 700);
 });
+
+/** The grey arrow's popup: which Hopp you have, and a way to look for a newer one. */
+function fillUpToDatePop(pop) {
+  const head = el("div", "update-pop-head");
+  const mark = el("span", "update-pop-mark");
+  mark.append(icon("logo"));
+  const title = el("div", "update-pop-title");
+  const status = updates.status === "checking" ? "Looking for updates…" : updates.status === "failed" ? updates.error || "Couldn't check for updates." : "You have the newest version.";
+  title.append(el("strong", "", `Hopp ${updates.version || ""}`.trim()), el("span", "", status));
+  head.append(mark, title);
+  const actions = el("div", "update-pop-actions");
+  const checkBtn = el("button", "btn sm", "Check for updates");
+  checkBtn.type = "button";
+  checkBtn.disabled = updates.status === "checking";
+  checkBtn.addEventListener("click", () => checkForUpdate(true));
+  actions.append(checkBtn);
+  pop.replaceChildren(head, actions);
+}

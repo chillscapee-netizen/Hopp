@@ -50,6 +50,11 @@
   await wait(200);
   check("unknown and odd account messages are harmless", true);
 
+  // Errors read as plain words.
+  check("cloud over its limit says so", /overloaded/.test(friendlyError("HTTP error: 429 Too Many Requests")));
+  check("newer server asks for an update", /needs a newer version of Hopp/.test(friendlyError("The server speaks protocol 6, the app speaks 5.")));
+  check("older server asks its owner", /older version/.test(friendlyError("The server speaks protocol 4, the app speaks 5.")));
+
   // A server's icon can't sneak anything into an invite card's style.
   const evil = inviteCardView({ name: "x", icon: 'x"), url("https://evil.example/t.png', kicker: "k" }, false, "hopp://x");
   check("odd invite icon ignored", !evil.style.getPropertyValue("--invite-art") && !evil.classList.contains("has-art"));

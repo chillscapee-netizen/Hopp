@@ -7,10 +7,13 @@
 // request reaches someone even while they're offline.
 
 import { DurableObject } from "cloudflare:workers";
+import { troubleMessage } from "./trouble";
 import type { Env } from "./index";
 
 const ACCOUNT_PROTOCOL = 1;
 const MAX_DISPLAY_NAME = 32;
+/** New servers per account per day, so a script can't fill the cloud. */
+const MAX_NEW_SERVERS_PER_DAY = 10;
 const MAX_BIO = 190;
 const MAX_ACTIVITY = 80;
 /** Small pictures only: 128 px WebP is about 10 KB. */
@@ -276,7 +279,11 @@ export class StromAccount extends DurableObject<Env> {
     const s = this.session(ws);
     if (s.stage === "hello") return this.onHello(ws, msg);
     if (s.stage === "auth") return this.onAuth(ws, s, msg);
-    if (s.stage === "joined") return this.onMessage(ws, msg);
+    try {
+      if (s.stage === "joined") return await this.onMessage(ws, msg);
+    } catch (err) {
+      this.send(ws, { type: "error", message: troubleMessage(err), for: msg.type });
+    }
   }
 
   private onHello(ws: WebSocket, msg: Msg) {
@@ -307,6 +314,7 @@ export class StromAccount extends DurableObject<Env> {
 
     const wasOffline = this.devices().length === 0;
     if (!this.meta("key")) {
+      if (this.env.PAUSE_NEW === "1") return this.reject(ws, "Hopp isn't taking new accounts right now. Try again in a while.");
       this.setMeta("key", s.key!);
       this.setMeta("created_at", String(Date.now()));
     }
@@ -841,6 +849,16 @@ export class StromAccount extends DurableObject<Env> {
   }
 
   /** A server tells us about a new message in one of its channels. */
+  /** Counts a server this account creates; false once it has made too many today. */
+  async allowNewServer(): Promise<boolean> {
+    const day = new Date().toISOString().slice(0, 10);
+    const [d, n] = (this.meta("servers_today") ?? "").split(" ");
+    const count = d === day ? Number(n) : 0;
+    if (count >= MAX_NEW_SERVERS_PER_DAY) return false;
+    this.setMeta("servers_today", `${day} ${count + 1}`);
+    return true;
+  }
+
   async channelActivity(m: {
     server: string; server_name: string; channel: number; channel_name: string; id: number; at: number;
     author_key: string; author_name: string; mention: boolean; preview: string | null;
