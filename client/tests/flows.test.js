@@ -78,5 +78,16 @@
   await wait(250);
   const groupMsg = sent.find((m) => m.type === "group_send");
   check("group message sealed for each member", groupMsg && Object.keys(groupMsg.sealed).length === 3);
+
+  // A server deleted while we were away leaves the list with a clear word.
+  const gone = newServer("cloud:gone0001", "Old Gang");
+  gone.joined = true;
+  prefs.servers.push(gone);
+  const realConnect = commands.connect;
+  commands.connect = () => { throw "This server doesn't exist."; };
+  await connectTo(gone);
+  commands.connect = realConnect;
+  check("deleted server leaves the list", !prefs.servers.some((s) => s.address === "cloud:gone0001"));
+  check("says it was deleted", document.body.textContent.includes("Old Gang no longer exists"));
   report();
 })();

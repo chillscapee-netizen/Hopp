@@ -1490,6 +1490,12 @@ async function connectTo(server, create, reconnecting) {
       toast(`${server.label} was removed from your list: you're not a member. Ask for an invite to join.`);
       return false;
     }
+    // Deleted by its owner while we were away.
+    if (/this server doesn't exist/i.test(String(err)) && server.address.startsWith("cloud:")) {
+      removeServer(server);
+      toast(`${server.label} no longer exists. Its owner deleted it.`);
+      return false;
+    }
     state.notice = { kind: "error", server, text: String(err) };
     return false;
   } finally {
@@ -6722,7 +6728,7 @@ listen("server-deleted", () => {
   setTimeout(() => (state.justLeft = false), 3000);
   removeServer(server);
   if (mine) toast(`${server.label} was deleted.`);
-  else state.notice = { kind: "error", server: null, text: `${server.label} was deleted by its owner.` };
+  else toast(`${server.label} was deleted by its owner.`);
   renderAll();
 });
 
