@@ -2358,6 +2358,19 @@ function renderMessages(keepScrollUnlessAtBottom) {
     }
     const li = el("li", "msg " + (grouped ? "cont" : "first"));
     li.dataset.id = m.id;
+    if (isBlocked(m.author_key) && !state.shownBlocked.has(m.id)) {
+      const line = el("li", "msg blocked-msg");
+      const show = el("button", "link", "Show");
+      show.type = "button";
+      show.addEventListener("click", () => {
+        state.shownBlocked.add(m.id);
+        renderMessages(true);
+      });
+      line.append(icon("ban", "xs"), "Blocked message · ", show);
+      items.push(line);
+      prev = null;
+      continue;
+    }
     if (mentionsMeIn(m) && m.author_key !== state.account?.publicKey) li.classList.add("mentions-me");
     if (state.replyTo?.id === m.id) li.classList.add("replying");
     if (m.reply) li.append(replyLine(m.reply));
@@ -3773,7 +3786,7 @@ function placePopover(pop, x, y) {
 function applyUserVolumes() {
   if (!state.roster) return;
   for (const u of state.roster.users) {
-    const vol = prefs.userVolumes[u.name];
+    const vol = isBlocked(keyOf(u)) ? 0 : prefs.userVolumes[u.name];
     if (u.session_id === state.roster.me || vol === undefined) continue;
     if (state.appliedVolumes.get(u.session_id) !== vol) {
       state.appliedVolumes.set(u.session_id, vol);
@@ -4082,6 +4095,7 @@ listen("account", (e) => {
     case "friend": {
       const before = state.friends.get(m.friend.key);
       state.friends.set(m.friend.key, m.friend);
+      if ((before?.state === "blocked") !== (m.friend.state === "blocked")) blockChanged();
       if (before?.avatar !== m.friend.avatar) renderPictures();
       if (m.request) {
         toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
@@ -4096,6 +4110,10 @@ listen("account", (e) => {
       break;
     }
     case "friend_removed":
+      if (state.friends.get(m.key)?.state === "blocked") {
+        state.friends.delete(m.key);
+        blockChanged();
+      }
       state.friends.delete(m.key);
       break;
     case "presence": {
@@ -5157,6 +5175,7 @@ function renderUnread() {
 
 /** Someone mentioned you somewhere you aren't looking: a sound and a notification. */
 function notifyMention({ server, channel, author_key, author_name, channel_name, text, mention }) {
+  if (isBlocked(author_key)) return;
   const s = prefs.servers.find((x) => x.address === server);
   if (!s || state.me?.status === "dnd") return;
   const level = serverLevel(s);
@@ -6843,4 +6862,23 @@ function activeNowPanel() {
     }
   }
   return aside;
+}
+
+// ---------- blocking ----------
+
+state.shownBlocked = new Set();
+
+function isBlocked(key) {
+  return !!key && state.friends?.get(key)?.state === "blocked";
+}
+
+/** Someone was blocked or unblocked: their voice and messages change right away. */
+function blockChanged() {
+  state.appliedVolumes.clear();
+  // Unblocked people get their own volume back (or full volume).
+  for (const u of state.roster?.users ?? []) {
+    if (u.session_id !== state.roster.me && !isBlocked(keyOf(u)) && prefs.userVolumes[u.name] === undefined) call("set_user_volume", { sessionId: u.session_id, volume: 1 });
+  }
+  applyUserVolumes();
+  if (online()) renderMessages(true);
 }

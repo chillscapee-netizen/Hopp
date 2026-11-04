@@ -2709,3 +2709,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .active-row:hover { background: var(--hover); color: var(--text); }
 .active-status { margin-left: auto; color: var(--faint); font-size: 12px; }
 @media (max-width: 1150px) { .home-layout { grid-template-columns: minmax(0, 1fr); } .active-now { display: none; } }
+
+.blocked-msg { display: flex; align-items: center; gap: 6px; padding: 4px 48px 4px 72px; color: var(--faint); font-size: 13px; }
+.blocked-msg .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
+.blocked-msg .link:hover { text-decoration: underline; }
