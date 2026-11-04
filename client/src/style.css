@@ -2713,3 +2713,11 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .blocked-msg { display: flex; align-items: center; gap: 6px; padding: 4px 48px 4px 72px; color: var(--faint); font-size: 13px; }
 .blocked-msg .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
 .blocked-msg .link:hover { text-decoration: underline; }
+
+/* Room for your name in the user panel: a smaller avatar and slimmer buttons, like Discord. */
+.user-panel .me-card .avatar { width: 32px; height: 32px; font-size: 12px; }
+.user-panel .me-card { gap: 8px; padding: 0 4px 0 2px; }
+.panel-controls { gap: 0; }
+.split-main { width: 28px; }
+.split-more { width: 14px; }
+.panel-btn { width: 30px; }
