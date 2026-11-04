@@ -21,5 +21,17 @@
   useAccountData(other);
   check("old shared list isn't handed to anyone", !prefs.servers.some((s) => s.label === "Old shared"));
   check("old shared list is cleared", localStorage.getItem("servers") === null);
+
+  // Logging out: a change still waiting to sync goes up, and nothing is left for the next account.
+  useAccountData(ME);
+  await wait(100);
+  sent.length = 0;
+  syncState.ready = true;
+  syncState.saving = false; // the mock cloud never answers an earlier save
+  scheduleSync();
+  await logout();
+  check("pending sync sent before logging out", sent.some((m) => m.type === "set_sync"));
+  check("sync starts over for the next account", !syncState.ready && syncState.version === 0 && !syncState.dirty);
+  check("friends and servers gone after logout", state.friends.size === 0 && prefs.servers.length === 0);
   report();
 })();

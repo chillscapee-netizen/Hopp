@@ -49,5 +49,11 @@
   emit("account", { type: "dm", with: KEYS.kim, message: { id: "zz", from_key: KEYS.kim, sealed: "not-sealed", sent_at: Date.now() } });
   await wait(200);
   check("unknown and odd account messages are harmless", true);
+
+  // A server's icon can't sneak anything into an invite card's style.
+  const evil = inviteCardView({ name: "x", icon: 'x"), url("https://evil.example/t.png', kicker: "k" }, false, "hopp://x");
+  check("odd invite icon ignored", !evil.style.getPropertyValue("--invite-art") && !evil.classList.contains("has-art"));
+  const good = inviteCardView({ name: "x", icon: "data:image/webp;base64,UklGRg==", kicker: "k" }, false, "hopp://x");
+  check("real invite icon shown", good.classList.contains("has-art"));
   report();
 })();

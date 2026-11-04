@@ -687,6 +687,10 @@ async function logout() {
   state.attempt++;
   state.connectingId = null;
   if (state.call) await endCall();
+  // Changes still waiting to sync go up first; nothing carries over to the next account.
+  clearTimeout(syncState.timer);
+  if (syncState.dirty && syncState.ready) await pushSync();
+  Object.assign(syncState, { version: 0, saving: false, dirty: false, timer: null, ready: false });
   await call("logout");
   state.account = null;
   renderBackupState();
@@ -2465,8 +2469,10 @@ function inviteEmbed(link) {
 
 function inviteCardView(p, known, link) {
   const card = el("div", "invite-card");
-  if (p.icon) card.style.setProperty("--invite-art", `url("${p.icon}")`);
-  card.classList.toggle("has-art", !!p.icon);
+  // A server picks its own icon: only plain image data goes into the style.
+  const art = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(p.icon ?? "") ? p.icon : null;
+  if (art) card.style.setProperty("--invite-art", `url("${art}")`);
+  card.classList.toggle("has-art", !!art);
   card.append(el("div", "invite-card-kicker", p.kicker));
   const row = el("div", "invite-card-row");
   const pic = serverIcon("invite-card-icon server-tint", p.name ?? "?", p.icon);
