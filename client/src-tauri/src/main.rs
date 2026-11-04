@@ -469,6 +469,9 @@ async fn connect(
                 ServerMsg::Bans { bans } => {
                     let _ = ui.emit("bans", bans);
                 }
+                ServerMsg::Members { members } => {
+                    let _ = ui.emit("members", members);
+                }
                 ServerMsg::VoiceSession { channel, key, peers } => {
                     let (ui, channel, key, peers) = (ui.clone(), *channel, key.clone(), peers.clone());
                     let state = ui.state::<AppState>();
@@ -783,6 +786,21 @@ fn typing(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
 fn kick(state: State<'_, AppState>, session_id: SessionId, ban: bool) -> CmdResult {
     let msg = if ban { ClientMsg::Ban { session_id } } else { ClientMsg::Kick { session_id } };
     with_conn(&state, |c| c.control.send(msg))
+}
+
+#[tauri::command]
+fn set_role(state: State<'_, AppState>, public_key: String, role: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetRole { public_key, role }))
+}
+
+#[tauri::command]
+fn transfer_ownership(state: State<'_, AppState>, public_key: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::TransferOwnership { public_key }))
+}
+
+#[tauri::command]
+fn get_members(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::GetMembers))
 }
 
 #[tauri::command]
@@ -1269,6 +1287,9 @@ fn main() {
             autostart_enabled,
             check_update,
             install_update,
+            set_role,
+            transfer_ownership,
+            get_members,
             app_version,
             set_autostart,
             shell::window_compact,

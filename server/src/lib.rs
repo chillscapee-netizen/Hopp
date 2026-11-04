@@ -397,7 +397,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             let session_id = st.next_id;
             st.next_id += 1;
             let owner = st.config.owner.as_deref() == Some(public_key.as_str());
-            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone() };
+            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None };
             st.broadcast(&ServerMsg::UserJoined { user: user.clone() });
             let token = rand::random();
             let client = Client {
@@ -687,6 +687,9 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         error("That person isn't connected anymore.");
                     }
+                }
+                ClientMsg::SetRole { .. } | ClientMsg::TransferOwnership { .. } | ClientMsg::GetMembers => {
+                    error("Roles are only on Hopp Cloud servers.");
                 }
                 ClientMsg::DeleteServer => {
                     if is_owner {

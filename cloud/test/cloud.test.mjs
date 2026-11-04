@@ -502,3 +502,65 @@ test("the owner deletes a server for everyone", async () => {
   assert.equal((await fetch(`${HTTP}/invite/${invite}`)).status, 404);
   assert.match(await loginError(id, "owner", { key: owner.key }), /exist/i);
 });
+
+test("roles: moderators moderate, admins run the server, the owner names admins", async () => {
+  const { id, owner, invite } = await newServer();
+  const ann = await join(id, "ann", { invite });
+  const mo = await join(id, "mo", { invite });
+  const pat = await join(id, "pat", { invite });
+  const general = channelId(owner, "general");
+
+  // Nobody but staff can hand out roles.
+  pat.send({ type: "set_role", public_key: mo.key.pub, role: "mod" });
+  assert.match(await errorOf(pat), /admins/);
+
+  owner.send({ type: "set_role", public_key: ann.key.pub, role: "admin" });
+  const annUpdate = await pat.waitFor((m) => m.type === "user_updated" && m.user.public_key === ann.key.pub);
+  assert.equal(annUpdate.user.role, "admin");
+  const list = await owner.waitFor((m) => m.type === "members");
+  assert.equal(list.members.find((m) => m.public_key === ann.key.pub).role, "admin");
+  assert.equal(list.members.find((m) => m.public_key === owner.key.pub).role, "owner");
+
+  // An admin names a moderator but can't make admins.
+  ann.send({ type: "set_role", public_key: mo.key.pub, role: "admin" });
+  assert.match(await errorOf(ann), /owner/);
+  ann.send({ type: "set_role", public_key: mo.key.pub, role: "mod" });
+  await pat.waitFor((m) => m.type === "user_updated" && m.user.public_key === mo.key.pub && m.user.role === "mod");
+
+  // A moderator deletes a member's message and pins, but can't manage channels or ban.
+  pat.send({ type: "send_chat", channel: general, text: "spam" });
+  const spam = (await mo.waitFor((m) => m.type === "chat" && m.message.text === "spam")).message;
+  mo.send({ type: "delete_message", channel: general, id: spam.id });
+  await pat.waitFor((m) => m.type === "message_deleted" && m.id === spam.id);
+  mo.send({ type: "create_channel", name: "nope", kind: "text" });
+  assert.match(await errorOf(mo), /admins/);
+  mo.send({ type: "ban", session_id: pat.id });
+  assert.match(await errorOf(mo), /admins/);
+
+  // Nobody acts on someone of the same rank or above.
+  ann.send({ type: "send_chat", channel: general, text: "admin talk" });
+  const adminMsg = (await mo.waitFor((m) => m.type === "chat" && m.message.text === "admin talk")).message;
+  mo.send({ type: "delete_message", channel: general, id: adminMsg.id });
+  assert.match(await errorOf(mo), /own messages/);
+  mo.send({ type: "kick", session_id: ann.id });
+  assert.match(await errorOf(mo), /same role/);
+
+  // A moderator kicks a member; an admin creates a channel.
+  mo.send({ type: "kick", session_id: pat.id });
+  await pat.waitFor((m) => m.type === "kicked");
+  ann.send({ type: "create_channel", name: "staff", kind: "text" });
+  await ann.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "staff"));
+
+  // Roles survive a reconnect.
+  mo.close();
+  const again = await join(id, "mo", { key: mo.key });
+  assert.equal(again.welcome.users.find((u) => u.public_key === mo.key.pub).role, "mod");
+
+  // Handing over the server: the old owner stays as an admin.
+  owner.send({ type: "transfer_ownership", public_key: ann.key.pub });
+  await again.waitFor((m) => m.type === "user_updated" && m.user.public_key === ann.key.pub && m.user.role === "owner" && m.user.owner);
+  await again.waitFor((m) => m.type === "user_updated" && m.user.public_key === owner.key.pub && m.user.role === "admin" && !m.user.owner);
+  owner.send({ type: "delete_server" });
+  assert.match(await errorOf(owner), /owner/);
+  for (const c of [owner, ann, again]) c.close();
+});

@@ -70,7 +70,13 @@ interface User {
   deafened: boolean;
   owner: boolean;
   public_key: string;
+  role?: Role;
 }
+/** Who may do what: the owner names admins, admins name moderators. */
+type Role = "owner" | "admin" | "mod";
+const RANK: Record<string, number> = { owner: 3, admin: 2, mod: 1 };
+const rank = (role: Role | null | undefined) => (role ? RANK[role] : 0);
+interface Member { public_key: string; name: string; role: Role | null; joined_at: number }
 interface Reply { id: number; sender_name: string; author_key: string; text: string }
 interface Reaction { emoji: string; keys: string[] }
 interface ChatMessage {
@@ -170,6 +176,8 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("position")) this.sql.exec("ALTER TABLE channels ADD COLUMN position INTEGER");
     if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
     if (!channelColumns.has("category")) this.sql.exec("ALTER TABLE channels ADD COLUMN category TEXT");
+    const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
+    if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
     if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
@@ -232,6 +240,41 @@ export class StromServer extends DurableObject<Env> {
     const all = this.sql.exec("SELECT * FROM invites ORDER BY created_at").toArray() as unknown as Invite[];
     for (const dead of all.filter((i) => !inviteUsable(i, now))) this.sql.exec("DELETE FROM invites WHERE code = ?", dead.code);
     return all.filter((i) => inviteUsable(i, now));
+  }
+
+  /** Someone's role here; the owner is kept in meta, everyone else in accounts. */
+  private roleOf(key: string): Role | null {
+    if (this.meta("owner") === key) return "owner";
+    const r = this.sql.exec("SELECT role FROM accounts WHERE key = ?", key).toArray()[0]?.role;
+    return r === "admin" || r === "mod" ? r : null;
+  }
+
+  private memberList(): Member[] {
+    const owner = this.meta("owner");
+    return this.sql
+      .exec("SELECT key, name, role, created_at FROM accounts ORDER BY lower(name)")
+      .toArray()
+      .map((r) => ({
+        public_key: String(r.key),
+        name: String(r.name),
+        role: r.key === owner ? "owner" : r.role === "admin" || r.role === "mod" ? (r.role as Role) : null,
+        joined_at: Number(r.created_at),
+      }));
+  }
+
+  /** A role changed: everyone online sees it at once, and staff get the new list. */
+  private rolesChanged() {
+    for (const [mws, m] of this.members()) {
+      const role = this.roleOf(m.key!);
+      if (m.user!.role !== (role ?? undefined)) {
+        this.updateUser(mws, m, (u) => {
+          u.owner = role === "owner";
+          if (role) u.role = role;
+          else delete u.role;
+        });
+      }
+      if (rank(role) >= RANK.admin) this.send(mws, { type: "members", members: this.memberList() });
+    }
   }
 
   private bans(): Ban[] {
@@ -463,6 +506,8 @@ export class StromServer extends DurableObject<Env> {
       owner: isOwner,
       public_key: key,
     };
+    const role = this.roleOf(key);
+    if (role) user.role = role;
     const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now };
     this.broadcast({ type: "user_joined", user });
     ws.serializeAttachment(joined);
@@ -486,9 +531,17 @@ export class StromServer extends DurableObject<Env> {
   private async onMember(ws: WebSocket, s: Session, msg: ClientMsg) {
     const user = s.user!;
     const owner = user.owner;
+    const myRole = this.roleOf(s.key!);
+    const myRank = rank(myRole);
     const ownerOnly = () => {
       if (!owner) this.error(ws, "Only the server owner can do that.");
       return owner;
+    };
+    /** At least this role, or a polite no. */
+    const allowed = (min: Role) => {
+      if (myRank >= RANK[min]) return true;
+      this.error(ws, min === "admin" ? "Only admins and the owner can do that." : "Only moderators, admins and the owner can do that.");
+      return false;
     };
 
     switch (msg.type) {
@@ -606,7 +659,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "reactions", channel, id, reactions });
       }
       case "pin": {
-        if (!ownerOnly()) return;
+        if (!allowed("mod")) return;
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         if (!this.message(channel, id)) return this.error(ws, "That message no longer exists.");
@@ -639,7 +692,9 @@ export class StromServer extends DurableObject<Env> {
         const id = Number(msg.id);
         const row = this.sql.exec("SELECT author_key FROM messages WHERE channel = ? AND id = ?", channel, id).toArray()[0];
         if (!row) return this.error(ws, "That message no longer exists.");
-        if (row.author_key !== s.key && !owner) return this.error(ws, "You can only delete your own messages.");
+        if (row.author_key !== s.key && (myRank < RANK.mod || (!owner && rank(this.roleOf(String(row.author_key))) >= myRank))) {
+          return this.error(ws, "You can only delete your own messages.");
+        }
         this.sql.exec("DELETE FROM messages WHERE id = ?", id);
         return this.broadcast({ type: "message_deleted", channel, id });
       }
@@ -651,7 +706,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "typing", channel: Number(msg.channel), session_id: user.session_id }, ws);
       }
       case "create_channel": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const kind: ChannelKind = msg.kind === "voice" ? "voice" : "text";
         const name = normalizeChannelName(msg.name, kind);
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
@@ -660,7 +715,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "update_channel": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const ch = this.channel(Number(msg.channel));
         if (!ch) return this.error(ws, "That channel doesn't exist.");
         const name = normalizeChannelName(msg.name, ch.kind);
@@ -673,7 +728,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "reorder_channels": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const order = Array.isArray(msg.order) ? msg.order.map(Number) : [];
         const ids = this.channels().map((c) => c.id);
         if (order.length !== ids.length || [...order].sort((a, b) => a - b).join() !== [...ids].sort((a, b) => a - b).join()) {
@@ -683,7 +738,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "delete_channel": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const id = Number(msg.channel);
         if (!this.channel(id)) return this.error(ws, "That channel doesn't exist.");
         this.sql.exec("DELETE FROM channels WHERE id = ?", id);
@@ -695,13 +750,14 @@ export class StromServer extends DurableObject<Env> {
       }
       case "kick":
       case "ban": {
-        if (!ownerOnly()) return;
+        const banned = msg.type === "ban";
+        if (!allowed(banned ? "admin" : "mod")) return;
         const target = Number(msg.session_id);
         if (target === user.session_id) return this.error(ws, "You can't remove yourself.");
         const victim = this.members().find(([, m]) => m.user!.session_id === target);
         if (!victim) return this.error(ws, "That person isn't connected anymore.");
         const [vws, vs] = victim;
-        const banned = msg.type === "ban";
+        if (rank(this.roleOf(vs.key!)) >= myRank) return this.error(ws, `You can't ${banned ? "ban" : "kick"} someone with the same role as you or higher.`);
         if (banned) {
           this.sql.exec(
             "INSERT INTO bans (key, name, banned_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING",
@@ -715,11 +771,11 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "user_left", session_id: target });
       }
       case "unban":
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         this.sql.exec("DELETE FROM bans WHERE key = ?", String(msg.public_key ?? ""));
         return this.send(ws, { type: "bans", bans: this.bans() });
       case "create_invite": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const now = Date.now();
         const hours = msg.expires_in_hours == null ? null : Math.max(1, Number(msg.expires_in_hours));
         const maxUses = msg.max_uses == null ? null : Math.max(1, Number(msg.max_uses));
@@ -758,14 +814,14 @@ export class StromServer extends DurableObject<Env> {
         return;
       }
       case "revoke_invite": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const code = String(msg.code ?? "");
         this.sql.exec("DELETE FROM invites WHERE code = ?", code);
         await inviteIndex(this.env).remove(code);
         return this.send(ws, { type: "invites", invites: this.invites() });
       }
       case "update_server": {
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         const name = String(msg.name ?? "").trim();
         const icon = msg.icon == null ? null : String(msg.icon);
         if (!name || [...name].length > MAX_SERVER_NAME_LEN) {
@@ -778,9 +834,42 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "server_updated", name, icon });
       }
       case "get_server_settings":
-        if (!ownerOnly()) return;
+        if (!allowed("admin")) return;
         this.send(ws, { type: "invites", invites: this.invites() });
+        this.send(ws, { type: "members", members: this.memberList() });
         return this.send(ws, { type: "bans", bans: this.bans() });
+      case "get_members":
+        if (!allowed("admin")) return;
+        return this.send(ws, { type: "members", members: this.memberList() });
+      case "set_role": {
+        if (!allowed("admin")) return;
+        const key = String(msg.public_key ?? "");
+        const role: Role | null = msg.role === "admin" || msg.role === "mod" ? msg.role : null;
+        if (msg.role != null && role === null) return this.error(ws, "Unknown role.");
+        if (key === s.key) return this.error(ws, "You can't change your own role.");
+        const target = this.memberList().find((m) => m.public_key === key);
+        if (!target) return this.error(ws, "They're not a member of this server anymore.");
+        if (target.role === "owner") return this.error(ws, "The owner's role can't be changed.");
+        // Admins handle moderators; only the owner names or removes admins.
+        if (!owner && (role === "admin" || rank(target.role) >= myRank)) return this.error(ws, "Only the owner can name or remove admins.");
+        this.sql.exec("UPDATE accounts SET role = ? WHERE key = ?", role, key);
+        this.rolesChanged();
+        return;
+      }
+      case "transfer_ownership": {
+        if (!ownerOnly()) return;
+        const key = String(msg.public_key ?? "");
+        if (key === s.key) return this.error(ws, "You already own this server.");
+        const target = this.memberList().find((m) => m.public_key === key);
+        if (!target) return this.error(ws, "They're not a member of this server anymore.");
+        if (this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length) return this.error(ws, "That person is banned.");
+        this.setMeta("owner", key);
+        // The old owner stays on as an admin.
+        this.sql.exec("UPDATE accounts SET role = 'admin' WHERE key = ?", s.key!);
+        this.sql.exec("UPDATE accounts SET role = NULL WHERE key = ?", key);
+        this.rolesChanged();
+        return;
+      }
       case "ping":
         return this.send(ws, { type: "pong" });
       case "set_loopback":

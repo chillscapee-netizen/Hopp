@@ -55,6 +55,9 @@ pub struct User {
     /// Hex Ed25519 key of their Hopp ID, so mentions (`<@key>`) can name them.
     #[serde(default)]
     pub public_key: String,
+    /// "owner", "admin" or "mod" on cloud servers; `None` for everyone else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 /// What a client signs to prove it holds the private key for its identity.
@@ -96,6 +99,17 @@ pub struct Ban {
     pub public_key: String,
     pub name: String,
     pub banned_at: u64,
+}
+
+/// Someone who belongs to a server, online or not.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub public_key: String,
+    pub name: String,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub joined_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -262,6 +276,13 @@ pub enum ClientMsg {
     LeaveServer,
     /// Owner only: deletes the server, its channels, messages and invites, for everyone.
     DeleteServer,
+    /// Cloud servers: "admin" or "mod", or `None` for a plain member. The owner names
+    /// admins; admins name moderators.
+    SetRole { public_key: String, role: Option<String> },
+    /// Owner only: hands the server to another member; the old owner stays as an admin.
+    TransferOwnership { public_key: String },
+    /// Admins: answered with `Members`.
+    GetMembers,
     Ping,
 }
 
@@ -320,6 +341,7 @@ pub enum ServerMsg {
     InviteCreated { invite: Invite },
     Invites { invites: Vec<Invite> },
     Bans { bans: Vec<Ban> },
+    Members { members: Vec<Member> },
     Error { message: String },
     Pong,
 }
