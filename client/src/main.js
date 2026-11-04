@@ -2543,7 +2543,12 @@ function renderHome() {
 
   renderFriendTabs();
   sections.push(friendsPanel());
-  body.replaceChildren(...sections);
+  // The friends page with "Active now" beside it, like Discord.
+  const main = el("div", "home-main");
+  main.append(...sections);
+  const layout = el("div", "home-layout");
+  layout.append(main, activeNowPanel());
+  body.replaceChildren(layout);
 }
 
 // ---------- add a server ----------
@@ -6786,4 +6791,56 @@ function gettingStarted() {
   share.append("Friends don't have Hopp yet? ", copy);
   box.append(share);
   return box;
+}
+
+// ---------- active now ----------
+
+/** Who is around: friends in voice first, then everyone online. */
+function activeNowPanel() {
+  const aside = el("aside", "active-now");
+  aside.append(el("h3", "", "Active now"));
+  const online = [...(state.friends?.values() ?? [])].filter((f) => f.state === "friend" && f.status !== "offline");
+  const busy = online.filter((f) => f.activity);
+  const rest = online.filter((f) => !f.activity);
+  if (!online.length) {
+    const empty = el("div", "active-empty");
+    empty.append(el("strong", "", "It's quiet for now…"), el("p", "", "When friends are online or hop into voice, you'll see them here."));
+    aside.append(empty);
+    return aside;
+  }
+  for (const f of busy) {
+    const card = el("div", "active-card");
+    const top = el("div", "active-top");
+    const text = el("div", "active-text");
+    text.append(el("strong", "ellipsis", f.display_name));
+    const what = el("span", "active-what ellipsis");
+    what.append(icon("headphones", "xs"), f.activity);
+    text.append(what);
+    top.append(personAvatar(f, "s40", true), text);
+    const actions = el("div", "active-actions");
+    const message = el("button", "btn sm", "Message");
+    message.type = "button";
+    message.addEventListener("click", () => openDm(f.key));
+    const callBtn = el("button", "btn sm", "Call");
+    callBtn.type = "button";
+    callBtn.addEventListener("click", () => {
+      openDm(f.key);
+      startCall(f.key);
+    });
+    actions.append(message, callBtn);
+    card.append(top, actions);
+    aside.append(card);
+  }
+  if (rest.length) {
+    aside.append(el("div", "active-label", `Online — ${rest.length}`));
+    for (const f of rest.sort((a, b) => a.display_name.localeCompare(b.display_name))) {
+      const row = el("button", "active-row");
+      row.type = "button";
+      row.append(personAvatar(f, "s24", true), el("span", "ellipsis", f.display_name));
+      if (f.status === "idle" || f.status === "dnd") row.append(el("span", "active-status", STATUS_LABEL[f.status]));
+      row.addEventListener("click", () => openDm(f.key));
+      aside.append(row);
+    }
+  }
+  return aside;
 }
