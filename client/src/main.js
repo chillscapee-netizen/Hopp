@@ -5133,11 +5133,12 @@ function railBadge(item, n) {
 
 var unreadFrame = 0;
 function renderUnread() {
-  cancelAnimationFrame(unreadFrame);
-  unreadFrame = requestAnimationFrame(() => {
+  // A timer, not a frame callback: frames pause while Hopp is hidden in the tray.
+  clearTimeout(unreadFrame);
+  unreadFrame = setTimeout(() => {
     renderRail();
     renderSidebar();
-  });
+  }, 16);
 }
 
 /** Someone mentioned you somewhere you aren't looking: a sound and a notification. */
