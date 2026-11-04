@@ -1,0 +1,49 @@
+// Runs the page tests in headless Edge: each *.test.js in this folder runs on its
+// own copy of the app's page, with mock.js standing in for Tauri.
+//
+//   node client/tests/run.mjs            all tests
+//   node client/tests/run.mjs smoke      tests whose name contains "smoke"
+
+import { execFileSync } from "node:child_process";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const here = fileURLToPath(new URL(".", import.meta.url));
+const src = join(here, "..", "src");
+const work = join(tmpdir(), "hopp-page-tests");
+const edge = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe"].find((p) => {
+  try {
+    readFileSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+});
+if (!edge) throw new Error("Microsoft Edge not found");
+
+mkdirSync(work, { recursive: true });
+cpSync(src, work, { recursive: true });
+copyFileSync(join(here, "mock.js"), join(work, "mock.js"));
+const page = readFileSync(join(src, "index.html"), "utf8");
+
+const filter = process.argv[2] ?? "";
+const tests = readdirSync(here).filter((f) => f.endsWith(".test.js") && f.includes(filter));
+let failed = 0;
+for (const test of tests) {
+  copyFileSync(join(here, test), join(work, test));
+  const html = page.replace('<script src="main.js"></script>', `<script src="mock.js"></script><script src="main.js"></script><script src="${test}"></script>`);
+  const file = join(work, test.replace(".test.js", ".html"));
+  writeFileSync(file, html);
+  const dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, "--window-size=1280,800", "--virtual-time-budget=30000", "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  const m = dom.match(/<pre id="test-results">([\s\S]*?)<\/pre>/);
+  const lines = m ? m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").split("\n") : ["FAIL the test never reported (it crashed or took too long)"];
+  console.log(`\n${test}`);
+  for (const line of lines) {
+    console.log("  " + line);
+    if (line.startsWith("FAIL")) failed++;
+  }
+}
+console.log(failed ? `\n${failed} failed` : "\nall passed");
+process.exit(failed ? 1 : 0);
