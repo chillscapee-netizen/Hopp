@@ -1396,6 +1396,7 @@ function openServerMenu(server, x, y) {
         ? { label: "Disconnect", icon: "logout", action: disconnect }
         : { label: "Connect", icon: "link", action: () => connectTo(server) },
       ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
+      ...(serverHasUnread(server.address) ? [{ label: "Mark as read", icon: "check", action: () => markServerRead(server.address) }] : []),
       "sep",
       { heading: "Notifications" },
       ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
@@ -2014,6 +2015,9 @@ function openChannelMenu(ch, e) {
   const muted = channelMuted(address, ch.id);
   openMenu(
     [
+      ...(ch.kind === "text" && (channelUnread(address, ch.id) || channelMentions(address, ch.id))
+        ? [{ label: "Mark as read", icon: "check", action: () => markChannelRead(address, ch.id) }]
+        : []),
       ...(ch.kind === "text" ? [{ label: muted ? "Unmute channel" : "Mute channel", icon: "bell", action: () => setChannelMuted(address, ch.id, !muted) }] : []),
       ...(can("manage")
         ? [
@@ -2464,6 +2468,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   for (const o of state.outbox.filter((x) => x.channel === state.view)) items.push(outboxItem(o));
   $("messages").replaceChildren(...items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
+  updateJumpBar();
   markViewedRead();
 }
 
@@ -5773,6 +5778,7 @@ function loadOlder() {
 
 $("scroller").addEventListener("scroll", () => {
   if ($("scroller").scrollTop < 400) loadOlder();
+  updateJumpBar();
 });
 
 // ---------- sending: pending, failed, retry ----------
@@ -7172,3 +7178,55 @@ function renderMemberList() {
   );
 }
 $("member-search").addEventListener("input", renderMemberList);
+
+// ---------- mark as read ----------
+
+function serverHasUnread(address) {
+  for (const r of state.reads.values()) if (r.server === address && (r.last_id > r.read_id || r.mentions)) return true;
+  return false;
+}
+
+function markChannelRead(address, channel) {
+  const r = state.reads.get(readKey(address, channel));
+  if (r) setRead(address, channel, r.last_id);
+  renderUnread();
+}
+
+function markServerRead(address) {
+  for (const r of [...state.reads.values()]) if (r.server === address) setRead(address, r.channel, r.last_id);
+  renderUnread();
+}
+
+// ---------- jump to present ----------
+//
+// Scrolled up to read older messages: a bar offers the way back down and counts
+// what arrived meanwhile.
+
+var jumpSeen = { channel: null, id: 0 };
+
+function updateJumpBar() {
+  const scroller = $("scroller");
+  const bar = $("jump-bar");
+  const away = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 400;
+  const msgs = state.chats.get(state.view) ?? [];
+  if (!away || !online()) {
+    bar.hidden = true;
+    jumpSeen = { channel: state.view, id: msgs.at(-1)?.id ?? 0 };
+    return;
+  }
+  if (jumpSeen.channel !== state.view) jumpSeen = { channel: state.view, id: msgs.at(-1)?.id ?? 0 };
+  const fresh = msgs.filter((m) => m.id > jumpSeen.id && m.author_key !== state.account?.publicKey).length;
+  $("jump-text").textContent = fresh ? `${fresh} new ${fresh === 1 ? "message" : "messages"}` : "You're viewing older messages";
+  bar.classList.toggle("fresh", fresh > 0);
+  bar.hidden = false;
+}
+
+$("jump-bar").addEventListener("click", () => {
+  const scroller = $("scroller");
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  // Messages may land meanwhile: end up at the very bottom either way.
+  setTimeout(() => {
+    scroller.scrollTop = scroller.scrollHeight;
+    updateJumpBar();
+  }, 700);
+});

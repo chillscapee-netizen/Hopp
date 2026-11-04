@@ -2771,3 +2771,26 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .role-select { width: 140px; }
 .role-label { min-width: 130px; padding: 0 10px; color: var(--muted); font-size: 13px; text-align: right; }
 .role-label.owner { color: var(--yellow); font-weight: 600; }
+
+/* ---------- jump to present ---------- */
+.chat { position: relative; }
+.jump-bar {
+  position: absolute; left: 50%; bottom: 84px; z-index: 5;
+  display: flex; align-items: center; gap: 14px;
+  padding: 7px 8px 7px 14px;
+  transform: translateX(-50%);
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  color: var(--text-2);
+  font: inherit; font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  animation: pop-in 140ms ease-out;
+}
+.jump-bar[hidden] { display: none; }
+.jump-bar.fresh #jump-text { color: var(--text); font-weight: 600; }
+.jump-go { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--elev-2); border-radius: 999px; color: var(--text); font-weight: 600; }
+
+.jump-bar:hover .jump-go { filter: brightness(1.15); }
