@@ -1087,6 +1087,10 @@ async fn list_devices(state: State<'_, AppState>, fresh: Option<bool>) -> CmdRes
 async fn set_devices(state: State<'_, AppState>, input: Option<String>, output: Option<String>) -> CmdResult {
     let choice = DeviceChoice { input, output };
     *state.devices.lock().unwrap() = choice.clone();
+    // A call has its own engine: it follows the new devices too.
+    if let Some(call) = state.call.lock().unwrap().as_mut() {
+        call.engine.set_devices(&choice).map_err(|e| format!("audio: {e:#}"))?;
+    }
     match state.conn.lock().unwrap().as_mut().and_then(|c| c.engine.as_mut()) {
         Some(engine) => engine.set_devices(&choice).map_err(|e| format!("audio: {e:#}")),
         None => Ok(()),

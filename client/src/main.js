@@ -6542,6 +6542,9 @@ listen("call-voice", (e) => {
   } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
     playSound("muted");
     toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "devices_changed") {
+    // A headset unplugged mid-call: carry on with what's there.
+    devicesChanged();
   } else if (ev.type === "peer_reach" && state.call) {
     state.call.unreachable = !ev.reachable;
     if (!ev.reachable) toast(`Can't connect to ${personFor(state.call.peer).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
