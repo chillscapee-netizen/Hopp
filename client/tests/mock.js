@@ -8,9 +8,12 @@ const KEYS = { elin: "e".repeat(64), jonas: "b".repeat(64), sara: "c".repeat(64)
 const now = Date.now();
 const ago = (minutes) => now - minutes * 60_000;
 
+/** ?empty: a brand-new account with no servers and no friends. */
+const EMPTY = new URLSearchParams(location.search).has("empty");
+
 try {
   localStorage.clear();
-  localStorage.setItem(
+  if (!EMPTY) localStorage.setItem(
     "servers@" + ME.slice(0, 16),
     JSON.stringify([
       { id: "a", address: "cloud:crew0001", label: "The Crew", customLabel: false, joined: true },
@@ -92,8 +95,8 @@ const commands = {
         type: "welcome",
         me: { key: ME, username: "marcus", display_name: "Marcus", avatar: null, bio: "", status: "online", privacy: "everyone" },
         sync: { data: null, version: 0 },
-        friends,
-        conversations: [{ peer: KEYS.elin, last_at: ago(14), last_read: ago(20) }],
+        friends: EMPTY ? [] : friends,
+        conversations: EMPTY ? [] : [{ peer: KEYS.elin, last_at: ago(14), last_read: ago(20) }],
         channels: [],
         groups: [],
       });

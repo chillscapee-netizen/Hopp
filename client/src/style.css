@@ -2667,3 +2667,19 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .msg-head { min-width: 0; }
 .msg-author { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-time { flex: none; }
+
+/* ---------- getting started ---------- */
+.getting-started { max-width: 860px; margin: 40px auto; padding: 0 24px; text-align: center; }
+.getting-started h2 { margin: 0 0 6px; font-size: 26px; }
+.gs-sub { margin: 0 0 28px; color: var(--muted); font-size: 15px; }
+.gs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; text-align: left; }
+.gs-card { display: flex; flex-direction: column; gap: 8px; padding: 20px; background: var(--side); border: 1px solid var(--border); border-radius: 14px; }
+.gs-card strong { font-size: 16px; }
+.gs-card p { flex: 1; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.gs-card .btn { align-self: flex-start; margin-top: 6px; }
+.gs-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 4px; border-radius: 12px; background: var(--elev); color: var(--text-2); }
+.gs-icon .i { width: 20px; height: 20px; }
+.gs-handle { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 4px 10px; background: var(--deep); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.gs-handle:hover { border-color: var(--border-active); }
+.sidebar-empty .link { padding: 0; background: none; border: none; color: var(--link); font: inherit; cursor: pointer; }
+.sidebar-empty .link:hover { text-decoration: underline; }

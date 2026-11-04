@@ -1874,7 +1874,12 @@ function renderSidebar() {
     });
     const cat = el("div", "category");
     cat.append(el("span", "", "Your servers"));
-    body.replaceChildren(friends, ...dmSidebarRows(), cat, ...(rows.length ? rows : [el("div", "sidebar-empty", "No servers yet.")]));
+    const noServers = el("div", "sidebar-empty");
+    const addOne = el("button", "link", "Create or join one");
+    addOne.type = "button";
+    addOne.addEventListener("click", () => openAddDialog("choose"));
+    noServers.append("No servers yet. ", addOne);
+    body.replaceChildren(friends, ...dmSidebarRows(), cat, ...(rows.length ? rows : [noServers]));
     return;
   }
 
@@ -4336,6 +4341,10 @@ function friendsPanel() {
     wrap.append(addFriendPanel());
     return wrap;
   }
+  if (state.friendTab === "online" && state.friends.size === 0 && prefs.servers.length === 0) {
+    wrap.append(gettingStarted());
+    return wrap;
+  }
   const rows = friendRows(state.friendTab);
   const label = { online: "Online", all: "All friends", pending: "Pending", blocked: "Blocked" }[state.friendTab];
   wrap.append(el("h3", "friends-count", `${label} — ${rows.length}`));
@@ -6730,4 +6739,44 @@ setInterval(checkForUpdate, 4 * 3600 * 1000);
 function isInviteOnly(text) {
   const t = text.trim();
   return !/\s/.test(t) && inviteTarget(t) !== null;
+}
+
+// ---------- getting started (a brand-new account) ----------
+
+function gettingStarted() {
+  const box = el("div", "getting-started");
+  const name = state.me?.display_name || state.account?.name || "";
+  box.append(el("h2", "", `Welcome to Hopp${name ? `, ${name}` : ""}!`), el("p", "gs-sub", "Hopp is better with friends. Here's how to get going."));
+  const card = (iconName, title, text, action, onClick, extra) => {
+    const c = el("div", "gs-card");
+    const ic = el("span", "gs-icon");
+    ic.append(icon(iconName));
+    c.append(ic, el("strong", "", title), el("p", "", text));
+    if (extra) c.append(extra);
+    const b = el("button", "btn sm primary", action);
+    b.type = "button";
+    b.addEventListener("click", onClick);
+    c.append(b);
+    return c;
+  };
+  // Your username, to send to friends.
+  let handle = null;
+  if (state.me?.username) {
+    handle = el("button", "gs-handle");
+    handle.type = "button";
+    handle.dataset.tip = "Copy";
+    handle.append(el("span", "", `@${state.me.username}`), icon("link", "xs"));
+    handle.addEventListener("click", () => navigator.clipboard.writeText(state.me.username).then(() => toast("Username copied. Send it to a friend so they can add you.")));
+  }
+  const grid = el("div", "gs-grid");
+  grid.append(
+    card("user-plus", "Add a friend", "Friends add each other by username. Share yours:", "Add friend", () => {
+      state.friendTab = "add";
+      renderHome();
+    }, handle),
+    card("plus", "Create a server", "A place for your group, with text and voice channels.", "Create server", () => openAddDialog("create")),
+    card("link", "Join a server", "Got an invite link from someone? Paste it here.", "Join with invite", () => openAddDialog("join")),
+  );
+  box.append(grid);
+  return box;
 }
