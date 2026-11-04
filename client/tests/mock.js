@@ -152,7 +152,8 @@ function check(name, ok, detail = "") {
 async function inServer() {
   for (let i = 0; i < 60 && !document.querySelector("#server-list .rail-item"); i++) await wait(100);
   document.querySelector("#server-list .rail-item")?.click();
-  for (let i = 0; i < 60 && !document.querySelector("#messages .msg"); i++) await wait(100);
+  // The channel history has arrived (live messages before it would be replaced).
+  for (let i = 0; i < 80 && !(state.chats.get(0)?.length >= 5 && document.querySelector("#messages .msg")); i++) await wait(100);
 }
 
 /** Puts the results on the page, where the runner reads them. */

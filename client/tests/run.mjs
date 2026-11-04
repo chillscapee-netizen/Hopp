@@ -36,7 +36,13 @@ for (const test of tests) {
   const html = page.replace('<script src="main.js"></script>', `<script src="mock.js"></script><script src="main.js"></script><script src="${test}"></script>`);
   const file = join(work, test.replace(".test.js", ".html"));
   writeFileSync(file, html);
-  const dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, "--window-size=1280,800", "--virtual-time-budget=30000", "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  let dom;
+  try {
+    dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", "--virtual-time-budget=30000", "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  } catch (e) {
+    // Edge sometimes exits with an error after printing the page; use what it printed.
+    dom = String(e.stdout ?? "");
+  }
   const m = dom.match(/<pre id="test-results">([\s\S]*?)<\/pre>/);
   const lines = m ? m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").split("\n") : ["FAIL the test never reported (it crashed or took too long)"];
   console.log(`\n${test}`);

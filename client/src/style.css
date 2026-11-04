@@ -2662,3 +2662,8 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .invite-skel-icon { width: 56px; height: 56px; border-radius: 16px; }
 .invite-skel-text { flex: 1; height: 14px; max-width: 180px; }
 .invite-card.invalid { display: flex; align-items: center; gap: 14px; }
+
+/* A very long name never pushes the chat sideways. */
+.msg-head { min-width: 0; }
+.msg-author { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-time { flex: none; }
