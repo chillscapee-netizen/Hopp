@@ -31,11 +31,40 @@ const URL_PATTERN = /\bhttps?:\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
 
 // ---------- persisted preferences ----------
 
+/** What belongs to one account, not to this computer: kept apart per Hopp ID. */
+const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "closedCategories"];
+let accountScope = null;
+
+function storageKey(key) {
+  return ACCOUNT_DATA.includes(key) && accountScope ? `${key}@${accountScope}` : key;
+}
 function load(key, fallback) {
-  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  // Before anyone has logged in there is no account data to show.
+  if (ACCOUNT_DATA.includes(key) && !accountScope) return fallback;
+  try { return localStorage.getItem(storageKey(key)) ?? fallback; } catch { return fallback; }
 }
 function save(key, value) {
-  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+  if (ACCOUNT_DATA.includes(key) && !accountScope) return;
+  try { localStorage.setItem(storageKey(key), value); } catch { /* storage unavailable */ }
+}
+
+/**
+ * Switches to one account's data. Lists saved before accounts were kept apart
+ * aren't given to anyone: each account gets its servers back from its own sync.
+ */
+function useAccountData(publicKey) {
+  accountScope = publicKey.slice(0, 16);
+  try {
+    for (const k of ACCOUNT_DATA) localStorage.removeItem(k);
+  } catch {
+    // Storage unavailable: nothing to clear.
+  }
+  prefs.servers = loadJson("servers", []);
+  prefs.rail = loadJson("rail", []);
+  prefs.removedServers = loadJson("removedServers", {});
+  prefs.notify = loadJson("notify", { servers: {}, channels: {} });
+  prefs.closedCategories = loadJson("closedCategories", {});
+  drafts = new Map(Object.entries(loadJson("drafts", {})));
 }
 function loadJson(key, fallback) {
   try { return JSON.parse(load(key, "")) ?? fallback; } catch { return fallback; }
@@ -437,6 +466,8 @@ async function boot() {
 
 async function enterApp() {
   const status = await invoke("account_status");
+  // This account's servers and settings, not whoever used Hopp on this computer before.
+  useAccountData(status.public_key);
   state.account = { name: status.name, publicKey: status.public_key, backedUp: status.backed_up };
   accountExists = true;
   $("shell").classList.remove("locked");
@@ -655,12 +686,26 @@ async function logout() {
   cancelReconnect();
   state.attempt++;
   state.connectingId = null;
+  if (state.call) await endCall();
   await call("logout");
   state.account = null;
   renderBackupState();
   state.activeId = null;
   state.roster = null;
   state.notice = null;
+  // Nothing of this account stays for the next one.
+  state.me = undefined;
+  state.friends = new Map();
+  state.conversations = new Map();
+  state.dmMessages.clear();
+  state.dmComplete.clear();
+  state.groups = new Map();
+  state.reads = new Map();
+  state.openDm = null;
+  state.readsLoaded = false;
+  accountScope = null;
+  prefs.servers = [];
+  prefs.rail = [];
   boot();
 }
 $("logout-btn").addEventListener("click", logout);
@@ -1436,6 +1481,11 @@ async function connectTo(server, create, reconnecting) {
     return true;
   } catch (err) {
     if (attempt !== state.attempt) return false;
+    if (/invite-only|ask the owner for an invite/i.test(String(err)) && !server.joined && !server.invite) {
+      removeServer(server);
+      toast(`${server.label} was removed from your list: you're not a member. Ask for an invite to join.`);
+      return false;
+    }
     state.notice = { kind: "error", server, text: String(err) };
     return false;
   } finally {
@@ -1470,7 +1520,8 @@ $("hangup-btn").addEventListener("click", () => call("leave_voice"));
 
 /** Keeps the saved name and picture in step with the server, for the rail and Home. */
 function rememberServerLook(server, roster) {
-  let changed = false;
+  let changed = !server.joined;
+  server.joined = true;
   const owner = !!roster.users.find((u) => u.session_id === roster.me)?.owner;
   if (!!server.owner !== owner) {
     server.owner = owner;
@@ -5687,7 +5738,7 @@ function outboxItem(o) {
 
 var drafts = (() => {
   try {
-    return new Map(Object.entries(JSON.parse(localStorage.getItem("drafts") ?? "{}")));
+    return new Map(Object.entries(loadJson("drafts", {})));
   } catch {
     return new Map();
   }
@@ -5700,7 +5751,7 @@ function draftKey() {
 
 function persistDrafts() {
   try {
-    localStorage.setItem("drafts", JSON.stringify(Object.fromEntries([...drafts].slice(-50))));
+    save("drafts", JSON.stringify(Object.fromEntries([...drafts].slice(-50))));
   } catch {}
 }
 
