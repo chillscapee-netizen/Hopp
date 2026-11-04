@@ -370,6 +370,25 @@ function me() {
 function isOwner() {
   return !!me()?.owner;
 }
+
+// Roles on cloud servers: moderators delete messages, pin and kick; admins also run
+// channels, invites, bans and the server's look; the owner names admins.
+const ROLE_RANK = { owner: 3, admin: 2, mod: 1 };
+const ROLE_LABEL = { owner: "Owner", admin: "Admin", mod: "Moderator" };
+function roleOf(u) {
+  return u?.owner ? "owner" : u?.role === "admin" || u?.role === "mod" ? u.role : null;
+}
+function rankOf(u) {
+  return ROLE_RANK[roleOf(u)] ?? 0;
+}
+/** "moderate", "manage" or "own": whether my role here allows it. */
+function can(what) {
+  return rankOf(me()) >= { moderate: 1, manage: 2, own: 3 }[what];
+}
+/** I may act on someone only when my role is above theirs. */
+function outranks(u) {
+  return !!u && u.session_id !== state.roster?.me && rankOf(me()) > rankOf(u);
+}
 function myVoice() {
   return me()?.voice_channel ?? null;
 }
@@ -1721,6 +1740,10 @@ listen("kicked", (e) => {
 listen("invite-created", (e) => showInvite(e.payload));
 listen("invites", (e) => renderInviteList(e.payload));
 listen("bans", (e) => renderBanList(e.payload));
+listen("members", (e) => {
+  state.members = e.payload ?? [];
+  renderMemberList();
+});
 
 listen("disconnected", () => {
   const server = activeServer();
@@ -1896,7 +1919,7 @@ function renderSidebar() {
   const r = state.roster;
   head.disabled = false;
   $("sidebar-title").textContent = activeServer()?.label ?? r.server_name;
-  const owner = isOwner();
+  const owner = can("manage");
   const items = [];
 
   const address = activeServer()?.address;
@@ -1992,7 +2015,7 @@ function openChannelMenu(ch, e) {
   openMenu(
     [
       ...(ch.kind === "text" ? [{ label: muted ? "Unmute channel" : "Mute channel", icon: "bell", action: () => setChannelMuted(address, ch.id, !muted) }] : []),
-      ...(isOwner()
+      ...(can("manage")
         ? [
             ...(ch.kind === "text" ? ["sep"] : []),
             { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
@@ -2030,9 +2053,13 @@ function userRow(u, className, size, sub) {
   row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
   nameLine.append(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name));
-  if (u.owner) {
-    const crown = icon("crown", "crown");
-    nameLine.append(crown);
+  const role = roleOf(u);
+  if (role) {
+    const mark = role === "owner" ? icon("crown", "crown") : icon("shield", `role-mark ${role}`);
+    const wrap = el("span", "role-tip");
+    wrap.dataset.tip = ROLE_LABEL[role];
+    wrap.append(mark);
+    nameLine.append(wrap);
   }
   if (sub) {
     const info = el("span", "member-info");
@@ -2145,8 +2172,10 @@ $("members-toggle").addEventListener("click", () => {
 function renderMembers() {
   const users = [...state.roster.users].sort(byName);
   const groups = [
-    ["Owner", users.filter((u) => u.owner)],
-    ["Online", users.filter((u) => !u.owner)],
+    ["Owner", users.filter((u) => roleOf(u) === "owner")],
+    ["Admins", users.filter((u) => roleOf(u) === "admin")],
+    ["Moderators", users.filter((u) => roleOf(u) === "mod")],
+    ["Online", users.filter((u) => !roleOf(u))],
   ];
   const items = [];
   for (const [label, list] of groups) {
@@ -2303,7 +2332,10 @@ function linkNode(href) {
 }
 
 function canDelete(m) {
-  return isOwner() || (state.account && m.author_key === state.account.publicKey);
+  if (state.account && m.author_key === state.account.publicKey) return true;
+  if (!can("moderate")) return false;
+  const author = state.roster?.users.find((u) => u.public_key === m.author_key);
+  return isOwner() || rankOf(author) < rankOf(me());
 }
 
 async function deleteMessage(m, skipConfirm) {
@@ -2345,7 +2377,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   const badge = el("div", "welcome-icon");
   badge.append(icon("hash"));
   welcome.append(badge, el("h1", "", `Welcome to #${name}!`), el("p", "", channel(state.view)?.topic || `This is the start of the #${name} channel.`));
-  if (msgs.length === 0 && isOwner()) {
+  if (msgs.length === 0 && can("manage")) {
     const actions = el("div", "welcome-actions");
     const invite = el("button", "btn primary sm", "Invite people");
     invite.addEventListener("click", openInvite);
@@ -2742,7 +2774,7 @@ $("sidebar-head").addEventListener("click", (e) => {
   const head = $("sidebar-head");
   const r = head.getBoundingClientRect();
   const items = [{ label: "Invite people", icon: "user-plus", action: openInvite }];
-  if (isOwner()) {
+  if (can("manage")) {
     items.push({ label: "Server settings", icon: "settings", action: openServerSettings });
     items.push("sep");
     items.push({ label: "Create text channel", icon: "hash", action: () => openChannelDialog("text") });
@@ -2824,7 +2856,7 @@ async function openInvite() {
   const server = activeServer();
   $("invite-server").textContent = server.label;
   $("invite-icon-slot").replaceChildren(serverIcon("invite-icon server-tint", server.label, server.icon));
-  const owner = isOwner();
+  const owner = can("manage");
   $("invite-owner").hidden = !owner;
   $("invite-member").hidden = owner;
   $("invite-options").hidden = true;
@@ -2875,6 +2907,9 @@ function openServerSettings() {
   showServerTab("overview");
   $("invite-list").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("ban-list").replaceChildren(el("li", "admin-empty", "Loading…"));
+  $("server-members").replaceChildren(el("li", "admin-empty", "Loading…"));
+  $("member-search").value = "";
+  document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
   openModal($("server-settings"));
   call("get_server_settings");
 }
@@ -3816,8 +3851,11 @@ function openUserCard(user, anchor) {
   $("user-card-name").textContent = user.name;
   const sub = $("user-card-sub");
   if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
-  else sub.replaceChildren(el("span", "", user.owner ? "Server owner" : "Online"));
-  $("user-mod").hidden = !isOwner();
+  else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
+  const actOn = can("moderate") && outranks(user);
+  $("user-mod").hidden = !actOn;
+  $("user-ban").hidden = !can("manage");
+  renderUserRole(user);
   syncUserCard();
   // Open beside the row, like a profile card.
   const r = anchor.getBoundingClientRect();
@@ -3860,6 +3898,15 @@ async function removeUser(ban) {
 $("user-volume").addEventListener("input", (e) => setUserVolume(Number(e.target.value)));
 $("user-mute").addEventListener("click", () => setUserVolume((prefs.userVolumes[cardUser.name] ?? 100) === 0 ? 100 : 0));
 $("user-kick").addEventListener("click", () => removeUser(false));
+$("user-role").addEventListener("change", (e) => {
+  const user = cardUser;
+  setRole({ public_key: user.public_key, name: user.name }, e.target.value || null);
+});
+$("user-transfer").addEventListener("click", () => {
+  const user = cardUser;
+  closePopovers();
+  transferOwnership({ public_key: user.public_key, name: user.name });
+});
 $("user-ban").addEventListener("click", () => removeUser(true));
 document.addEventListener("mousedown", (e) => {
   if ([...document.querySelectorAll(".popover")].some((p) => !p.hidden && p.contains(e.target))) return;
@@ -6300,7 +6347,7 @@ function openMessageMenu(m, e) {
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
       ...(mine ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
-      ...(isOwner() ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
+      ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
       { label: "Copy text", icon: "message", action: () => copy(plainText(m.text), "Text") },
@@ -6670,7 +6717,7 @@ listen("pins", (e) => {
     });
     list.append(item);
   }
-  if (!messages.length) list.append(el("div", "pins-empty", isOwner() ? "Nothing pinned yet. Right-click a message to pin it." : "Nothing pinned in this channel yet."));
+  if (!messages.length) list.append(el("div", "pins-empty", can("moderate") ? "Nothing pinned yet. Right-click a message to pin it." : "Nothing pinned in this channel yet."));
   pop.replaceChildren(el("div", "pins-title", `Pinned in #${channelName(ch)}`), list);
 });
 
@@ -7012,3 +7059,116 @@ function blockChanged() {
   applyUserVolumes();
   if (online()) renderMessages(true);
 }
+
+// ---------- roles ----------
+
+state.members = [];
+
+/** Which roles I may give someone: the owner names admins, admins name moderators. */
+function rolesICanGive(target) {
+  if (!isCloud(activeServer()) || !target || roleOf(target) === "owner") return [];
+  if (target.public_key === state.account?.publicKey) return [];
+  if (isOwner()) return [null, "mod", "admin"];
+  if (can("manage") && rankOf(target) < ROLE_RANK.admin) return [null, "mod"];
+  return [];
+}
+
+function roleSelect(target, onChange) {
+  const select = el("select", "row-select role-select");
+  for (const role of rolesICanGive(target)) {
+    const opt = el("option", "", role ? ROLE_LABEL[role] : "Member");
+    opt.value = role ?? "";
+    select.append(opt);
+  }
+  select.value = roleOf(target) ?? "";
+  select.addEventListener("change", () => onChange(select.value || null));
+  return select;
+}
+
+function renderUserRole(user) {
+  const roles = rolesICanGive(user);
+  const wrap = $("user-role-wrap");
+  wrap.hidden = roles.length === 0;
+  const select = $("user-role");
+  select.replaceChildren(...roles.map((r) => {
+    const opt = el("option", "", r ? ROLE_LABEL[r] : "Member");
+    opt.value = r ?? "";
+    return opt;
+  }));
+  select.value = roleOf(user) ?? "";
+  $("user-transfer").hidden = !isOwner() || !isCloud(activeServer()) || user.session_id === state.roster?.me;
+  // Kick/ban sit beside the role when there's both.
+  $("user-mod").classList.toggle("single", $("user-ban").hidden);
+}
+
+async function setRole(member, role) {
+  try {
+    await invoke("set_role", { publicKey: member.public_key, role });
+    toast(role ? `${member.name} is now ${role === "admin" ? "an admin" : "a moderator"}.` : `${member.name} is a member again.`);
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+async function transferOwnership(member) {
+  const server = activeServer();
+  const ok = await confirmDialog({
+    title: `Give ${server?.label ?? "this server"} to ${member.name}?`,
+    text: `${member.name} becomes the owner and can do everything, including deleting the server. You stay on as an admin. Only they can give it back.`,
+    ok: "Transfer ownership",
+  });
+  if (!ok) return;
+  try {
+    await invoke("transfer_ownership", { publicKey: member.public_key });
+    toast(`${member.name} owns ${server?.label ?? "the server"} now.`);
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+/** Server settings → Members: everyone who belongs here, online or not. */
+function renderMemberList() {
+  const list = $("server-members");
+  const q = $("member-search").value.trim().toLowerCase();
+  const online = new Set((state.roster?.users ?? []).map((u) => u.public_key));
+  const members = state.members
+    .filter((m) => !q || m.name.toLowerCase().includes(q))
+    .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0) || a.name.localeCompare(b.name));
+  $("member-count").textContent = `${state.members.length} ${state.members.length === 1 ? "member" : "members"}`;
+  if (!members.length) {
+    list.replaceChildren(el("li", "admin-empty", q ? "Nobody by that name." : "No members yet."));
+    return;
+  }
+  list.replaceChildren(
+    ...members.map((m) => {
+      const li = el("li", "admin-row member-admin-row");
+      const who = el("span", "admin-who");
+      const target = { ...m, owner: m.role === "owner" };
+      who.append(avatar(m.name, "s40", online.has(m.public_key) ? "online" : undefined, pictureFor(m.public_key)));
+      const text = el("span", "admin-text");
+      const name = el("strong", "ellipsis", m.name);
+      const joined = new Date(m.joined_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+      text.append(name, el("span", "admin-sub", `${online.has(m.public_key) ? "Online · " : ""}Joined ${joined}`));
+      who.append(text);
+      li.append(who);
+      const actions = el("span", "member-admin-actions");
+      if (rolesICanGive(target).length) {
+        actions.append(roleSelect(target, (role) => setRole(m, role)));
+      } else {
+        actions.append(el("span", `role-label ${m.role ?? "member"}`, m.role ? ROLE_LABEL[m.role] : "Member"));
+      }
+      if (isOwner() && m.role !== "owner") {
+        const give = el("button", "icon-btn", "");
+        give.type = "button";
+        give.dataset.tip = "Transfer ownership";
+        give.setAttribute("aria-label", `Transfer ownership to ${m.name}`);
+        give.append(icon("crown"));
+        give.addEventListener("click", () => transferOwnership(m));
+        actions.append(give);
+      }
+      li.append(actions);
+      return li;
+    }),
+  );
+}
+$("member-search").addEventListener("input", renderMemberList);

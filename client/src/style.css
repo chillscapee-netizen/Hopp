@@ -2751,3 +2751,23 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .split-main { width: 28px; }
 .split-more { width: 14px; }
 .panel-btn { width: 30px; }
+
+/* ---------- roles ---------- */
+.role-tip { display: inline-flex; flex: none; }
+.role-mark { width: 14px; height: 14px; stroke-width: 2.2; }
+.role-mark.admin { color: var(--text-2); }
+.role-mark.mod { color: var(--muted); }
+.user-mod.single { grid-template-columns: 1fr; }
+.user-role { display: grid; gap: 6px; margin-top: 10px; }
+.user-role .field { margin: 0; }
+.user-role select { width: 100%; }
+.user-role .btn-link { justify-self: start; padding: 0; }
+.member-tools { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.member-tools input { flex: 1; }
+.member-count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.member-admin-row { padding: 10px 14px; }
+.member-admin-row .admin-who { gap: 12px; min-width: 0; }
+.member-admin-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.role-select { width: 140px; }
+.role-label { min-width: 130px; padding: 0 10px; color: var(--muted); font-size: 13px; text-align: right; }
+.role-label.owner { color: var(--yellow); font-weight: 600; }
