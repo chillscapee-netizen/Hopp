@@ -302,8 +302,12 @@ export class StromServer extends DurableObject<Env> {
       author_key: m.author_key,
       author_name: m.sender_name,
     };
+    // People in the server right now already have the message; their accounts only
+    // hear about mentions (for their other devices). That keeps busy servers cheap.
+    const here = new Set(this.members().map(([, s]) => s.key));
     for (const key of keys) {
       const mention = mentioned.has(key) && key !== m.author_key;
+      if (here.has(key) && !mention && key !== m.author_key) continue;
       const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview });
       this.ctx.waitUntil(call.catch(() => {}));
     }

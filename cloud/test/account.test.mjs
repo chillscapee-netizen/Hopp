@@ -306,7 +306,9 @@ test("server messages mark channels unread on every member's account, and mentio
   const general = owner.welcome.channels.find((c) => c.name === "general").id;
   const server = `cloud:${serverId}`;
 
-  // Alice's account, somewhere else in the app.
+  // Alice is elsewhere in the app now (not in the server), with her account connected.
+  owner.close();
+  await sleep(200);
   const account = await Device.open(alice, "Alice");
   member.send({ type: "send_chat", channel: general, text: "plain message" });
   const plain = await account.waitFor((m) => m.type === "channel_activity");
@@ -333,7 +335,8 @@ test("server messages mark channels unread on every member's account, and mentio
   assert.equal(read.mentions, 0);
 
   // Your own messages count as read.
-  owner.send({ type: "send_chat", channel: general, text: "my reply" });
+  const back = await joinServer(serverId, "alice", alice);
+  back.send({ type: "send_chat", channel: general, text: "my reply" });
   const own = await account.waitFor((m) => m.type === "channel_read" && m.last_id > mention.last_id);
   assert.equal(own.read_id, own.last_id);
 
@@ -341,7 +344,25 @@ test("server messages mark channels unread on every member's account, and mentio
   const profile = await (await fetch(`${HTTP}/profiles/${alice.pub}`)).json();
   assert.equal(profile.key, alice.pub);
   assert.equal(profile.display_name, "Alice");
-  for (const d of [owner, member, account, again]) d.close();
+  for (const d of [back, member, account, again]) d.close();
+});
+
+test("people in the server aren't sent unread marks, only mentions", async () => {
+  const serverId = crypto.randomBytes(12).toString("hex");
+  const alice = newKey();
+  const bob = newKey();
+  const owner = await joinServer(serverId, "alice", alice, { create: "Busy server" });
+  owner.send({ type: "create_invite", max_uses: null, expires_in_hours: null });
+  const { invite } = await owner.waitFor((m) => m.type === "invite_created");
+  const member = await joinServer(serverId, "bob", bob, { invite: invite.code });
+  const general = owner.welcome.channels.find((c) => c.name === "general").id;
+  const account = await Device.open(alice, "Alice");
+  member.send({ type: "send_chat", channel: general, text: "you see this live" });
+  await owner.waitFor((m) => m.type === "chat");
+  member.send({ type: "send_chat", channel: general, text: `but <@${alice.pub}> pings reach your account` });
+  const first = await account.waitFor((m) => m.type === "channel_activity");
+  assert.equal(first.mention, true);
+  for (const d of [owner, member, account]) d.close();
 });
 
 test("calls between friends: ring, answer, endpoints, end; strangers and offline friends", async () => {
