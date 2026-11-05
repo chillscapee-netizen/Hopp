@@ -2504,7 +2504,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     } else {
       const head = el("div", "msg-head");
       const author = el("span", "msg-author", m.sender_name);
-      author.style.color = `hsl(${hue(m.sender_name)} 22% 80%)`;
+      author.style.color = `hsl(${hue(m.sender_name)} var(--name-s) var(--name-l))`;
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
         const pin = icon("pin", "xs msg-pin");
@@ -6128,7 +6128,7 @@ function outboxItem(o, grouped) {
   const head = el("div", "msg-head");
   const name = state.account?.name ?? "";
   const author = el("span", "msg-author", name);
-  author.style.color = `hsl(${hue(name)} 22% 80%)`;
+  author.style.color = `hsl(${hue(name)} var(--name-s) var(--name-l))`;
   head.append(author, el("span", "msg-time", o.failed ? "Not sent" : "Sending…"));
   li.append(avatar(name, "s40", undefined, state.me?.avatar ?? null), head, messageText(o.text));
   if (o.failed) {
@@ -9233,3 +9233,128 @@ $("search-btn").addEventListener("click", (e) => {
   openSearch(e.currentTarget, {});
 });
 $("dm-search-btn").addEventListener("click", (e) => state.openDm && openSearch(e.currentTarget, { dm: state.openDm }));
+
+// ---------- themes ----------
+//
+// Every colour in Hopp comes from a handful of surface, border and text shades. A theme is
+// one colour: Hopp builds those shades around it, as a dark theme or, for a light colour,
+// a light one. "Mid grey" is the stylesheet itself.
+
+var THEMES = [
+  { id: "mid", name: "Mid grey", base: "#3c3c42" },
+  { id: "dark", name: "Dark", base: "#2a2a2e" },
+  { id: "midnight", name: "Midnight", base: "#2b3140" },
+  { id: "light", name: "Light grey", base: "#f2f2f4" },
+];
+
+function hexToHsl(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l * 100];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s * 100, l * 100];
+}
+
+/** The whole set of shades for a theme built around one colour. */
+function themeTokens(base) {
+  const [h, sRaw, picked] = hexToHsl(base);
+  // Light picks make a light theme, others a dark one, each kept in a range where text reads well.
+  const l = picked > 60 ? Math.min(97, Math.max(88, picked)) : Math.min(30, Math.max(14, picked));
+  // Surfaces stay calm: even a bright pick becomes a gentle tint.
+  const s = Math.min(sRaw, 22);
+  const at = (dl, sat = s) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + Math.max(0, Math.min(100, l + dl)).toFixed(1) + "%)";
+  const tint = (lightness, sat = Math.min(s, 10)) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + lightness + "%)";
+  if (picked > 60) {
+    // Light: what's further back is a little darker; text is near-black.
+    return {
+      frame: at(-9), "side-2": at(-6), side: at(-4), main: at(0), elev: at(-7), "elev-2": at(-11), "elev-3": at(-15), deep: at(-5),
+      border: at(-11), "border-strong": at(-17), "border-active": at(-25), "border-focus": at(-32), "focus-ring": at(-35),
+      hover: "rgb(0 0 0 / 0.05)", active: "rgb(0 0 0 / 0.08)", "msg-hover": "rgb(0 0 0 / 0.03)",
+      text: tint(12), "text-2": tint(22), muted: tint(38), faint: tint(53),
+      link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#1f9d63", yellow: "#b7791f", red: "#d93a40", scheme: "light",
+    };
+  }
+  return {
+    frame: at(-6.7), "side-2": at(-3.9), side: at(-2.1), main: at(0), elev: at(4.3), "elev-2": at(8.2), "elev-3": at(12.4), deep: at(-7.8),
+    border: at(4.3), "border-strong": at(10.4), "border-active": at(16.3), "border-focus": at(20.4), "focus-ring": at(21.5),
+    hover: "rgb(255 255 255 / 0.05)", active: "rgb(255 255 255 / 0.09)", "msg-hover": "rgb(0 0 0 / 0.06)",
+    text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(57),
+    link: "#8ab4f8", "primary-hover": "#ffffff", "name-s": "22%", "name-l": "80%", green: "#3ccf8e", yellow: "#f0b232", red: "#f2555a", scheme: "dark",
+  };
+}
+
+var THEME_KEYS = Object.keys(themeTokens("#3c3c42"));
+
+/** The chosen theme's colour: a preset's, or your own. */
+function themeColor() {
+  if (prefs.theme === "custom") return prefs.themeColor;
+  return THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base;
+}
+
+function applyTheme() {
+  const root = document.documentElement.style;
+  for (const k of THEME_KEYS) root.removeProperty(k === "scheme" ? "color-scheme" : "--" + k);
+  // Mid grey is the stylesheet's own colours.
+  if (prefs.theme === "mid" || !prefs.theme) return;
+  const t = themeTokens(themeColor());
+  for (const [k, v] of Object.entries(t)) root.setProperty(k === "scheme" ? "color-scheme" : "--" + k, v);
+}
+
+function setTheme(id, color) {
+  prefs.theme = id;
+  save("theme", id);
+  if (color) {
+    prefs.themeColor = color;
+    save("themeColor", color);
+  }
+  applyTheme();
+  renderThemes();
+}
+
+/** The theme cards in Settings: a small picture of each, and your own colour last. */
+function renderThemes() {
+  const list = $("theme-list");
+  if (!list) return;
+  const card = (id, name, base, extra) => {
+    const t = themeTokens(base);
+    const b = el("button", "theme-card" + (prefs.theme === id ? " active" : ""));
+    b.type = "button";
+    b.dataset.theme = id;
+    const pic = el("span", "theme-pic");
+    pic.style.background = t.frame;
+    const side = el("span", "theme-pic-side");
+    side.style.background = t["side-2"];
+    const main = el("span", "theme-pic-main");
+    main.style.background = t.main;
+    for (const w of [70, 45]) {
+      const line = el("i");
+      line.style.width = w + "%";
+      line.style.background = t.faint;
+      main.append(line);
+    }
+    pic.append(side, main);
+    b.append(pic, el("span", "theme-name", name));
+    if (extra) b.append(extra);
+    b.addEventListener("click", (e) => {
+      if (e.target.closest("input")) return;
+      setTheme(id);
+    });
+    return b;
+  };
+  const picker = el("input", "theme-color");
+  picker.type = "color";
+  picker.value = prefs.themeColor;
+  picker.dataset.tip = "Pick your colour";
+  picker.addEventListener("input", () => setTheme("custom", picker.value));
+  list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, t.base)), card("custom", "Your own", prefs.themeColor, picker));
+}
+
+prefs.theme = load("theme", "mid");
+prefs.themeColor = load("themeColor", "#3b4a46");
+applyTheme();
+renderThemes();

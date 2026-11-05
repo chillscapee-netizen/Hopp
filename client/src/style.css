@@ -35,6 +35,11 @@
   --deep: #28282d;
   --link: #8ab4f8;
   --on-color: #ffffff;
+  /* The main button lights up a little on hover. */
+  --primary-hover: #ffffff;
+  /* People's names in chat: a soft colour from their name, light enough for a dark theme. */
+  --name-s: 22%;
+  --name-l: 80%;
   --red-hover: #e0444a;
   --close-hover: #e81123;
 
@@ -581,7 +586,7 @@ kbd { font: 600 12px "Inter", sans-serif; background: var(--elev-2); border: 1px
 }
 .btn:hover { background: var(--elev-3); }
 .btn.primary { background: var(--text); color: var(--frame); }
-.btn.primary:hover { background: var(--on-color); }
+.btn.primary:hover { background: var(--primary-hover); }
 .btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
 .btn.full { width: 100%; }
 .btn.danger-soft { color: var(--red); }
@@ -2079,10 +2084,10 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   padding: 0 3px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--link) 18%, transparent);
-  color: #c6d8f7;
+  color: color-mix(in srgb, var(--link) 45%, var(--text));
   font-weight: 500;
 }
-.mention.me { background: color-mix(in srgb, var(--yellow) 20%, transparent); color: #f5d796; }
+.mention.me { background: color-mix(in srgb, var(--yellow) 20%, transparent); color: color-mix(in srgb, var(--yellow) 50%, var(--text)); }
 .msg.mentions-me { background: color-mix(in srgb, var(--yellow) 7%, transparent); }
 .msg.mentions-me::before {
   content: "";
@@ -2238,7 +2243,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   cursor: pointer;
 }
 .reaction:hover { border-color: var(--border-active); }
-.reaction.mine { background: color-mix(in srgb, var(--link) 14%, var(--side)); border-color: color-mix(in srgb, var(--link) 55%, transparent); color: #d4e2fa; }
+.reaction.mine { background: color-mix(in srgb, var(--link) 14%, var(--side)); border-color: color-mix(in srgb, var(--link) 55%, transparent); color: color-mix(in srgb, var(--link) 25%, var(--text)); }
 .reaction-emoji { font-size: 15px; line-height: 1; }
 .reaction.add { padding: 0 6px; color: var(--faint); opacity: 0; transition: opacity 100ms; }
 .reaction.add .i { width: 16px; height: 16px; }
@@ -2413,7 +2418,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
   background: color-mix(in srgb, var(--red) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
   border-radius: 8px;
-  color: #f6b4b6;
+  color: color-mix(in srgb, var(--red) 45%, var(--text));
   font-size: 13.5px;
   line-height: 1.4;
 }
@@ -2977,3 +2982,17 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .search-item mark { background: color-mix(in srgb, var(--yellow) 30%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; }
 .dm-search-btn { margin-left: auto; }
 .dm-search-btn:not([hidden]) + .dm-call-btn { margin-left: 0; }
+
+/* Theme cards: a little picture of each theme. */
+.theme-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.theme-card { position: relative; display: grid; gap: 8px; padding: 8px; background: var(--side-2); border: 2px solid transparent; border-radius: 12px; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; transition: border-color 120ms; }
+.theme-card:hover { border-color: var(--border-strong); }
+.theme-card.active { border-color: var(--text); color: var(--text); }
+.theme-pic { display: flex; gap: 4px; height: 64px; padding: 6px 0 0 6px; border-radius: 8px; overflow: hidden; }
+.theme-pic-side { width: 28%; border-radius: 6px 6px 0 0; }
+.theme-pic-main { flex: 1; display: grid; align-content: start; gap: 6px; padding: 10px 8px; border-top-left-radius: 8px; }
+.theme-pic-main i { display: block; height: 5px; border-radius: 3px; opacity: 0.7; }
+.theme-name { padding: 0 2px; font-size: 13px; font-weight: 600; }
+.theme-color { position: absolute; right: 10px; bottom: 8px; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
+.theme-color::-webkit-color-swatch-wrapper { padding: 0; }
+.theme-color::-webkit-color-swatch { border: 2px solid var(--border-strong); border-radius: 50%; }
