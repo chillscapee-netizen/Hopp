@@ -2939,3 +2939,15 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .row { border-top-color: rgb(255 255 255 / 0.045); }
 .modal-foot { border-top: none; background: none; padding-top: 4px; }
 .account-card { border-color: transparent; }
+
+/* ---------- one surface, one sheet ---------- */
+/* The rail, the sidebar and the title bar are one calm surface; what you're looking at
+   (the chat, Home) lies on it as a single lighter sheet with a rounded corner. */
+.frame { background: var(--frame); border: none; border-radius: 0; }
+.sidebar { background: none; }
+.home-view, .channel-view {
+  background: var(--main);
+  border-top-left-radius: 12px;
+  box-shadow: inset 1px 1px 0 rgb(255 255 255 / 0.04);
+  overflow: hidden;
+}
