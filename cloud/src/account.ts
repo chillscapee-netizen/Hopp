@@ -692,6 +692,7 @@ export class StromAccount extends DurableObject<Env> {
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         if (!server || server.length > 300 || !Number.isSafeInteger(channel) || !Number.isSafeInteger(id) || id < 0) return error("Bad channel.");
+        if (msg.unread) return this.markUnread(server, channel, id);
         return this.markRead(server, channel, id);
       }
       case "ping":
@@ -1051,7 +1052,16 @@ export class StromAccount extends DurableObject<Env> {
     this.toDevices({ type: "channel_read", ...this.channelRead(server, channel) });
   }
 
-  /** A server tells us about a new message in one of its channels. */
+  /** "Mark unread": everything after message `id` counts as new again, on every device. */
+  private markUnread(server: string, channel: number, id: number) {
+    this.sql.exec(
+      `INSERT INTO channel_reads (server, channel, read_id, last_id, last_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(server, channel) DO UPDATE SET read_id = excluded.read_id, last_id = max(last_id, excluded.read_id + 1)`,
+      server, channel, id, id + 1, Date.now(),
+    );
+    this.toDevices({ type: "channel_read", ...this.channelRead(server, channel) });
+  }
+
   /** Counts a server this account creates; false once it has made too many today. */
   async allowNewServer(): Promise<boolean> {
     const day = new Date().toISOString().slice(0, 10);

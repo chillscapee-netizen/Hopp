@@ -137,6 +137,7 @@ const commands = {
   download_cancel: () => { downloaded.cancelled = true; },
   show_download: () => {},
   set_relay: ({ login }) => { sent.push({ type: "set_relay", login }); },
+  react: (a) => { sent.push({ type: "react", ...a }); },
   gif_search: () => ({ gifs: [], next: null }),
   fetch_profile: ({ key }) => ({ key, username: null, display_name: "Someone", avatar: null, bio: "" }),
   send_chat: ({ channel, text }) => {

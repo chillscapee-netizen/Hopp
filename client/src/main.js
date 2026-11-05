@@ -2428,6 +2428,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
   // Opening a channel: remember where reading stopped, for the "New" line.
   const address = activeServer()?.address;
   if (!keepScrollUnlessAtBottom) {
+    // Opening a channel ends a "Mark unread" made earlier.
+    state.unreadHold = null;
     const read = state.reads.get(readKey(address, state.view));
     state.newSince = read && read.last_id > read.read_id ? { channel: state.view, id: read.read_id } : null;
   }
@@ -3198,6 +3200,11 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.replyTo) {
     e.preventDefault();
     setReply(null);
+    return;
+  }
+  if (e.key === "Escape" && !chatInput.value && !mentionPicker.open) {
+    e.preventDefault();
+    catchUp();
     return;
   }
   // Up in an empty box edits your last message.
@@ -5397,6 +5404,7 @@ function setRead(address, channel, id) {
 /** The channel on screen counts as read while the window is in front. */
 function markViewedRead() {
   if (!online() || state.view === null || !document.hasFocus()) return;
+  if (state.unreadHold && state.unreadHold.channel === state.view && state.unreadHold.address === activeServer()?.address) return;
   const address = activeServer()?.address;
   const last = state.chats.get(state.view)?.at(-1)?.id;
   if (address && last && setRead(address, state.view, last)) renderUnread();
@@ -5552,8 +5560,9 @@ function mentionCandidates(query) {
 
 function updateMentionPicker() {
   const before = chatInput.value.slice(0, chatInput.selectionStart);
-  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.-]{0,32})$/u);
-  const items = match && online() ? mentionCandidates(match[1]) : [];
+  const emojiMatch = before.match(/(?:^|\s):([a-z0-9_+-]{2,20})$/i);
+  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.-]{0,32})$/u) ?? emojiMatch;
+  const items = !match || !online() ? [] : match === emojiMatch ? emojiCandidates(match[1]) : mentionCandidates(match[1]);
   let pop = $("mention-picker");
   if (!items.length) {
     mentionPicker.open = false;
@@ -5574,7 +5583,8 @@ function updateMentionPicker() {
   const rows = items.map((item, i) => {
     const row = el("button", "mention-option" + (i === mentionPicker.index ? " active" : ""));
     row.type = "button";
-    row.append(avatar(item.name, "s24", undefined, pictureFor(item.key)), el("span", "mention-name ellipsis", item.name));
+    if (item.emoji) row.append(el("span", "mention-emoji", item.emoji), el("span", "mention-name ellipsis", `:${item.name}:`));
+    else row.append(avatar(item.name, "s24", undefined, pictureFor(item.key)), el("span", "mention-name ellipsis", item.name));
     if (item.username) row.append(el("span", "mention-user ellipsis", item.username));
     row.addEventListener("mouseenter", () => {
       mentionPicker.index = i;
@@ -5583,11 +5593,22 @@ function updateMentionPicker() {
     row.addEventListener("click", () => pickMention(item));
     return row;
   });
-  pop.replaceChildren(el("div", "mention-head", "Members"), ...rows);
+  pop.replaceChildren(el("div", "mention-head", items[0]?.emoji ? "Emoji" : "Members"), ...rows);
   pop.hidden = false;
 }
 
 function pickMention(item) {
+  if (item.emoji) {
+    const end = chatInput.selectionStart;
+    chatInput.value = chatInput.value.slice(0, mentionPicker.start) + item.emoji + chatInput.value.slice(end);
+    const caret = mentionPicker.start + item.emoji.length;
+    chatInput.setSelectionRange(caret, caret);
+    rememberEmoji(item.emoji);
+    mentionPicker.open = false;
+    $("mention-picker").hidden = true;
+    chatInput.focus();
+    return;
+  }
   const label = `@${item.name}`;
   const end = chatInput.selectionStart;
   chatInput.value = chatInput.value.slice(0, mentionPicker.start) + label + " " + chatInput.value.slice(end);
@@ -5650,6 +5671,14 @@ function messageActions(m) {
     actions.append(b);
     return b;
   };
+  for (const emoji of quickReactions()) {
+    const mine = m.reactions?.find((r) => r.emoji === emoji)?.keys.includes(state.account?.publicKey);
+    const b = el("button", "icon-btn sm quick-react" + (mine ? " on" : ""), emoji);
+    b.type = "button";
+    b.dataset.tip = mine ? `Remove ${emoji}` : `React ${emoji}`;
+    b.addEventListener("click", () => react(m, emoji, !mine));
+    actions.append(b);
+  }
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text)) button("edit", "Edit", () => startEdit(m));
@@ -6007,6 +6036,7 @@ $("scroller").addEventListener("scroll", () => {
 // ---------- sending: pending, failed, retry ----------
 
 function sendChat(channel, text, replyTo) {
+  state.unreadHold = null;
   const answered = replyTo ? state.chats.get(channel)?.find((m) => m.id === replyTo) : null;
   const o = {
     nonce: crypto.randomUUID(), channel, text, replyTo, at: Date.now(), failed: false, why: "",
@@ -6590,6 +6620,7 @@ function openMessageMenu(m, e) {
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
+      { label: "Mark unread", icon: "bell", action: () => markUnreadFrom(m) },
       { label: "Copy text", icon: "message", action: () => copy(plainText(m.text), "Text") },
       { label: "Copy message link", icon: "link", action: () => copy(messageLink(m), "Link") },
       ...(canDelete(m) ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteMessage(m) }] : []),
@@ -8608,4 +8639,85 @@ function morph(old, fresh) {
   const kept = new Map();
   for (const child of old.children) if (child.dataset.keep) kept.set(child.dataset.keep, child);
   place(old, [...fresh.childNodes].map((child) => (child.dataset?.keep && kept.get(child.dataset.keep)) || child));
+}
+
+// ---------- a chat that flows ----------
+
+/** Start typing anywhere: the letters go into the message box. */
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || e.isComposing) return;
+  const t = e.target;
+  if (t.closest?.("input, textarea, select, [contenteditable]") || document.querySelector("dialog[open]")) return;
+  const box = online() ? (state.view !== null && !$("composer").hidden ? chatInput : null) : $("dm-input");
+  if (box && box.offsetParent !== null) box.focus();
+});
+
+/** Alt+↑/↓: previous or next channel. Alt+Shift+↑/↓: the previous or next one with something new. */
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey || e.ctrlKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown") || !online()) return;
+  const list = textChannels();
+  const at = list.findIndex((c) => c.id === state.view);
+  if (at < 0) return;
+  e.preventDefault();
+  const step = e.key === "ArrowDown" ? 1 : -1;
+  const address = activeServer()?.address;
+  for (let i = 1; i <= list.length; i++) {
+    const ch = list[(at + step * i + list.length * i) % list.length];
+    if (!e.shiftKey || channelUnread(address, ch.id) || channelMentions(address, ch.id)) return openTextChannel(ch.id);
+    if (!e.shiftKey) return;
+  }
+});
+
+/** The three reactions you use most, offered on hover. */
+function quickReactions() {
+  const recent = recentEmoji();
+  return [...recent, "👍", "😂", "❤️"].filter((e, i, all) => all.indexOf(e) === i).slice(0, 3);
+}
+
+/** Back to the newest message, everything read. */
+function catchUp() {
+  state.unreadHold = null;
+  const scroller = $("scroller");
+  scroller.scrollTop = scroller.scrollHeight;
+  markViewedRead();
+  updateJumpBar();
+}
+
+/** "Mark unread": this message and everything after it are new again. */
+function markUnreadFrom(m) {
+  const address = activeServer()?.address;
+  if (!address) return;
+  const k = readKey(address, m.channel);
+  const cur = state.reads.get(k) ?? { server: address, channel: m.channel, read_id: 0, last_id: 0, mentions: 0 };
+  cur.read_id = m.id - 1;
+  cur.last_id = Math.max(cur.last_id, m.id);
+  state.reads.set(k, cur);
+  state.unreadHold = { address, channel: m.channel };
+  state.newSince = { channel: m.channel, id: m.id - 1 };
+  invoke("account_send", { msg: { type: "channel_read", server: address, channel: m.channel, id: m.id - 1, unread: true } }).catch(() => {});
+  renderUnread();
+  renderMessages(true);
+  toast("Marked unread. It stays that way until you come back to the channel.");
+}
+
+let emojiIndex = null;
+/** Emoji whose name starts with what you typed after ":". */
+function emojiCandidates(q) {
+  if (!emojiIndex) {
+    emojiIndex = [];
+    for (const [, list] of EMOJI_GROUPS) {
+      for (const entry of list.split("|")) {
+        const [emoji, ...words] = entry.split(" ");
+        emojiIndex.push({ emoji, words, name: words[0] ?? "" });
+      }
+    }
+  }
+  const query = q.toLowerCase();
+  // Names that start with it first (:fir is 🔥 "fire"), then other words that do.
+  const rank = (e) => (e.name.startsWith(query) ? 0 : 1);
+  return emojiIndex
+    .filter((e) => e.words.some((w) => w.startsWith(query)))
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, 8)
+    .map((e) => ({ ...e, key: `emoji:${e.emoji}` }));
 }
