@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 mod account;
+mod downloads;
 mod hello;
 mod ptt;
 mod shell;
@@ -1304,6 +1305,7 @@ fn main() {
         .manage(AppState::default())
         .manage(shell::PendingLink::default())
         .manage(account::Account::default())
+        .manage(downloads::Downloads::default())
         .on_window_event(shell::on_window_event)
         .setup(|app| {
             init_logging(app);
@@ -1370,6 +1372,11 @@ fn main() {
             transfer_ownership,
             get_members,
             upload_image,
+            downloads::download_start,
+            downloads::download_chunk,
+            downloads::download_finish,
+            downloads::download_cancel,
+            downloads::show_download,
             youtube_info,
             upload_dm_image,
             app_version,

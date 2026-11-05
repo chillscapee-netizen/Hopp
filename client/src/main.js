@@ -4739,6 +4739,10 @@ async function addDmMessages(peer, raw, prepend) {
 }
 
 function onDmEvent(m) {
+  if (m.type === "file_signal") {
+    onFileSignal(m);
+    return true;
+  }
   if (m.type === "dm") {
     const peer = m.with;
     const conv = state.conversations.get(peer) ?? { last_at: 0, last_read: 0 };
@@ -5028,17 +5032,20 @@ function renderDmView(keepScroll) {
     });
     const attach = el("button", "composer-icon attach-btn");
     attach.type = "button";
-    attach.dataset.tip = "Add a picture";
-    attach.setAttribute("aria-label", "Add a picture");
+    attach.dataset.tip = p.group ? "Add a picture" : "Add a picture or file";
+    attach.setAttribute("aria-label", attach.dataset.tip);
     attach.append(icon("plus"));
     const file = el("input");
     file.type = "file";
-    file.accept = "image/png,image/jpeg,image/webp,image/gif";
+    if (p.group) file.accept = "image/png,image/jpeg,image/webp,image/gif";
     file.hidden = true;
     attach.addEventListener("click", () => file.click());
     file.addEventListener("change", () => {
-      attachDmPicture(peer, file.files?.[0]);
+      const chosen = file.files?.[0];
       file.value = "";
+      if (!chosen) return;
+      if (/^image\/(png|jpeg|webp|gif)$/.test(chosen.type)) attachDmPicture(peer, chosen);
+      else offerFile(peer, chosen);
     });
     row.append(attach, file, input, emoji);
     const tray = el("div", "attach-tray");
@@ -5057,9 +5064,9 @@ function renderDmView(keepScroll) {
       const files = [...(e.dataTransfer?.files ?? [])];
       if (!files.length) return;
       e.preventDefault();
-      const picture = files.find((f) => f.type.startsWith("image/"));
+      const picture = files.find((f) => /^image\/(png|jpeg|webp|gif)$/.test(f.type));
       if (picture) attachDmPicture(peer, picture);
-      else toast("Only pictures can be shared for now (PNG, JPEG, WebP or GIF).", true);
+      else offerFile(peer, files[0]);
     });
     renderDmAttachment();
     scroller.addEventListener("scroll", () => {
@@ -5095,6 +5102,8 @@ function renderDmView(keepScroll) {
     }
     if (state.dmEditing === m.id) {
       li.append(dmEditor(peer, m));
+    } else if (m.text !== null && FILE_OFFER.test(m.text)) {
+      li.append(fileCard(peer, m));
     } else if (m.text !== null && DM_PICTURE.test(m.text)) {
       const [whole, owner, id, key, w, h] = m.text.match(DM_PICTURE);
       const caption = m.text.slice(whole.length).trim();
@@ -5226,6 +5235,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
   if (GIF_URL.test(text.trim())) return "GIF";
@@ -7597,7 +7607,7 @@ chatSection.addEventListener("drop", (e) => {
   e.preventDefault();
   const file = files.find((f) => f.type.startsWith("image/"));
   if (file) attachPicture(file);
-  else toast("Only pictures can be shared for now (PNG, JPEG, WebP or GIF).", true);
+  else toast("Servers take pictures only. Send other files to a friend in a DM.", true);
 });
 
 // A file dropped anywhere else mustn't replace the app with the file itself.
@@ -7899,7 +7909,7 @@ function youtubeCard(id, start, link) {
 state.dmEditing = null;
 
 function dmEditable(m) {
-  return m.text !== null && !DM_PICTURE.test(m.text) && !GIF_URL.test(m.text.trim());
+  return m.text !== null && !DM_PICTURE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim());
 }
 
 function dmActions(peer, m) {
@@ -8029,3 +8039,351 @@ stickToBottom($("scroller"), $("messages"));
 
 /** The newest message drawn per channel, so only really new ones animate in. */
 var drawnUpTo = new Map();
+
+// ---------- files between friends ----------
+//
+// A file goes straight from one computer to the other (WebRTC data channel, encrypted
+// on the way), never through the cloud. The DM carries only an offer:
+// "hopp-file:<transfer id> <size> <name>". When the friend presses Download, the two
+// apps shake hands through their accounts (sealed like DMs) and the file streams over.
+// The sender's app must still be open with the file; otherwise it says so.
+
+var FILE_OFFER = /^hopp-file:([0-9a-f]{32}) (\d{1,13}) ([^\n]{1,200})$/;
+const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|cpl|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|jar|lnk|url|reg|dll|sys|inf|iso|img|vhd|vhdx|msc|application|gadget|apk|sh)$/i;
+const FILE_MAX = 4 * 1024 ** 3;
+const FILE_CHUNK = 64 * 1024;
+const FILE_CONNECT_MS = 25_000;
+const FILE_ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
+state.outgoingFiles = new Map(); // transfer -> { file, peer, status, sent, error, pc }
+state.incomingFiles = new Map(); // transfer -> { peer, name, size, status, received, path, error, pc, download }
+
+function transferId() {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function formatSize(n) {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
+}
+
+function offerFile(peer, file) {
+  if (!file) return;
+  if (isGroup(peer)) return toast("Files go to one friend at a time. Open a DM with them to send it.", true);
+  if (!file.size) return toast("That file is empty.", true);
+  if (file.size > FILE_MAX) return toast("Files can be up to 4 GB.", true);
+  const transfer = transferId();
+  state.outgoingFiles.set(transfer, { file, peer, status: "waiting", sent: 0 });
+  const name = (file.name || "file").replace(/[\r\n]+/g, " ").slice(0, 200);
+  sendDm(peer, { value: `hopp-file:${transfer} ${file.size} ${name}`, style: {} });
+}
+
+async function fileSignal(peer, transfer, payload) {
+  const sealed = await invoke("dm_seal", { peer, text: JSON.stringify(payload) });
+  await invoke("account_send", { msg: { type: "file_signal", to: peer, transfer, sealed } });
+}
+
+/** Waits for the connection's addresses to be gathered (or a moment, at most). */
+function addressesReady(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((done) => {
+    const timer = setTimeout(done, 3000);
+    pc.addEventListener("icegatheringstatechange", () => {
+      if (pc.iceGatheringState === "complete") {
+        clearTimeout(timer);
+        done();
+      }
+    });
+  });
+}
+
+let fileCardTimer = null;
+/** Redraws a transfer's cards in place (not the whole conversation), at most ~8 times a second. */
+function refreshFileCards(transfer, now) {
+  const draw = () => {
+    fileCardTimer = null;
+    for (const card of document.querySelectorAll(`.file-card[data-transfer="${transfer}"]`)) {
+      const fresh = fileCard(card.peer, card.message);
+      card.replaceWith(fresh);
+    }
+  };
+  if (now) return draw();
+  if (!fileCardTimer) fileCardTimer = setTimeout(draw, 120);
+}
+
+function failIncoming(transfer, error) {
+  const inc = state.incomingFiles.get(transfer);
+  if (!inc || inc.status === "done") return;
+  inc.status = "failed";
+  inc.error = error;
+  inc.pc?.close();
+  if (inc.download) invoke("download_cancel", { id: inc.download }).catch(() => {});
+  refreshFileCards(transfer, true);
+}
+
+function failOutgoing(transfer, error) {
+  const out = state.outgoingFiles.get(transfer);
+  if (!out || out.status === "sent") return;
+  out.status = "failed";
+  out.error = error;
+  out.pc?.close();
+  refreshFileCards(transfer, true);
+}
+
+async function onFileSignal(m) {
+  const transfer = m.transfer;
+  if (m.offline) {
+    return failIncoming(transfer, `${personFor(m.from).display_name} isn't online. They need Hopp open to send the file.`);
+  }
+  let signal;
+  try {
+    signal = JSON.parse(await invoke("dm_open", { peer: m.from, sealed: m.sealed }));
+  } catch {
+    return;
+  }
+  const out = state.outgoingFiles.get(transfer);
+  const inc = state.incomingFiles.get(transfer);
+  if (signal.kind === "request") {
+    if (!out || out.peer !== m.from || out.status === "cancelled") return fileSignal(m.from, transfer, { kind: "gone" }).catch(() => {});
+    return startSending(transfer, out);
+  }
+  if (signal.kind === "answer" && out?.pc && out.peer === m.from) {
+    return out.pc.setRemoteDescription({ type: "answer", sdp: String(signal.sdp) }).catch(() => failOutgoing(transfer, "Couldn't connect."));
+  }
+  if (signal.kind === "offer" && inc && inc.peer === m.from && inc.status === "connecting") return startReceiving(transfer, inc, String(signal.sdp));
+  if (signal.kind === "gone" && inc?.peer === m.from) {
+    return failIncoming(transfer, `This file isn't available anymore. Ask ${personFor(m.from).display_name} to send it again.`);
+  }
+  if (signal.kind === "cancel") {
+    if (inc?.peer === m.from) failIncoming(transfer, "The transfer was stopped.");
+    if (out?.peer === m.from) failOutgoing(transfer, "The transfer was stopped.");
+  }
+}
+
+// ----- sending -----
+
+async function startSending(transfer, out) {
+  out.pc?.close();
+  const pc = new RTCPeerConnection({ iceServers: FILE_ICE });
+  out.pc = pc;
+  out.status = "connecting";
+  out.sent = 0;
+  out.error = null;
+  refreshFileCards(transfer, true);
+  const channel = pc.createDataChannel("file", { ordered: true });
+  channel.binaryType = "arraybuffer";
+  channel.bufferedAmountLowThreshold = 1024 * 1024;
+  const timer = setTimeout(() => {
+    if (out.status === "connecting") failOutgoing(transfer, "Couldn't connect directly to your friend.");
+  }, FILE_CONNECT_MS);
+  channel.addEventListener("open", () => {
+    clearTimeout(timer);
+    pump(transfer, out, channel);
+  });
+  channel.addEventListener("message", (e) => {
+    if (e.data === "ok") {
+      out.status = "sent";
+      refreshFileCards(transfer, true);
+      setTimeout(() => pc.close(), 500);
+    }
+  });
+  channel.addEventListener("close", () => {
+    if (out.status === "sending") failOutgoing(transfer, "The connection was lost.");
+  });
+  try {
+    await pc.setLocalDescription(await pc.createOffer());
+    await addressesReady(pc);
+    await fileSignal(out.peer, transfer, { kind: "offer", sdp: pc.localDescription.sdp });
+  } catch (err) {
+    failOutgoing(transfer, friendlyError(err?.message ?? err));
+  }
+}
+
+async function pump(transfer, out, channel) {
+  out.status = "sending";
+  const size = out.file.size;
+  try {
+    while (out.sent < size) {
+      if (out.status !== "sending") return;
+      if (channel.bufferedAmount > 4 * 1024 * 1024) {
+        await new Promise((done) => channel.addEventListener("bufferedamountlow", done, { once: true }));
+      }
+      const piece = await out.file.slice(out.sent, out.sent + FILE_CHUNK).arrayBuffer();
+      channel.send(piece);
+      out.sent += piece.byteLength;
+      refreshFileCards(transfer);
+    }
+    channel.send("done");
+  } catch (err) {
+    failOutgoing(transfer, "The connection was lost.");
+  }
+}
+
+// ----- receiving -----
+
+async function downloadFile(transfer, peer, name, size) {
+  if (RISKY_FILE.test(name)) {
+    const who = personFor(peer).display_name;
+    const ok = await confirmDialog({
+      title: "This is a program",
+      text: `${name} can run code on your computer. Only download it if you trust ${who} and were expecting it. Windows will ask again before it runs.`,
+      ok: "Download anyway",
+    });
+    if (!ok) return;
+  }
+  const inc = { peer, name, size, status: "connecting", received: 0 };
+  state.incomingFiles.set(transfer, inc);
+  refreshFileCards(transfer, true);
+  setTimeout(() => {
+    if (inc.status === "connecting") failIncoming(transfer, `Couldn't reach ${personFor(peer).display_name}. They need to be online with Hopp open.`);
+  }, FILE_CONNECT_MS);
+  fileSignal(peer, transfer, { kind: "request" }).catch((err) => failIncoming(transfer, friendlyError(err)));
+}
+
+async function startReceiving(transfer, inc, sdp) {
+  const pc = new RTCPeerConnection({ iceServers: FILE_ICE });
+  inc.pc = pc;
+  pc.addEventListener("datachannel", (e) => receive(transfer, inc, e.channel));
+  try {
+    await pc.setRemoteDescription({ type: "offer", sdp });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await addressesReady(pc);
+    await fileSignal(inc.peer, transfer, { kind: "answer", sdp: pc.localDescription.sdp });
+  } catch (err) {
+    failIncoming(transfer, "Couldn't connect directly to your friend.");
+  }
+}
+
+function receive(transfer, inc, channel) {
+  channel.binaryType = "arraybuffer";
+  let writing = Promise.resolve();
+  let started = null;
+  // The channel may already be open when it arrives.
+  const begin = () => {
+    if (started) return;
+    inc.status = "receiving";
+    started = invoke("download_start", { name: inc.name }).then((d) => {
+      inc.download = d.id;
+      inc.path = d.path;
+      return d.id;
+    });
+    writing = started;
+    refreshFileCards(transfer, true);
+  };
+  if (channel.readyState === "open") begin();
+  channel.addEventListener("open", begin);
+  channel.addEventListener("message", (e) => {
+    begin();
+    if (typeof e.data === "string") {
+      if (e.data !== "done") return;
+      writing
+        .then(async () => {
+          if (inc.received !== inc.size) throw new Error("incomplete");
+          inc.path = await invoke("download_finish", { id: inc.download });
+          inc.download = null;
+          inc.status = "done";
+          channel.send("ok");
+          refreshFileCards(transfer, true);
+        })
+        .catch(() => failIncoming(transfer, "The file didn't arrive whole. Try again."));
+      return;
+    }
+    const piece = new Uint8Array(e.data);
+    inc.received += piece.byteLength;
+    if (inc.received > inc.size) return failIncoming(transfer, "The file was bigger than announced, so it was stopped.");
+    writing = writing.then((id) => invoke("download_chunk", piece, { headers: { "x-download": inc.download ?? id } }).then(() => id));
+    writing.catch((err) => failIncoming(transfer, friendlyError(err)));
+    refreshFileCards(transfer);
+  });
+  channel.addEventListener("close", () => {
+    if (inc.status === "receiving") failIncoming(transfer, "The connection was lost.");
+  });
+}
+
+// ----- the card -----
+
+function fileCard(peer, m) {
+  const [, transfer, sizeText, name] = m.text.match(FILE_OFFER);
+  const size = Number(sizeText);
+  const mine = m.from_key === state.me?.key;
+  const card = el("div", "file-card");
+  card.dataset.transfer = transfer;
+  card.peer = peer;
+  card.message = m;
+  const risky = RISKY_FILE.test(name);
+  const badge = el("span", "file-icon" + (risky ? " risky" : ""));
+  badge.append(icon(risky ? "shield" : "download"));
+  const info = el("div", "file-info");
+  const title = el("strong", "ellipsis", name);
+  title.title = name;
+  const sub = el("span", "file-sub");
+  info.append(title, sub);
+  const action = el("div", "file-action");
+  card.append(badge, info, action);
+  const bar = (done) => {
+    const b = el("div", "file-bar");
+    const fill = el("span");
+    fill.style.width = `${Math.min(100, Math.round((done / size) * 100))}%`;
+    b.append(fill);
+    info.append(b);
+  };
+  const button = (label, onClick, extra = "") => {
+    const b = el("button", "btn sm " + extra, label);
+    b.type = "button";
+    b.addEventListener("click", onClick);
+    action.append(b);
+  };
+  const who = personFor(peer).display_name;
+  if (mine) {
+    const out = state.outgoingFiles.get(transfer);
+    if (!out) sub.textContent = `${formatSize(size)} · No longer available from this computer`;
+    else if (out.status === "waiting") {
+      sub.textContent = `${formatSize(size)} · Waiting for ${who} to download. Keep Hopp open.`;
+      button("Cancel", () => {
+        out.status = "cancelled";
+        refreshFileCards(transfer, true);
+      });
+    } else if (out.status === "connecting") sub.textContent = `Connecting to ${who}…`;
+    else if (out.status === "sending") {
+      sub.textContent = `Sending · ${formatSize(out.sent)} of ${formatSize(size)}`;
+      bar(out.sent);
+      button("Stop", () => {
+        fileSignal(peer, transfer, { kind: "cancel" }).catch(() => {});
+        failOutgoing(transfer, "You stopped the transfer.");
+      });
+    } else if (out.status === "sent") sub.textContent = `${formatSize(size)} · Sent`;
+    else if (out.status === "cancelled") sub.textContent = `${formatSize(size)} · Cancelled`;
+    else sub.textContent = out.error || "Couldn't send.";
+    return card;
+  }
+  const inc = state.incomingFiles.get(transfer);
+  if (!inc) {
+    sub.textContent = risky ? `${formatSize(size)} · A program: only open it if you trust ${who}` : formatSize(size);
+    button("Download", () => downloadFile(transfer, peer, name, size), "primary");
+  } else if (inc.status === "connecting") {
+    sub.textContent = `Connecting to ${who}…`;
+  } else if (inc.status === "receiving") {
+    sub.textContent = `Downloading · ${formatSize(inc.received)} of ${formatSize(size)}`;
+    bar(inc.received);
+    button("Stop", () => {
+      fileSignal(peer, transfer, { kind: "cancel" }).catch(() => {});
+      failIncoming(transfer, "You stopped the download.");
+    });
+  } else if (inc.status === "done") {
+    sub.textContent = `${formatSize(size)} · Saved to Downloads`;
+    button("Show in folder", () => invoke("show_download", { path: inc.path }).catch((err) => toast(friendlyError(err), true)));
+  } else {
+    sub.textContent = inc.error || "Couldn't download.";
+    button("Try again", () => {
+      state.incomingFiles.delete(transfer);
+      downloadFile(transfer, peer, name, size);
+    });
+  }
+  return card;
+}

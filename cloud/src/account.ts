@@ -598,6 +598,18 @@ export class StromAccount extends DurableObject<Env> {
         if (kind === "ring" && !reached) this.send(ws, { type: "call", from: to, kind: "offline", call_id: callId });
         return;
       }
+      case "file_signal": {
+        // Files go straight between friends' computers; this only passes their handshake
+        // (sealed like a DM, so the cloud can't read it).
+        const to = String(msg.to ?? "").toLowerCase();
+        const transfer = String(msg.transfer ?? "");
+        const sealed = String(msg.sealed ?? "");
+        if (!/^[0-9a-f]{32}$/.test(transfer) || !/^[0-9a-f]{2,24000}$/.test(sealed)) return error("Bad file signal.");
+        if (this.friend(to)?.state !== "friend") return error("You can only send files to friends.");
+        const reached = await accountOf(this.env, to).fileSignal(myKey, transfer, sealed);
+        if (!reached) this.send(ws, { type: "file_signal", from: to, transfer, offline: true });
+        return;
+      }
       case "channel_read": {
         const server = String(msg.server ?? "");
         const channel = Number(msg.channel);
@@ -998,6 +1010,14 @@ export class StromAccount extends DurableObject<Env> {
       mention: m.mention,
       preview: m.preview,
     });
+  }
+
+  /** A file handshake from a friend. False when none of our devices is online. */
+  async fileSignal(fromKey: string, transfer: string, sealed: string): Promise<boolean> {
+    if (this.friend(fromKey)?.state !== "friend") return false;
+    if (this.devices().length === 0) return false;
+    this.toDevices({ type: "file_signal", from: fromKey, transfer, sealed });
+    return true;
   }
 
   /** A call signal from a friend. False when none of our devices is online to hear it. */

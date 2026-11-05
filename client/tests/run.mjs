@@ -4,7 +4,7 @@
 //   node client/tests/run.mjs            all tests
 //   node client/tests/run.mjs smoke      tests whose name contains "smoke"
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,13 +47,20 @@ for (const test of tests) {
   const file = join(work, test.replace(".test.js", ".html"));
   writeFileSync(file, html);
   // A test that needs longer (decoding big pictures uses virtual time) says "// virtual-time: <ms>".
-  const budget = readFileSync(join(here, test), "utf8").match(/\/\/ virtual-time: (\d+)/)?.[1] ?? "30000";
+  const source = readFileSync(join(here, test), "utf8");
+  const budget = source.match(/\/\/ virtual-time: (\d+)/)?.[1] ?? "30000";
+  // Networking (WebRTC) needs the real clock: "// real-time: <ms>" runs it live and waits
+  // up to that long for the results.
+  const real = source.match(/\/\/ real-time: (\d+)/)?.[1];
   let dom;
-  try {
-    dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-  } catch (e) {
-    // Edge sometimes exits with an error after printing the page; use what it printed.
-    dom = String(e.stdout ?? "");
+  if (real) dom = await runLive(file, test, Number(real));
+  else {
+    try {
+      dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    } catch (e) {
+      // Edge sometimes exits with an error after printing the page; use what it printed.
+      dom = String(e.stdout ?? "");
+    }
   }
   const m = dom.match(/<pre id="test-results">([\s\S]*?)<\/pre>/);
   const lines = m ? m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").split("\n") : ["FAIL the test never reported (it crashed or took too long)"];
@@ -65,3 +72,46 @@ for (const test of tests) {
 }
 console.log(failed ? `\n${failed} failed` : "\nall passed");
 process.exit(failed ? 1 : 0);
+
+/** Runs a page in real time through Edge's debugging port; returns its results block. */
+async function runLive(file, test, timeoutMs) {
+  const port = 9300 + Math.floor(Math.random() * 500);
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    let target = null;
+    for (let i = 0; i < 50 && !target; i++) {
+      await sleep(200);
+      target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(pathToFileURL(file).href)}`, { method: "PUT" }).then((r) => r.json()).catch(() => null);
+    }
+    if (!target) return "";
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((r) => ws.addEventListener("open", r, { once: true }));
+    let id = 0;
+    const evaluate = (expression) =>
+      new Promise((resolve) => {
+        const mine = ++id;
+        const onMessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.id !== mine) return;
+          ws.removeEventListener("message", onMessage);
+          resolve(msg.result?.result?.value ?? null);
+        };
+        ws.addEventListener("message", onMessage);
+        ws.send(JSON.stringify({ id: mine, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+      });
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) {
+      const html = await evaluate("document.getElementById('test-results')?.outerHTML ?? null");
+      if (html) {
+        ws.close();
+        return html;
+      }
+      await sleep(300);
+    }
+    ws.close();
+    return "";
+  } finally {
+    browser.kill();
+  }
+}

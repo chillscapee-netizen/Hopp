@@ -2889,3 +2889,14 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }
+
+/* ---------- files between friends ---------- */
+.file-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: min(440px, 100%); margin: 4px 0 2px; padding: 12px 14px; background: var(--side); border: 1px solid var(--border); border-radius: 10px; }
+.file-icon { display: grid; place-items: center; width: 40px; height: 40px; background: var(--elev); border-radius: 10px; color: var(--text-2); }
+.file-icon.risky { color: var(--yellow); }
+.file-info { display: grid; gap: 3px; min-width: 0; }
+.file-info strong { font-size: 14.5px; }
+.file-sub { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+.file-bar { height: 5px; margin-top: 3px; overflow: hidden; background: var(--deep); border-radius: 3px; }
+.file-bar span { display: block; height: 100%; background: var(--green); border-radius: 3px; transition: width 150ms linear; }
+.file-action { display: flex; gap: 6px; }

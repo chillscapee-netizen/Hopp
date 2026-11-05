@@ -37,6 +37,7 @@ const ALLOWED: &[&str] = &[
     "group_send",
     "dm_edit",
     "dm_delete",
+    "file_signal",
 ];
 
 #[derive(Default)]

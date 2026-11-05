@@ -62,7 +62,7 @@
   clearAttachment();
   dropOn($("scroller"), new File(["hello"], "notes.txt", { type: "text/plain" }));
   await wait(100);
-  check("other files get a clear word", document.body.textContent.includes("Only pictures can be shared"));
+  check("other files get a clear word", document.body.textContent.includes("Servers take pictures only"));
   const stray = dropOn($("sidebar") ?? document.body, new File(["x"], "x.txt", { type: "text/plain" }));
   check("a stray drop doesn't open the file", stray.defaultPrevented);
 

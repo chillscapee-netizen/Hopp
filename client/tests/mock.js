@@ -75,6 +75,8 @@ const dmHistory = {
 
 /** Encrypted DM pictures the app uploaded, by id (what the cloud would store). */
 const uploadedDm = new Map();
+/** A file saved by a transfer: its name and the pieces written. */
+const downloaded = { parts: [] };
 
 const commands = {
   account_status: () => ({ exists: true, name: "Marcus", public_key: ME, logged_in: true, remembered: true, backed_up: true }),
@@ -108,6 +110,8 @@ const commands = {
   account_send: ({ msg: m }) => {
     sent.push(m);
     if (m.type === "dm_history") setTimeout(() => emit("account", { type: "dm_history", with: m.with, messages: dmHistory[m.with] ?? [], complete: true }), 10);
+    // File handshakes come straight back, as if from the friend: this page plays both sides.
+    if (m.type === "file_signal") setTimeout(() => emit("account", { type: "file_signal", from: m.to, transfer: m.transfer, sealed: m.sealed }), 5);
     if (m.type === "dm_edit") setTimeout(() => emit("account", { type: "dm_edited", with: m.with, id: m.id, sealed: typeof m.sealed === "string" ? m.sealed : m.sealed[ME], edited_at: Date.now() }), 10);
     if (m.type === "dm_delete") setTimeout(() => emit("account", { type: "dm_deleted", with: m.with, id: m.id }), 10);
     if (m.type === "dm_send") setTimeout(() => emit("account", { type: "dm", with: m.to, nonce: m.nonce, message: { id: "d" + nextId++, from_key: ME, sealed: m.sealed, sent_at: Date.now() } }), 10);
@@ -126,6 +130,11 @@ const commands = {
   update_server: (a) => { sent.push({ type: "update_server", ...a }); },
   update_channel: (a) => { sent.push({ type: "update_channel", ...a }); },
   upload_dm_image: ({ data }) => { const id = "cd".repeat(16); uploadedDm.set(id, new Uint8Array(data)); sent.push({ type: "upload_dm_image", size: data.length }); return id; },
+  download_start: ({ name }) => { downloaded.name = name; downloaded.parts = []; return { id: "d1", path: "C:/Users/me/Downloads/" + name, name }; },
+  download_chunk: (bytes) => { downloaded.parts.push(new Uint8Array(bytes)); },
+  download_finish: () => { downloaded.done = true; return "C:/Users/me/Downloads/" + downloaded.name; },
+  download_cancel: () => { downloaded.cancelled = true; },
+  show_download: () => {},
   gif_search: () => ({ gifs: [], next: null }),
   fetch_profile: ({ key }) => ({ key, username: null, display_name: "Someone", avatar: null, bio: "" }),
   send_chat: ({ channel, text }) => {

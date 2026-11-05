@@ -524,3 +524,26 @@ test("editing and deleting your own DMs reaches your friend; others' can't be to
   a.d.close();
   b.d.close();
 });
+
+test("file handshakes pass between online friends only", async () => {
+  const a = await userWithName("sender");
+  const b = await userWithName("getter");
+  const stranger = newKey();
+  const transfer = "ab".repeat(16);
+  a.d.send({ type: "file_signal", to: stranger.pub, transfer, sealed: "aa" });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /only send files to friends/);
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+
+  a.d.send({ type: "file_signal", to: b.key.pub, transfer, sealed: "abcd" });
+  const got = await b.d.waitFor((m) => m.type === "file_signal");
+  assert.deepEqual(got, { type: "file_signal", from: a.key.pub, transfer, sealed: "abcd" });
+  b.d.close();
+  await sleep(200);
+  a.d.send({ type: "file_signal", to: b.key.pub, transfer, sealed: "abcd" });
+  const offline = await a.d.waitFor((m) => m.type === "file_signal");
+  assert.equal(offline.offline, true);
+  a.d.close();
+});
