@@ -23,6 +23,7 @@
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
     <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.9-.7-1.3-.7-2.1 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4C21 6.9 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 13h6M7 16h10"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
     <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
@@ -779,16 +780,24 @@
   <dialog id="settings" class="modal settings-modal">
     <div class="settings-layout">
       <nav class="settings-nav">
-        <div class="settings-nav-label">User settings</div>
-        <button type="button" class="settings-tab active" data-tab="profile"><svg class="i"><use href="#i-user"/></svg><span>My Hopp ID</span></button>
-        <div class="settings-nav-label">App settings</div>
-        <button type="button" class="settings-tab" data-tab="voice"><svg class="i"><use href="#i-mic"/></svg><span>Voice &amp; audio</span></button>
-        <button type="button" class="settings-tab" data-tab="sounds"><svg class="i"><use href="#i-bell"/></svg><span>Sounds</span></button>
+        <button type="button" id="settings-me" class="settings-me">
+          <span id="settings-me-avatar"></span>
+          <span class="settings-me-text"><strong id="settings-me-name" class="ellipsis">You</strong><span>Edit profile <svg class="i xs"><use href="#i-edit"/></svg></span></span>
+        </button>
+        <div class="settings-nav-label">Your account</div>
+        <button type="button" class="settings-tab active" data-tab="profile"><svg class="i"><use href="#i-user"/></svg><span>Profile</span></button>
+        <button type="button" class="settings-tab" data-tab="security"><svg class="i"><use href="#i-lock"/></svg><span>Password &amp; security</span></button>
+        <button type="button" class="settings-tab" data-tab="privacy"><svg class="i"><use href="#i-shield"/></svg><span>Privacy &amp; safety</span></button>
+        <div class="settings-nav-label">App</div>
         <button type="button" class="settings-tab" data-tab="appearance"><svg class="i"><use href="#i-palette"/></svg><span>Appearance</span></button>
+        <button type="button" class="settings-tab" data-tab="voice"><svg class="i"><use href="#i-mic"/></svg><span>Voice &amp; audio</span></button>
+        <button type="button" class="settings-tab" data-tab="sounds"><svg class="i"><use href="#i-bell"/></svg><span>Notifications</span></button>
+        <button type="button" class="settings-tab" data-tab="keys"><svg class="i"><use href="#i-keyboard"/></svg><span>Keybinds</span></button>
         <button type="button" class="settings-tab" data-tab="windows"><svg class="i"><use href="#i-settings"/></svg><span>App</span></button>
-        <div class="settings-nav-sep"></div>
-        <button type="button" id="logout-btn" class="settings-tab danger"><svg class="i"><use href="#i-logout"/></svg><span>Log out</span></button>
-        <button type="button" id="copy-debug" class="settings-tab subtle"><svg class="i"><use href="#i-terminal"/></svg><span>Copy debug info</span></button>
+        <div class="settings-nav-foot">
+          <button type="button" id="logout-btn" class="settings-tab danger"><svg class="i"><use href="#i-logout"/></svg><span>Log out</span></button>
+          <div id="settings-version" class="settings-version">Hopp</div>
+        </div>
       </nav>
       <div class="settings-content">
 
@@ -848,7 +857,10 @@
             </div>
           </div>
 
-          <h3 class="card-title">Password and security</h3>
+        </section>
+
+        <section data-panel="security" class="settings-page" hidden>
+          <h2 class="page-title">Password &amp; security</h2>
           <div class="card">
             <div class="row">
               <span class="row-label">
@@ -902,7 +914,10 @@
             </label>
           </div>
 
-          <h3 class="card-title">Privacy</h3>
+        </section>
+
+        <section data-panel="privacy" class="settings-page" hidden>
+          <h2 class="page-title">Privacy &amp; safety</h2>
           <div class="card">
             <label class="row">
               <span class="row-label">
@@ -915,7 +930,15 @@
                 <option value="nobody">Nobody</option>
               </select>
             </label>
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Blocked people</span>
+                <span class="row-sub">They can't message you or send friend requests.</span>
+              </span>
+              <button id="privacy-blocked" type="button" class="btn sm">Manage</button>
+            </div>
           </div>
+          <p class="row-note hint safety-note"><svg class="i xs"><use href="#i-shield"/></svg><span>Nobody ever needs your recovery phrase, not a friend, a server owner or Hopp. Hopp won't let you send it, and warns you about "free gift" links.</span></p>
         </section>
 
         <section data-panel="voice" class="settings-page" hidden>
@@ -1036,6 +1059,24 @@
           <p class="row-note hint">Make your own: pick any colour and Hopp builds a whole theme around it, light or dark.</p>
         </section>
 
+        <section data-panel="keys" class="settings-page" hidden>
+          <h2 class="page-title">Keybinds</h2>
+          <div class="card">
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Push to talk</span>
+                <span class="row-sub">Hold it to talk, when push to talk is on.</span>
+              </span>
+              <span class="row-control"><span id="keys-ptt" class="key-show"></span><button id="keys-ptt-change" type="button" class="btn sm">Change</button></span>
+            </div>
+            <div class="row"><span class="row-title">Mute or unmute</span><span class="key-show"><kbd>Ctrl</kbd><kbd>M</kbd></span></div>
+            <div class="row"><span class="row-title">Deafen or undeafen</span><span class="key-show"><kbd>Ctrl</kbd><kbd>D</kbd></span></div>
+            <div class="row"><span class="row-title">Go anywhere: a friend, a channel, a server</span><span class="key-show"><kbd>Ctrl</kbd><kbd>K</kbd></span></div>
+            <div class="row"><span class="row-title">Search</span><span class="key-show"><kbd>Ctrl</kbd><kbd>F</kbd></span></div>
+            <div class="row"><span class="row-title">Newest messages</span><span class="key-show"><kbd>Ctrl</kbd><kbd>End</kbd></span></div>
+          </div>
+        </section>
+
         <section data-panel="windows" class="settings-page" hidden>
           <h2 class="page-title">App</h2>
           <div class="card">
@@ -1047,8 +1088,6 @@
               <button id="version-btn" type="button" class="btn sm">Check for updates</button>
             </div>
             <div id="version-bar" class="update-bar" hidden><span></span></div>
-          </div>
-          <div class="card">
             <label class="row">
               <span class="row-label">
                 <span class="row-title">Open Hopp when Windows starts</span>
@@ -1059,6 +1098,7 @@
             <label class="row">
               <span class="row-label">
                 <span class="row-title">When I close the window</span>
+                <span class="row-sub">Kept running, you still get calls and messages.</span>
               </span>
               <select id="close-action" class="row-select">
                 <option value="tray">Keep running by the clock</option>
@@ -1066,11 +1106,41 @@
               </select>
             </label>
           </div>
+          <details class="advanced-card">
+            <summary>Advanced</summary>
+            <div class="card">
+              <div class="row">
+                <span class="row-label">
+                  <span class="row-title">Debug info</span>
+                  <span class="row-sub">For when something goes wrong: paste it to whoever is helping you.</span>
+                </span>
+                <button id="copy-debug" type="button" class="btn sm">Copy</button>
+              </div>
+            </div>
+          </details>
         </section>
 
         <section data-panel="sounds" class="settings-page" hidden>
-          <h2 class="page-title">Sounds</h2>
+          <h2 class="page-title">Notifications</h2>
 
+          <div class="card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Desktop notifications</span>
+                <span class="row-sub">Messages, calls and friend requests while Hopp isn't in front.</span>
+              </span>
+              <input id="desktop-notify" type="checkbox" class="switch" checked>
+            </label>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Show what the message says</span>
+                <span class="row-sub">Off: notifications only say who wrote, for when others can see your screen.</span>
+              </span>
+              <input id="notify-text" type="checkbox" class="switch" checked>
+            </label>
+          </div>
+
+          <h3 class="card-title">Sounds</h3>
           <div class="card">
             <label class="row">
               <span class="row-title">Sound effects</span>
@@ -1098,7 +1168,6 @@
       </div>
       <div class="settings-close-wrap">
         <button type="button" class="modal-close settings-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
-        <span class="esc-hint">Esc</span>
       </div>
     </div>
   </dialog>

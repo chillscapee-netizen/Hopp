@@ -3005,3 +3005,21 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .theme-color { position: absolute; right: 10px; bottom: 8px; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
 .theme-color::-webkit-color-swatch-wrapper { padding: 0; }
 .theme-color::-webkit-color-swatch { border: 2px solid var(--border-strong); border-radius: 50%; }
+
+/* ---------- settings menu: you on top, quiet groups, log out at the foot ---------- */
+.settings-me { display: flex; align-items: center; gap: 12px; width: 100%; margin-bottom: 14px; padding: 8px; background: none; border: none; border-radius: 10px; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.settings-me:hover { background: var(--hover); }
+.settings-me-text { display: grid; min-width: 0; }
+.settings-me-text strong { font-size: 15px; }
+.settings-me-text span { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.settings-nav-label { padding: 16px 10px 6px; color: var(--faint); font-size: 12.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.settings-tab { color: var(--muted); }
+.settings-nav-foot { margin-top: auto; padding-top: 16px; }
+.settings-version { padding: 8px 10px 0; color: var(--faint); font-size: 12px; }
+#settings .settings-close { border: none; background: none; }
+#settings .settings-close:hover { background: var(--hover); }
+.key-show { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); }
+.key-show .muted { color: var(--faint); font-size: 13px; }
+.row-control .key-show { margin-right: 10px; }
+.safety-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; color: var(--muted); }
+.safety-note .i { flex: none; margin-top: 2px; }

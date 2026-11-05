@@ -3303,6 +3303,7 @@ $("deafen-btn").addEventListener("click", () => setDeafened(!state.deafened));
 
 function openSettings(tab) {
   showTab(tab);
+  renderSettingsMe();
   refreshDevices();
   renderProfilePreview();
   renderMicTest();
@@ -4930,7 +4931,9 @@ function notifyDm(peer, text, from) {
 
 /** A desktop notification with the person's picture, when Hopp isn't in front. */
 async function desktopNotify(person, body, action, title = person.display_name) {
-  if (document.hasFocus() || state.me?.status === "dnd") return;
+  if (document.hasFocus() || state.me?.status === "dnd" || !prefs.desktopNotify) return;
+  // What a message says stays off the screen when you'd rather it did.
+  if (!prefs.notifyText && /^(dm|channel):/.test(action) && !/friend request/.test(body)) body = "Sent a message";
   const image = await notifyPicture(person).catch(() => null);
   invoke("notify", { title, body, image, action }).catch(() => {});
 }
@@ -7374,6 +7377,7 @@ function renderUpdates() {
   btn.dataset.tip = updates.found ? `Hopp ${updates.found.version} is ready` : `Hopp ${updates.version} · up to date`;
 
   $("version-title").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
+  $("settings-version").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
   $("version-sub").textContent = installing
     ? updateProgressText()
     : updates.status === "checking"
@@ -9374,3 +9378,40 @@ prefs.theme = load("theme", "mid");
 prefs.themeColor = load("themeColor", "#3b4a46");
 applyTheme();
 renderThemes();
+
+// ---------- settings: you at the top, and the smaller pages ----------
+
+function renderSettingsMe() {
+  const name = state.account?.name ?? state.me?.display_name ?? "You";
+  $("settings-me-avatar").replaceChildren(avatar(name, "s40", undefined, state.me?.avatar ?? null));
+  $("settings-me-name").textContent = name;
+  const label = prefs.pttLabel;
+  $("keys-ptt").replaceChildren(...(label ? label.split("+").map((k) => el("kbd", "", k.trim())) : [el("span", "muted", "Not set")]));
+}
+$("settings-me").addEventListener("click", () => showTab("profile"));
+$("keys-ptt-change").addEventListener("click", () => showTab("voice"));
+$("privacy-blocked").addEventListener("click", () => {
+  $("settings").close();
+  goHomeTab("blocked");
+});
+
+/** Home, on one of the friends tabs. */
+function goHomeTab(tab) {
+  document.getElementById("home-btn")?.click();
+  requestAnimationFrame(() => document.querySelector('.friend-tab[data-ftab="' + tab + '"]')?.click());
+}
+
+prefs.desktopNotify = load("desktopNotify", "1") === "1";
+prefs.notifyText = load("notifyText", "1") === "1";
+$("desktop-notify").checked = prefs.desktopNotify;
+$("notify-text").checked = prefs.notifyText;
+$("notify-text").disabled = !prefs.desktopNotify;
+$("desktop-notify").addEventListener("change", (e) => {
+  prefs.desktopNotify = e.target.checked;
+  save("desktopNotify", e.target.checked ? "1" : "0");
+  $("notify-text").disabled = !e.target.checked;
+});
+$("notify-text").addEventListener("change", (e) => {
+  prefs.notifyText = e.target.checked;
+  save("notifyText", e.target.checked ? "1" : "0");
+});
