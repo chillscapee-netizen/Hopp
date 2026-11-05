@@ -834,6 +834,7 @@ fn create_channel(state: State<'_, AppState>, name: String, kind: ChannelKind) -
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn update_channel(
     state: State<'_, AppState>,
     channel: ChannelId,

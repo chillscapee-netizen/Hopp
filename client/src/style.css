@@ -3159,3 +3159,22 @@ body { background: var(--frame-bg, var(--frame)); }
 .menu-slider-value { color: var(--muted); font-variant-numeric: tabular-nums; }
 .menu-slider input { width: 100%; }
 .submenu { position: fixed; z-index: 61; }
+
+/* ---------- soft menus and cards ---------- */
+/* No hard outline: a gentle shadow and a faint edge, rounder corners. */
+.popover { border-color: transparent; border-radius: 14px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.42), 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent); }
+.menu { padding: 8px; }
+.menu-item { padding: 8px 10px; border-radius: 8px; font-weight: 400; color: var(--text-2); transition: background 80ms; }
+.menu-item:hover { background: var(--hover); color: var(--text); }
+.menu-item .i { opacity: 0.55; }
+.menu-item:hover .i { opacity: 0.9; }
+.menu-item.danger { color: var(--red); }
+.menu-item.danger:hover { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+.menu-sep { height: 1px; margin: 6px 8px; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.menu-check { width: 18px; height: 18px; border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent); border-radius: 6px; }
+.menu-check.on { background: var(--green); border-color: var(--green); color: #fff; }
+.menu-slider-head { font-size: 14px; color: var(--text-2); }
+
+/* Sliders everywhere: a thin track and a round handle. */
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 16%, transparent); }
+input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); }
