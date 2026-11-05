@@ -2914,7 +2914,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .members { border-left: none; }
 .active-now { border-left: none; }
 /* Headers sit over the content with a soft shadow instead of a hard line. */
-.sidebar-head, .main-head { position: relative; z-index: 2; border-bottom: none; box-shadow: 0 1px 0 rgb(0 0 0 / 0.2), 0 3px 8px -4px rgb(0 0 0 / 0.35); }
+.sidebar-head, .main-head { border-bottom: none; box-shadow: none; }
 /* The window title stays quiet: the sidebar already says where you are. */
 .topbar-title { color: var(--faint); font-size: 12px; font-weight: 500; }
 /* One family of rounded corners for everything you can point at. */
