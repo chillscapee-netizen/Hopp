@@ -972,6 +972,35 @@ async fn gif_search(cloud: String, q: String, pos: Option<String>) -> CmdResult<
     Ok(body)
 }
 
+/// Uploads a picture to a cloud server's chat, signed with our Hopp ID. Returns its id.
+#[tauri::command]
+async fn upload_image(state: State<'_, AppState>, cloud: String, server_id: String, data: Vec<u8>, kind: String) -> CmdResult<String> {
+    if !server_id.chars().all(|c| c.is_ascii_alphanumeric()) || !matches!(kind.as_str(), "image/webp" | "image/jpeg" | "image/png") {
+        return Err("That picture can't be sent.".into());
+    }
+    let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let signature = identity.sign_image(&server_id, &data, time);
+    let url = format!("{}/servers/{}/images", cloud.trim_end_matches('/'), server_id);
+    let response = reqwest::Client::new()
+        .post(url)
+        .header("content-type", kind)
+        .header("X-Hopp-Key", identity.public_key())
+        .header("X-Hopp-Time", time.to_string())
+        .header("X-Hopp-Signature", signature)
+        .body(data)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(body["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("Couldn't send the picture ({status}).")));
+    }
+    body["id"].as_str().map(str::to_string).ok_or_else(|| "Couldn't send the picture.".into())
+}
+
 /// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
 #[tauri::command]
 async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
@@ -1290,6 +1319,7 @@ fn main() {
             set_role,
             transfer_ownership,
             get_members,
+            upload_image,
             app_version,
             set_autostart,
             shell::window_compact,

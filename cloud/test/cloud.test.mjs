@@ -564,3 +564,48 @@ test("roles: moderators moderate, admins run the server, the owner names admins"
   assert.match(await errorOf(owner), /owner/);
   for (const c of [owner, ann, again]) c.close();
 });
+
+test("pictures: members upload signed pictures, send them, and they go with the message", async () => {
+  const { id, owner, invite } = await newServer();
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  const HTTP = BASE.replace(/^ws/, "http");
+  const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8 "), crypto.randomBytes(200)]);
+  const upload = (key, body = webp, { time = Date.now(), sign = key } = {}) => {
+    const digest = crypto.createHash("sha256").update(body).digest("hex");
+    const signature = crypto.sign(null, Buffer.from(`hopp-image-v1\0${id}\0${digest}\0${time}`), sign.privateKey).toString("hex");
+    return fetch(`${HTTP}/servers/${id}/images`, {
+      method: "POST",
+      headers: { "content-type": "image/webp", "X-Hopp-Key": key.pub, "X-Hopp-Time": String(time), "X-Hopp-Signature": signature },
+      body,
+    });
+  };
+
+  assert.equal((await upload(newKey())).status, 403, "strangers can't upload");
+  assert.equal((await upload(bob.key, webp, { sign: newKey() })).status, 401, "a wrong signature is refused");
+  assert.equal((await upload(bob.key, webp, { time: Date.now() - 3_600_000 })).status, 401, "an old signature is refused");
+  const fake = Buffer.from("<svg onload=alert(1)>");
+  const res = await fetch(`${HTTP}/servers/${id}/images`, { method: "POST", headers: { "content-type": "image/webp", "X-Hopp-Key": bob.key.pub, "X-Hopp-Time": String(Date.now()), "X-Hopp-Signature": "00".repeat(64) }, body: fake });
+  assert.notEqual(res.status, 200, "non-pictures are refused");
+
+  const ok = await upload(bob.key);
+  assert.equal(ok.status, 200);
+  const { id: picture } = await ok.json();
+  assert.match(picture, /^[0-9a-f]{32}$/);
+  const got = await fetch(`${HTTP}/servers/${id}/images/${picture}`);
+  assert.equal(got.headers.get("content-type"), "image/webp");
+  assert.deepEqual(Buffer.from(await got.arrayBuffer()), webp);
+
+  // Only your own picture can be sent.
+  owner.send({ type: "send_chat", channel: general, text: `hopp-image:${picture} 10x10` });
+  assert.match(await errorOf(owner), /didn't upload/);
+  bob.send({ type: "send_chat", channel: general, text: `hopp-image:${picture} 10x10\nnice view` });
+  const sent = (await owner.waitFor((m) => m.type === "chat" && m.message.text.startsWith("hopp-image:"))).message;
+
+  // Deleting the message deletes the picture.
+  bob.send({ type: "delete_message", channel: general, id: sent.id });
+  await owner.waitFor((m) => m.type === "message_deleted");
+  assert.equal((await fetch(`${HTTP}/servers/${id}/images/${picture}`)).status, 404, "a deleted picture is gone");
+  owner.close();
+  bob.close();
+});

@@ -36,9 +36,11 @@ for (const test of tests) {
   const html = page.replace('<script src="main.js"></script>', `<script src="mock.js"></script><script src="main.js"></script><script src="${test}"></script>`);
   const file = join(work, test.replace(".test.js", ".html"));
   writeFileSync(file, html);
+  // A test that needs longer (decoding big pictures uses virtual time) says "// virtual-time: <ms>".
+  const budget = readFileSync(join(here, test), "utf8").match(/\/\/ virtual-time: (\d+)/)?.[1] ?? "30000";
   let dom;
   try {
-    dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", "--virtual-time-budget=30000", "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
   } catch (e) {
     // Edge sometimes exits with an error after printing the page; use what it printed.
     dom = String(e.stdout ?? "");

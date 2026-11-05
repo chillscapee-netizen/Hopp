@@ -117,6 +117,7 @@ const commands = {
   invite_preview: ({ code }) => ({ name: "Night Raiders", icon: null, members: 12, online: 4, server_id: "nr0001", code, inviter: "Elin" }),
   set_role: (a) => { sent.push({ type: "set_role", ...a }); },
   transfer_ownership: (a) => { sent.push({ type: "transfer_ownership", ...a }); },
+  upload_image: ({ data, kind }) => { sent.push({ type: "upload_image", size: data.length, kind }); return "ab".repeat(16); },
   gif_search: () => ({ gifs: [], next: null }),
   fetch_profile: ({ key }) => ({ key, username: null, display_name: "Someone", avatar: null, bio: "" }),
   send_chat: ({ channel, text }) => {

@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: https://static.klipy.com https://static1.klipy.com https://static2.klipy.com https://static3.klipy.com; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' data: blob: https://hopp-cloud.hoppchat.workers.dev http://127.0.0.1:8787 https://static.klipy.com https://static1.klipy.com https://static2.klipy.com https://static3.klipy.com; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {

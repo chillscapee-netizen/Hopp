@@ -25,6 +25,7 @@ export interface Env {
 
 /** Server ids are long and random, so they can't be guessed. */
 const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
+const IMAGE_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/images(?:\/([0-9a-f]{32}))?$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
 const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
 const PROFILE_PATH = /^\/profiles\/([0-9a-f]{64})$/;
@@ -42,6 +43,17 @@ export default {
 
     // GIFs for the picker: search, or what's popular. The key stays here, and answers are cached.
     if (url.pathname === "/gifs" && request.method === "GET") return gifs(url, env, ctx);
+
+    // Pictures in a server's chat: uploads (signed by a member) and the pictures themselves.
+    const image = url.pathname.match(IMAGE_PATH);
+    if (image) {
+      const stub = env.SERVERS.get(env.SERVERS.idFromName(image[1]));
+      const forwarded = new Request(request);
+      forwarded.headers.set("X-Strom-Server", image[1]);
+      // Not kept in Cloudflare's cache: a deleted picture must be gone at once. The app keeps
+      // its own copy, so each person fetches a picture only once.
+      return stub.fetch(forwarded);
+    }
 
     const server = url.pathname.match(SERVER_PATH);
     if (server) {

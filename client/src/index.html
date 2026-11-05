@@ -265,7 +265,10 @@
                   <span id="reply-text" class="ellipsis"></span>
                   <button type="button" id="reply-cancel" class="reply-cancel" data-tip="Cancel reply" aria-label="Cancel reply"><svg class="i"><use href="#i-x"/></svg></button>
                 </div>
+                <div id="attach-tray" class="attach-tray" hidden></div>
                 <div class="composer-row">
+                  <button type="button" id="attach-btn" class="composer-icon attach-btn" data-tip="Add a picture" aria-label="Add a picture"><svg class="i"><use href="#i-plus"/></svg></button>
+                  <input id="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
                   <textarea id="chat-input" rows="1" maxlength="2000"></textarea>
                   <button type="button" id="emoji-btn" class="composer-icon" data-tip="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
                 </div>
@@ -1093,6 +1096,7 @@
   </div>
 
   <div id="server-menu" class="popover menu" hidden></div>
+  <dialog id="lightbox" class="lightbox"><img id="lightbox-img" alt=""></dialog>
   <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="pins-pop" class="popover pins-pop" hidden></div>
   <div id="incoming-call" class="incoming-call" hidden>

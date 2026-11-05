@@ -151,6 +151,15 @@ impl Identity {
         hex::encode(self.key.sign(&strom_shared::auth_message(nonce)).to_bytes())
     }
 
+    /// Signs a picture for a cloud server: proof that this Hopp ID uploads exactly these
+    /// bytes to that server around this time (milliseconds since 1970).
+    pub fn sign_image(&self, server_id: &str, data: &[u8], time_ms: u64) -> String {
+        use sha2::{Digest, Sha256};
+        let digest = hex::encode(Sha256::digest(data));
+        let message = format!("hopp-image-v1\0{server_id}\0{digest}\0{time_ms}");
+        hex::encode(self.key.sign(message.as_bytes()).to_bytes())
+    }
+
     /// A key only this Hopp ID has, for data it stores in the cloud for itself
     /// (the synced server list and settings). Every device with the same ID can read it.
     fn private_data_key(&self) -> [u8; 32] {

@@ -343,7 +343,7 @@ function parseInvite(input) {
 }
 
 function isCloud(server) {
-  return server.address.startsWith("cloud:");
+  return !!server?.address?.startsWith("cloud:");
 }
 
 /** What the backend connects to: a WebSocket URL for cloud servers, host:port otherwise. */
@@ -2159,6 +2159,8 @@ function renderChannelView() {
   $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
   $("chat-input").placeholder = `Message #${channelName(view)}`;
+  $("attach-btn").hidden = !isCloud(activeServer());
+  if (typeof renderAttachment === "function") renderAttachment();
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
   $("members-toggle").classList.toggle("selected", prefs.showMembers);
   $("members-toggle").dataset.tip = prefs.showMembers ? "Hide member list" : "Show member list";
@@ -2437,7 +2439,12 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
-    else if (GIF_URL.test(m.text.trim())) {
+    else if (PICTURE.test(m.text)) {
+      const [, id, w, h] = m.text.match(PICTURE);
+      const caption = m.text.slice(m.text.match(PICTURE)[0].length).trim();
+      if (caption) li.append(messageText(caption));
+      li.append(pictureView(id, Number(w), Number(h)));
+    } else if (GIF_URL.test(m.text.trim())) {
       const img = el("img", "msg-gif");
       img.src = m.text.trim();
       img.alt = "GIF";
@@ -3103,6 +3110,10 @@ chatInput.addEventListener("keydown", (e) => {
   // Enter while an input method is composing a character confirms the character, not the message.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
+    if (state.attachment && state.view !== null) {
+      sendPicture();
+      return;
+    }
     const text = withMentions(chatInput.value.trim());
     if (!text || state.view === null) return;
     const replyTo = state.replyTo?.channel === state.view ? state.replyTo.id : null;
@@ -5080,6 +5091,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
   if (GIF_URL.test(text.trim())) return "GIF";
   return plainText(text)
     .replace(/\|\|[\s\S]+?\|\|/g, "(spoiler)")
@@ -5432,7 +5444,7 @@ function messageActions(m) {
   };
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
-  if (m.author_key === state.account?.publicKey) button("edit", "Edit", () => startEdit(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -5483,6 +5495,7 @@ function setReply(m) {
 $("reply-cancel").addEventListener("click", () => setReply(null));
 
 function startEdit(m) {
+  if (PICTURE.test(m.text)) return;
   state.editing = { id: m.id, channel: m.channel };
   renderMessages(true);
   const box = document.querySelector("#messages .msg-editor textarea");
@@ -6354,7 +6367,7 @@ function openMessageMenu(m, e) {
   openMenu(
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
-      ...(mine ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -7253,3 +7266,169 @@ function fillUpToDatePop(pop) {
   actions.append(checkBtn);
   pop.replaceChildren(head, actions);
 }
+
+// ---------- pictures in chat ----------
+//
+// Cloud servers keep pictures in their own database. The app shrinks each one to
+// a light WebP first, uploads it signed with our Hopp ID, and sends a message that
+// points to it: "hopp-image:<id> <width>x<height>", then the caption.
+
+var PICTURE = /^hopp-image:([0-9a-f]{32}) (\d{1,5})x(\d{1,5})(?:\n|$)/;
+const PICTURE_MAX_BYTES = 300_000;
+const PICTURE_MAX_SIDE = 1600;
+state.attachment = null; // { channel, blob, type, width, height, url, sending }
+
+function cloudHttp() {
+  return prefs.cloudUrl.replace(/^ws/, "http").replace(/\/+$/, "");
+}
+
+function pictureUrl(id) {
+  const server = activeServer()?.address.slice("cloud:".length);
+  return `${cloudHttp()}/servers/${server}/images/${id}`;
+}
+
+/** Shrinks a picture until it's light enough to send. */
+async function shrinkPicture(file) {
+  const bitmap = await createImageBitmap(file);
+  let scale = Math.min(1, PICTURE_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    for (const quality of [0.86, 0.76, 0.64]) {
+      let url = canvas.toDataURL("image/webp", quality);
+      if (!url.startsWith("data:image/webp")) url = canvas.toDataURL("image/jpeg", quality);
+      const type = url.slice(5, url.indexOf(";"));
+      const bytes = Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0));
+      if (bytes.length <= PICTURE_MAX_BYTES) return { blob: new Blob([bytes], { type }), type, width, height };
+    }
+    scale *= 0.75;
+  }
+  throw new Error("That picture is too big to send.");
+}
+
+async function attachPicture(file) {
+  if (!file || !/^image\//.test(file.type)) return;
+  if (!online() || state.view === null) return;
+  if (!isCloud(activeServer())) return toast("Pictures work on Hopp Cloud servers.", true);
+  try {
+    const shrunk = await shrinkPicture(file);
+    clearAttachment();
+    state.attachment = { channel: state.view, ...shrunk, url: URL.createObjectURL(shrunk.blob), sending: false };
+    renderAttachment();
+    chatInput.focus();
+  } catch (err) {
+    toast(friendlyError(err?.message ?? err), true);
+  }
+}
+
+function clearAttachment() {
+  if (state.attachment?.url) URL.revokeObjectURL(state.attachment.url);
+  state.attachment = null;
+  renderAttachment();
+}
+
+function renderAttachment() {
+  const tray = $("attach-tray");
+  const a = state.attachment;
+  const show = !!a && a.channel === state.view;
+  tray.hidden = !show;
+  $("composer").classList.toggle("has-attachment", show);
+  if (!show) return tray.replaceChildren();
+  const card = el("div", "attach-card" + (a.sending ? " sending" : ""));
+  const img = el("img");
+  img.src = a.url;
+  img.alt = "";
+  card.append(img);
+  if (a.sending) card.append(el("span", "attach-status", "Sending…"));
+  else {
+    const remove = el("button", "attach-remove");
+    remove.type = "button";
+    remove.dataset.tip = "Remove";
+    remove.setAttribute("aria-label", "Remove picture");
+    remove.append(icon("x", "xs"));
+    remove.addEventListener("click", clearAttachment);
+    card.append(remove);
+  }
+  tray.replaceChildren(card, el("span", "attach-hint", a.sending ? "" : "Add a caption, or press Enter to send"));
+}
+
+async function sendPicture() {
+  const a = state.attachment;
+  if (!a || a.sending) return;
+  const channel = a.channel;
+  const caption = withMentions(chatInput.value.trim());
+  const replyTo = state.replyTo?.channel === channel ? state.replyTo.id : null;
+  a.sending = true;
+  renderAttachment();
+  try {
+    const bytes = new Uint8Array(await a.blob.arrayBuffer());
+    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(bytes), kind: a.type });
+    chatInput.value = "";
+    autosize();
+    clearDraft();
+    setReply(null);
+    clearAttachment();
+    sendChat(channel, `hopp-image:${id} ${a.width}x${a.height}${caption ? "\n" + caption : ""}`, replyTo);
+  } catch (err) {
+    a.sending = false;
+    renderAttachment();
+    toast(friendlyError(err), true);
+  }
+}
+
+/** A picture in a message, sized before it loads so the chat doesn't jump. */
+function pictureView(id, width, height) {
+  const fit = Math.min(1, 400 / width, 320 / height);
+  const box = el("button", "msg-picture");
+  box.type = "button";
+  box.style.width = `${Math.max(48, Math.round(width * fit))}px`;
+  box.style.aspectRatio = `${width} / ${height}`;
+  const img = el("img");
+  img.alt = "Image";
+  img.loading = "lazy";
+  img.src = pictureUrl(id);
+  img.addEventListener("error", () => {
+    box.classList.add("gone");
+    box.replaceChildren(icon("x", "xs"), el("span", "", "Picture no longer available"));
+  });
+  box.append(img);
+  box.addEventListener("click", () => {
+    if (box.classList.contains("gone")) return;
+    $("lightbox-img").src = img.src;
+    $("lightbox").showModal();
+  });
+  return box;
+}
+
+$("lightbox").addEventListener("click", () => $("lightbox").close());
+$("attach-btn").addEventListener("click", () => $("attach-file").click());
+$("attach-file").addEventListener("change", (e) => {
+  attachPicture(e.target.files?.[0]);
+  e.target.value = "";
+});
+chatInput.addEventListener("paste", (e) => {
+  const file = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+  if (!file) return;
+  e.preventDefault();
+  attachPicture(file);
+});
+const chatSection = document.querySelector(".chat");
+chatSection.addEventListener("dragover", (e) => {
+  if (![...(e.dataTransfer?.types ?? [])].includes("Files")) return;
+  e.preventDefault();
+  chatSection.classList.add("dropping");
+});
+chatSection.addEventListener("dragleave", (e) => {
+  if (!chatSection.contains(e.relatedTarget)) chatSection.classList.remove("dropping");
+});
+chatSection.addEventListener("drop", (e) => {
+  chatSection.classList.remove("dropping");
+  const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));
+  if (!file) return;
+  e.preventDefault();
+  attachPicture(file);
+});

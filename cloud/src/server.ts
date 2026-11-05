@@ -115,6 +115,28 @@ interface Session {
 
 type ClientMsg = { type: string; [field: string]: any };
 
+// Pictures in chat live in the server's own database: small (the app shrinks them
+// first), signed by the uploader, and capped so the free plan's storage lasts.
+const MAX_IMAGE_BYTES = 320_000;
+const MAX_IMAGE_STORE = 100_000_000;
+const IMAGES_PER_DAY = 40;
+const UPLOAD_CLOCK_SKEW_MS = 5 * 60_000;
+/** A picture message: "hopp-image:<id> <width>x<height>", then an optional caption. */
+const IMAGE_TOKEN = /^hopp-image:([0-9a-f]{32}) (\d{1,5})x(\d{1,5})(?:\n|$)/;
+const IMAGE_TYPES: Record<string, (b: Uint8Array) => boolean> = {
+  "image/webp": (b) => b.length > 12 && String.fromCharCode(...b.subarray(0, 4)) === "RIFF" && String.fromCharCode(...b.subarray(8, 12)) === "WEBP",
+  "image/jpeg": (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  "image/png": (b) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
+};
+
+/** What notifications and replies show for a message: a picture reads as "Image". */
+function plainText(text: string): string {
+  const m = text.match(IMAGE_TOKEN);
+  if (!m) return text;
+  const caption = text.slice(m[0].length).trim();
+  return caption ? `🖼 ${caption}` : "🖼 Image";
+}
+
 const hexToBytes = (hex: string): Uint8Array | null => {
   if (!/^([0-9a-f]{2})*$/i.test(hex)) return null;
   const out = new Uint8Array(hex.length / 2);
@@ -172,6 +194,9 @@ export class StromServer extends DurableObject<Env> {
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
       CREATE TABLE IF NOT EXISTS notified (key TEXT NOT NULL, channel INTEGER NOT NULL, PRIMARY KEY (key, channel));
+      CREATE TABLE IF NOT EXISTS images (
+        id TEXT PRIMARY KEY, uploader TEXT NOT NULL, type TEXT NOT NULL, data BLOB NOT NULL,
+        size INTEGER NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
     `);
     // Channel order and topics came later too.
     const channelColumns = new Set(this.sql.exec("PRAGMA table_info(channels)").toArray().map((c) => String(c.name)));
@@ -194,6 +219,16 @@ export class StromServer extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const serverId = request.headers.get("X-Strom-Server");
     if (serverId && this.meta("server_id") === null) this.setMeta("server_id", serverId);
+    const image = new URL(request.url).pathname.match(/\/images(?:\/([0-9a-f]{32}))?$/);
+    if (image) {
+      try {
+        if (image[1] && request.method === "GET") return this.serveImage(image[1]);
+        if (!image[1] && request.method === "POST") return await this.uploadImage(request);
+        return new Response("Not allowed", { status: 405 });
+      } catch (err) {
+        return Response.json({ error: troubleMessage(err) }, { status: 503 });
+      }
+    }
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ stage: "hello" } satisfies Session);
@@ -208,6 +243,68 @@ export class StromServer extends DurableObject<Env> {
     const found = this.sql.exec("SELECT inviter FROM invites WHERE code = ?", code).toArray()[0]?.inviter;
     const inviter = typeof found === "string" ? found : null;
     return { name, icon: this.meta("icon"), members, online: this.members().length, inviter };
+  }
+
+  // ---------- pictures ----------
+
+  private serveImage(id: string): Response {
+    const row = this.sql.exec("SELECT type, data FROM images WHERE id = ?", id).toArray()[0];
+    if (!row) return new Response("Gone", { status: 404 });
+    return new Response(row.data as ArrayBuffer, {
+      headers: { "content-type": String(row.type), "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" },
+    });
+  }
+
+  /** A member uploads a picture, signed with their Hopp ID; answered with its id. */
+  private async uploadImage(request: Request): Promise<Response> {
+    const fail = (error: string, status = 400) => Response.json({ error }, { status });
+    if (this.meta("name") === null) return fail("This server doesn't exist.", 404);
+    const key = (request.headers.get("X-Hopp-Key") ?? "").toLowerCase();
+    const time = Number(request.headers.get("X-Hopp-Time"));
+    const signature = hexToBytes(request.headers.get("X-Hopp-Signature") ?? "");
+    const type = (request.headers.get("content-type") ?? "").split(";")[0].trim();
+    if (!/^[0-9a-f]{64}$/.test(key) || signature?.length !== 64) return fail("Not signed.", 401);
+    if (!Number.isFinite(time) || Math.abs(Date.now() - time) > UPLOAD_CLOCK_SKEW_MS) return fail("Your computer's clock is off. Check the time and try again.", 401);
+    if (!IMAGE_TYPES[type]) return fail("Only WebP, JPEG and PNG pictures.");
+    const data = new Uint8Array(await request.arrayBuffer());
+    if (data.length === 0 || data.length > MAX_IMAGE_BYTES) return fail("That picture is too big.");
+    if (!IMAGE_TYPES[type](data)) return fail("That file isn't the picture it says it is.");
+    const digest = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
+    const signed = new TextEncoder().encode(`hopp-image-v1\0${this.meta("server_id") ?? ""}\0${digest}\0${time}`);
+    let valid = false;
+    try {
+      const pub = await crypto.subtle.importKey("raw", hexToBytes(key)!, { name: "Ed25519" }, false, ["verify"]);
+      valid = await crypto.subtle.verify({ name: "Ed25519" }, pub, signature, signed);
+    } catch {
+      valid = false;
+    }
+    if (!valid) return fail("Not signed.", 401);
+    const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
+    const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length > 0;
+    if (!member || banned) return fail("You're not a member of this server.", 403);
+    const now = Date.now();
+    const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE uploader = ? AND created_at > ?", key, now - 86_400_000).one().n);
+    if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
+    // Pictures picked but never sent are let go after a day.
+    this.sql.exec("DELETE FROM images WHERE used = 0 AND created_at < ?", now - 86_400_000);
+    const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+    this.sql.exec("INSERT INTO images (id, uploader, type, data, size, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, key, type, data, data.length, now);
+    // Over the server's share of storage: the oldest pictures make room.
+    let total = Number(this.sql.exec("SELECT coalesce(sum(size), 0) AS n FROM images").one().n);
+    while (total > MAX_IMAGE_STORE) {
+      const oldest = this.sql.exec("SELECT id, size FROM images ORDER BY created_at LIMIT 1").toArray()[0];
+      if (!oldest) break;
+      this.sql.exec("DELETE FROM images WHERE id = ?", oldest.id);
+      total -= Number(oldest.size);
+    }
+    return Response.json({ id });
+  }
+
+  /** A message being deleted: its picture goes too. */
+  private dropPicture(messageId: number) {
+    const text = this.sql.exec("SELECT text FROM messages WHERE id = ?", messageId).toArray()[0]?.text;
+    const picture = typeof text === "string" ? text.match(IMAGE_TOKEN) : null;
+    if (picture) this.sql.exec("DELETE FROM images WHERE id = ?", picture[1]);
   }
 
   // ---------- storage helpers ----------
@@ -336,7 +433,7 @@ export class StromServer extends DurableObject<Env> {
     }
     const mentioned = new Set([...m.text.matchAll(MENTION)].map((x) => x[1]));
     if (m.reply) mentioned.add(m.reply.author_key);
-    const preview = m.text.replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`).slice(0, 200);
+    const preview = plainText(m.text).replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`).slice(0, 200);
     const activity = {
       server: `cloud:${serverId}`,
       server_name: this.meta("name") ?? "",
@@ -615,6 +712,12 @@ export class StromServer extends DurableObject<Env> {
         }
         s.tokens -= 1;
         ws.serializeAttachment(s);
+        const picture = text.match(IMAGE_TOKEN);
+        if (picture) {
+          const owned = this.sql.exec("SELECT 1 FROM images WHERE id = ? AND uploader = ?", picture[1], s.key!).toArray().length > 0;
+          if (!owned) return this.error(ws, "That picture didn't upload. Try again.");
+          this.sql.exec("UPDATE images SET used = 1 WHERE id = ?", picture[1]);
+        }
         const answered = msg.reply_to != null ? this.message(ch.id, Number(msg.reply_to)) : null;
         const reply: Reply | undefined = answered
           ? { id: answered.id, sender_name: answered.sender_name, author_key: answered.author_key, text: replyPreview(answered.text) }
@@ -710,6 +813,7 @@ export class StromServer extends DurableObject<Env> {
         if (row.author_key !== s.key && (myRank < RANK.mod || (!owner && rank(this.roleOf(String(row.author_key))) >= myRank))) {
           return this.error(ws, "You can only delete your own messages.");
         }
+        this.dropPicture(id);
         this.sql.exec("DELETE FROM messages WHERE id = ?", id);
         return this.broadcast({ type: "message_deleted", channel, id });
       }
@@ -757,6 +861,7 @@ export class StromServer extends DurableObject<Env> {
         const id = Number(msg.channel);
         if (!this.channel(id)) return this.error(ws, "That channel doesn't exist.");
         this.sql.exec("DELETE FROM channels WHERE id = ?", id);
+        this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND text LIKE 'hopp-image:%')", id);
         this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
         for (const [mws, m] of this.members()) {
           if (m.user!.voice_channel === id) this.updateUser(mws, m, (u) => (u.voice_channel = null));
@@ -825,7 +930,7 @@ export class StromServer extends DurableObject<Env> {
           }
         }
         // Without a name the server no longer exists: nobody can join it again.
-        for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
+        for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
         return;
       }
       case "revoke_invite": {
