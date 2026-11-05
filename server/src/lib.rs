@@ -416,6 +416,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
+                features: vec!["search".into()],
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -574,6 +575,20 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     let all = st.storage.load_before(channel, u64::MAX, 100_000).unwrap_or_else(|| st.history.get(&channel).map(|h| h.iter().cloned().collect()).unwrap_or_default());
                     let messages = all.into_iter().filter(|m| m.pinned).collect();
                     let _ = tx.send(ServerMsg::Pins { channel, messages });
+                }
+                ClientMsg::Search { query } => {
+                    let needle = query.trim().to_lowercase();
+                    let mut messages = Vec::new();
+                    if (2..=100).contains(&needle.chars().count()) {
+                        let text: Vec<ChannelId> = st.config.channels.iter().filter(|c| c.kind == ChannelKind::Text).map(|c| c.id).collect();
+                        for channel in text {
+                            let all = st.storage.load_before(channel, u64::MAX, 100_000).unwrap_or_else(|| st.history.get(&channel).map(|h| h.iter().cloned().collect()).unwrap_or_default());
+                            messages.extend(all.into_iter().filter(|m| m.text.to_lowercase().contains(&needle)));
+                        }
+                        messages.sort_by(|a, b| b.id.cmp(&a.id));
+                        messages.truncate(SEARCH_RESULTS);
+                    }
+                    let _ = tx.send(ServerMsg::SearchResults { query, messages });
                 }
                 ClientMsg::LoadOlder { channel, before } => {
                     let mut messages = st.storage.load_before(channel, before, OLDER_PAGE + 1).unwrap_or_else(|| {

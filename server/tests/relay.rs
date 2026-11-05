@@ -683,3 +683,22 @@ async fn owner_pins_messages() {
     let ServerMsg::Pins { messages, .. } = alice.wait_for(|x| matches!(x, ServerMsg::Pins { .. })).await else { unreachable!() };
     assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["remember this"]);
 }
+
+#[tokio::test]
+async fn search_finds_words_in_any_case_newest_first() {
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let ServerMsg::Welcome { features, .. } = &alice.welcome else { unreachable!() };
+    assert!(features.iter().any(|f| f == "search"), "the server says it can search");
+    alice.chat("Raid tonight at eight").await;
+    alice.chat("nothing to see here").await;
+    alice.chat("who's up for the RAID?").await;
+    alice.send(ClientMsg::Search { query: "raid".into() }).await;
+    let ServerMsg::SearchResults { query, messages } = alice.wait_for(|m| matches!(m, ServerMsg::SearchResults { .. })).await else { unreachable!() };
+    assert_eq!(query, "raid");
+    assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["who's up for the RAID?", "Raid tonight at eight"]);
+    // A single letter finds nothing rather than everything.
+    alice.send(ClientMsg::Search { query: "a".into() }).await;
+    let ServerMsg::SearchResults { messages, .. } = alice.wait_for(|m| matches!(m, ServerMsg::SearchResults { .. })).await else { unreachable!() };
+    assert!(messages.is_empty());
+}

@@ -58,6 +58,8 @@ pub struct Roster {
     pub me: SessionId,
     pub channels: Vec<Channel>,
     pub users: Vec<User>,
+    /// What the server can do beyond the basics, like "search".
+    pub features: Vec<String>,
 }
 
 impl Roster {
@@ -225,8 +227,8 @@ pub async fn connect(address: &str, identity: &Identity, invite: Option<&str>, c
     };
     writer.send(&ClientMsg::Auth { signature: identity.sign_challenge(&nonce) }).await?;
     let (roster, udp_token, udp_port) = match reader.answer().await? {
-        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon, pictures_off } => {
-            (Roster { server_name, server_icon, pictures_off, me: session_id, channels, users }, udp_token, udp_port)
+        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon, pictures_off, features } => {
+            (Roster { server_name, server_icon, pictures_off, me: session_id, channels, users, features }, udp_token, udp_port)
         }
         ServerMsg::Error { message } => anyhow::bail!(message),
         other => anyhow::bail!("unexpected message during login: {other:?}"),
@@ -290,7 +292,7 @@ mod tests {
 
     #[test]
     fn roster_tracks_presence_and_channels() {
-        let mut r = Roster { server_name: String::new(), server_icon: None, pictures_off: false, me: 1, channels: vec![], users: vec![user(1, None)] };
+        let mut r = Roster { server_name: String::new(), server_icon: None, pictures_off: false, me: 1, channels: vec![], users: vec![user(1, None)], features: vec![] };
         r.apply(&ServerMsg::UserJoined { user: user(2, None) });
         r.apply(&ServerMsg::UserUpdated { user: user(2, Some(1)) });
         assert_eq!(r.users, vec![user(1, None), user(2, Some(1))]);

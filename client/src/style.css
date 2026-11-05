@@ -2968,3 +2968,12 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 /* A quiet warning under messages that bait with free stuff. */
 .bait-warning { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--yellow); font-size: 12.5px; }
 .bait-warning .i { flex: none; }
+
+/* Search: a field on top, results like pinned messages, the words marked. */
+.search-input { width: 100%; margin-bottom: 10px; padding: 9px 12px; background: var(--deep); border: 1px solid transparent; border-radius: 8px; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.search-input:focus { border-color: var(--border-focus); }
+.search-input::-webkit-search-cancel-button { filter: invert(0.6); }
+.search-where { flex: none; color: var(--muted); font-size: 12px; }
+.search-item mark { background: color-mix(in srgb, var(--yellow) 30%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; }
+.dm-search-btn { margin-left: auto; }
+.dm-search-btn:not([hidden]) + .dm-call-btn { margin-left: 0; }

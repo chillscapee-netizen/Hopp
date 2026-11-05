@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 5;
+/// The most messages one search returns, newest first.
+pub const SEARCH_RESULTS: usize = 25;
 pub const DEFAULT_PORT: u16 = 7777;
 
 /// Audio is always 48 kHz mono, sent in 10 ms frames.
@@ -243,6 +245,10 @@ pub enum ClientMsg {
     GetPins { channel: ChannelId },
     /// Answered with `OlderHistory`: up to [`OLDER_PAGE`] messages before `before`.
     LoadOlder { channel: ChannelId, before: u64 },
+    /// Answered with `SearchResults`: the newest messages in the server's text channels
+    /// containing `query` (any case). Only for servers whose welcome lists "search":
+    /// older ones drop a connection that sends something they don't know.
+    Search { query: String },
     /// Owner only.
     CreateChannel { name: String, kind: ChannelKind },
     /// Owner only.
@@ -328,6 +334,10 @@ pub enum ServerMsg {
         /// Cloud servers: the owner turned pictures off.
         #[serde(default)]
         pictures_off: bool,
+        /// What this server can do beyond the basics (like "search"), so apps never ask an
+        /// older server for something it doesn't know.
+        #[serde(default)]
+        features: Vec<String>,
     },
     /// The owner renamed the server or changed its picture.
     ServerUpdated {
@@ -355,6 +365,8 @@ pub enum ServerMsg {
     Pins { channel: ChannelId, messages: Vec<ChatMessage> },
     /// Older messages, oldest first. `done`: there are none before these.
     OlderHistory { channel: ChannelId, messages: Vec<ChatMessage>, done: bool },
+    /// What a search found, newest first (at most [`SEARCH_RESULTS`]).
+    SearchResults { query: String, messages: Vec<ChatMessage> },
     Typing { channel: ChannelId, session_id: SessionId },
     /// Sent to a user right before the server drops them.
     Kicked { banned: bool },

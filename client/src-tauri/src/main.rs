@@ -443,6 +443,9 @@ async fn connect(
                 ServerMsg::Pins { channel, messages } => {
                     let _ = ui.emit("pins", serde_json::json!({ "channel": channel, "messages": messages }));
                 }
+                ServerMsg::SearchResults { query, messages } => {
+                    let _ = ui.emit("search-results", serde_json::json!({ "query": query, "messages": messages }));
+                }
                 ServerMsg::OlderHistory { channel, messages, done } => {
                     let _ = ui.emit("older-history", serde_json::json!({ "channel": channel, "messages": messages, "done": done }));
                 }
@@ -770,6 +773,11 @@ fn pin_message(state: State<'_, AppState>, channel: ChannelId, id: u64, on: bool
 #[tauri::command]
 fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetPins { channel }))
+}
+
+#[tauri::command]
+fn search_messages(state: State<'_, AppState>, query: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::Search { query }))
 }
 
 #[tauri::command]
@@ -1378,6 +1386,7 @@ fn main() {
             edit_message,
             react,
             load_older,
+            search_messages,
             pin_message,
             get_pins,
             start_call,

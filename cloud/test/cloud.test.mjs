@@ -658,3 +658,25 @@ test("voice addresses can be IPv6 as well as IPv4", async () => {
   owner.close();
   bob.close();
 });
+
+test("search finds words in any case across channels, newest first", async () => {
+  const { owner } = await newServer();
+  assert.deepEqual(owner.welcome.features, ["search"], "the server says it can search");
+  const general = channelId(owner, "general");
+  for (const text of ["Raid tonight at eight", "nothing to see here", "100% sure", "who's up for the RAID?"]) {
+    owner.send({ type: "send_chat", channel: general, text });
+    await owner.waitFor((x) => x.type === "chat" && x.message.text === text);
+  }
+  owner.send({ type: "search", query: "raid" });
+  const found = await owner.waitFor((x) => x.type === "search_results");
+  assert.equal(found.query, "raid");
+  assert.deepEqual(found.messages.map((m) => m.text), ["who's up for the RAID?", "Raid tonight at eight"]);
+  await sleep(450);
+  // "%" is a letter here, not a wildcard.
+  owner.send({ type: "search", query: "0%" });
+  assert.deepEqual((await owner.waitFor((x) => x.type === "search_results")).messages.map((m) => m.text), ["100% sure"]);
+  // Too fast in a row: told to wait.
+  owner.send({ type: "search", query: "here" });
+  assert.match(await errorOf(owner), /too fast/i);
+  owner.close();
+});

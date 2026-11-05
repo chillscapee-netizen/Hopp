@@ -15,6 +15,10 @@ const MAX_ICON_LEN = 200_000;
 const MAX_CHAT_LEN = 2000;
 const MAX_CHANNELS = 50;
 const MAX_MEMBERS_ONLINE = 500;
+/** A search returns at most this many messages, newest first. */
+const SEARCH_RESULTS = 25;
+/** The least time between one person's searches. */
+const SEARCH_GAP_MS = 400;
 /** Apps ping every 10 seconds; a connection silent this long is gone. */
 const STALE_SESSION_MS = 30_000;
 /** Messages per channel replayed at login, and kept in storage. */
@@ -106,6 +110,8 @@ interface Session {
   stage: "hello" | "auth" | "joined" | "removed";
   /** When it joined: a new session isn't mistaken for a silent one before its first ping. */
   joinedAt?: number;
+  /** When it last searched, to keep searches from hogging the server. */
+  searchedAt?: number;
   nonce?: string;
   key?: string;
   name?: string;
@@ -638,6 +644,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
+      features: ["search"],
     });
     for (const ch of channels.filter((c) => c.kind === "text")) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
@@ -796,6 +803,22 @@ export class StromServer extends DurableObject<Env> {
         const channel = Number(msg.channel);
         const messages = this.sql.exec("SELECT * FROM messages WHERE channel = ? AND pinned = 1 ORDER BY id DESC LIMIT 50", channel).toArray().map(rowToMessage);
         return this.send(ws, { type: "pins", channel, messages });
+      }
+      case "search": {
+        const query = String(msg.query ?? "");
+        const needle = query.trim();
+        // One search at a time, a few a second at most: each one reads the whole history.
+        const now = Date.now();
+        if (now - (s.searchedAt ?? 0) < SEARCH_GAP_MS) return this.error(ws, "Searching too fast. Try again in a moment.");
+        s.searchedAt = now;
+        ws.serializeAttachment(s);
+        if (needle.length < 2 || needle.length > 100) return this.send(ws, { type: "search_results", query, messages: [] });
+        const pattern = "%" + needle.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+        const messages = this.sql
+          .exec("SELECT * FROM messages WHERE text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?", pattern, SEARCH_RESULTS)
+          .toArray()
+          .map(rowToMessage);
+        return this.send(ws, { type: "search_results", query, messages });
       }
       case "load_older": {
         const channel = Number(msg.channel);

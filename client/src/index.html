@@ -22,6 +22,7 @@
     <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
     <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
@@ -233,6 +234,7 @@
             <button type="button" class="friend-tab" data-ftab="blocked">Blocked</button>
             <button type="button" class="friend-tab add" data-ftab="add">Add friend</button>
           </nav>
+          <button id="dm-search-btn" type="button" class="icon-btn dm-search-btn" data-tip="Search this conversation (Ctrl+F)" hidden><svg class="i"><use href="#i-search"/></svg></button>
           <button id="dm-call-btn" type="button" class="icon-btn dm-call-btn" data-tip="Start a voice call"><svg class="i"><use href="#i-phone"/></svg></button>
         </header>
         <div id="call-stage" class="call-stage" hidden></div>
@@ -247,6 +249,7 @@
           <span id="chat-topic" class="head-topic ellipsis"></span>
           <span class="head-spacer"></span>
           <button id="invite-head-btn" class="icon-btn" data-tip="Invite people"><svg class="i"><use href="#i-user-plus"/></svg></button>
+          <button id="search-btn" class="icon-btn" data-tip="Search (Ctrl+F)"><svg class="i"><use href="#i-search"/></svg></button>
           <button id="pins-btn" class="icon-btn" data-tip="Pinned messages"><svg class="i"><use href="#i-pin"/></svg></button>
           <button id="members-toggle" class="icon-btn" data-tip="Member list"><svg class="i"><use href="#i-users"/></svg></button>
         </header>
@@ -1123,6 +1126,7 @@
   <dialog id="lightbox" class="lightbox"><img id="lightbox-img" alt=""></dialog>
   <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="pins-pop" class="popover pins-pop" hidden></div>
+  <div id="search-pop" class="popover pins-pop search-pop" hidden></div>
   <div id="incoming-call" class="incoming-call" hidden>
     <span id="incoming-avatar"></span>
     <div class="incoming-text"><strong id="incoming-name" class="ellipsis"></strong><span id="incoming-what" class="ellipsis">Incoming call…</span></div>
