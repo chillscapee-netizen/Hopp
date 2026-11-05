@@ -2896,3 +2896,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .file-bar { height: 5px; margin-top: 3px; overflow: hidden; background: var(--deep); border-radius: 3px; }
 .file-bar span { display: block; height: 100%; background: var(--green); border-radius: 3px; transition: width 150ms linear; }
 .file-action { display: flex; gap: 6px; }
+
+.invite-friend-empty .btn { margin-top: 8px; }
+.invite-friend-empty { display: grid; justify-items: center; }
+.invite-friends input[hidden] { display: none; }

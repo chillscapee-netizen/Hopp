@@ -7793,9 +7793,26 @@ function renderInviteFriends() {
     .filter((f) => f.state === "friend")
     .filter((f) => !q || f.display_name.toLowerCase().includes(q) || (f.username ?? "").toLowerCase().includes(q))
     .sort((a, b) => (a.status === "offline") - (b.status === "offline") || a.display_name.localeCompare(b.display_name));
-  $("invite-friends").hidden = !state.friends?.size;
+  const hasFriends = [...(state.friends?.values() ?? [])].some((f) => f.state === "friend");
+  $("invite-friend-search").hidden = !hasFriends;
+  $("invite-link-label").textContent = hasFriends ? "Or send a server invite link" : "Send a server invite link";
+  if (!hasFriends) {
+    // No friends yet: one click to add some, then they're one click from joining.
+    const empty = el("li", "invite-friend-empty");
+    const add = el("button", "btn sm", "Add friend");
+    add.type = "button";
+    add.addEventListener("click", () => {
+      $("invite-dialog").close();
+      state.friendTab = "add";
+      if (state.activeId) goHome();
+      else renderAll();
+    });
+    empty.append(el("span", "", "Friends you add show up here, ready to invite with one click."), add);
+    list.replaceChildren(empty);
+    return;
+  }
   if (!friends.length) {
-    list.replaceChildren(el("li", "invite-friend-empty", q ? "No friends by that name." : "Add friends to invite them here."));
+    list.replaceChildren(el("li", "invite-friend-empty", "No friends by that name."));
     return;
   }
   list.replaceChildren(
