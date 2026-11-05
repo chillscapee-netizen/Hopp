@@ -2361,7 +2361,11 @@ async function deleteMessage(m, skipConfirm) {
 function renderMessages(keepScrollUnlessAtBottom) {
   const scroller = $("scroller");
   const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
+  // Messages newer than the last drawing of this channel arrive with a little motion.
+  const drawnBefore = renderedChannel === state.view ? drawnUpTo.get(state.view) ?? Infinity : Infinity;
+  const switched = renderedChannel !== state.view;
   renderedChannel = state.view;
+  $("messages").classList.toggle("switching", switched);
   if (state.view === null) {
     const empty = el("li", "welcome");
     const badge = el("div", "welcome-icon");
@@ -2408,6 +2412,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     }
     const li = el("li", "msg " + (grouped ? "cont" : "first"));
     li.dataset.id = m.id;
+    if (m.id > drawnBefore) li.classList.add("arrive");
     if (isBlocked(m.author_key) && !state.shownBlocked.has(m.id)) {
       const line = el("li", "msg blocked-msg");
       const show = el("button", "link", "Show");
@@ -2478,6 +2483,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   for (const o of state.outbox.filter((x) => x.channel === state.view)) items.push(outboxItem(o));
   $("messages").replaceChildren(...items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
+  if (msgs.length) drawnUpTo.set(state.view, msgs.at(-1).id);
   updateJumpBar();
   markViewedRead();
 }
@@ -8008,3 +8014,6 @@ function stickToBottom(scroller, list) {
   list.addEventListener("load", keep, true);
 }
 stickToBottom($("scroller"), $("messages"));
+
+/** The newest message drawn per channel, so only really new ones animate in. */
+var drawnUpTo = new Map();

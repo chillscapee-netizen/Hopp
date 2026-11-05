@@ -31,9 +31,10 @@ const page = readFileSync(join(src, "index.html"), "utf8");
 // Two functions with one name: the later one silently replaces the earlier everywhere.
 const declared = new Map();
 for (const [, name] of readFileSync(join(src, "main.js"), "utf8").matchAll(/^(?:async )?function (\w+)/gm)) declared.set(name, (declared.get(name) ?? 0) + 1);
+for (const [, name] of readFileSync(join(src, "style.css"), "utf8").matchAll(/@keyframes ([\w-]+)/g)) declared.set("@keyframes " + name, (declared.get("@keyframes " + name) ?? 0) + 1);
 const twice = [...declared].filter(([, n]) => n > 1).map(([name]) => name);
 if (twice.length) {
-  console.log("FAIL functions declared twice in main.js: " + twice.join(", "));
+  console.log("FAIL declared twice (main.js functions or style.css animations): " + twice.join(", "));
   process.exit(1);
 }
 

@@ -2822,8 +2822,8 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .setting-row .row-label { display: grid; gap: 2px; }
 .setting-row .row-sub { color: var(--muted); font-size: 13px; line-height: 1.4; }
 
-.msg-picture.loading { background: linear-gradient(90deg, var(--elev) 0%, var(--elev-2) 50%, var(--elev) 100%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
-@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.msg-picture.loading { background: linear-gradient(90deg, var(--elev) 0%, var(--elev-2) 50%, var(--elev) 100%); background-size: 200% 100%; animation: picture-shimmer 1.2s linear infinite; }
+@keyframes picture-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 /* Creating a server: click the preview to choose its picture. */
 .server-icon-preview.pickable { position: relative; padding: 0; border: none; font: inherit; font-size: 28px; font-weight: 700; color: var(--text); background-size: cover; background-position: center; cursor: pointer; }
@@ -2862,3 +2862,30 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .yt-play-icon { width: 64px; height: 44px; background: rgb(20 20 22 / 0.82); border-radius: 12px; transition: background 150ms, transform 150ms; position: relative; }
 .yt-play:hover .yt-play-icon { background: #e8423f; transform: scale(1.05); }
 .yt-play-icon::after { content: ""; position: absolute; left: 26px; top: 13px; border-style: solid; border-width: 9px 0 9px 15px; border-color: transparent transparent transparent #fff; }
+
+/* ---------- flow: gentle motion, everywhere the same ---------- */
+/* Hover and selection fade instead of blinking. */
+.channel-row, .server-row, .member, .msg, .menu-item, .settings-tab, .icon-btn, .btn, .btn-link, .composer-icon,
+.dm-row, .friend-row, .active-row, .invite-friend, .voice-user, .reaction, .rail-icon, .nav-row {
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+/* A new message slides up into place. */
+.msg.arrive { animation: msg-arrive 220ms cubic-bezier(0.2, 0.7, 0.3, 1); }
+@keyframes msg-arrive { from { opacity: 0; transform: translateY(8px); } }
+/* Switching channel: the conversation fades in rather than snapping. */
+#messages.switching { animation: view-in 160ms ease-out; }
+.dm-view, .home-layout, .getting-started { animation: view-in 160ms ease-out; }
+@keyframes view-in { from { opacity: 0; transform: translateY(4px); } }
+/* Dialogs: the dimmed backdrop fades too. */
+.modal[open]::backdrop { animation: backdrop-in 160ms ease-out; }
+@keyframes backdrop-in { from { opacity: 0; } }
+/* Buttons give under the finger. */
+.btn:active:not(:disabled), .icon-btn:active, .composer-icon:active { transform: scale(0.97); }
+.btn, .icon-btn, .composer-icon { transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, transform 80ms ease; }
+/* The message box lights up a little when you write in it. */
+.composer-box { transition: border-color 150ms ease, box-shadow 150ms ease; }
+.composer-box:focus-within { box-shadow: 0 0 0 1px var(--border-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}

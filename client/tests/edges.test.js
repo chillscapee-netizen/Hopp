@@ -9,6 +9,7 @@
   emit("chat", { id: 9002, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "<script>alert(1)</script> **x** ||y|| `z` ~~q~~ > quote", sent_at: Date.now() });
   emit("chat", { id: 9003, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "x".repeat(2000), sent_at: Date.now() });
   await wait(200);
+  check("only new messages slide in", document.querySelector('.msg[data-id="9003"]')?.classList.contains("arrive") && document.querySelectorAll(".msg.arrive").length <= 3);
   check("script text stays text", !document.querySelector("#messages script") && document.body.textContent.includes("<script>alert(1)</script>"));
   const scroller = document.getElementById("scroller");
   check("no sideways scroll from long text", scroller.scrollWidth <= scroller.clientWidth + 2, scroller.scrollWidth + " > " + scroller.clientWidth);
