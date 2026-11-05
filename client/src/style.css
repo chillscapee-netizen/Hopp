@@ -3197,3 +3197,4 @@ input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top:
 .audit-detail { color: var(--muted); }
 .audit-when { flex: none; color: var(--faint); font-size: 12.5px; }
 #confirm-choice-row { margin-top: 14px; }
+.voice-actions.sound-only { grid-template-columns: 1fr; }

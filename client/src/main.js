@@ -2306,7 +2306,11 @@ function renderVoicePanel() {
     : latency ? `Latency to the server: ${latency}` : "Measuring latency…";
   const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
   $("voice-where").textContent = latency ? `${where} · ${latency}` : where;
-  $("voice-actions").hidden = !canShare();
+  // The soundboard works anywhere; camera and screen need a server that passes video handshakes.
+  $("voice-actions").hidden = false;
+  $("cam-btn").hidden = !canShare();
+  $("share-btn").hidden = !canShare();
+  $("voice-actions").classList.toggle("sound-only", !canShare());
   $("cam-btn").classList.toggle("on", !!media.out.cam);
   $("cam-btn").setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
   $("cam-btn").querySelector("use").setAttribute("href", media.out.cam ? "#i-video" : "#i-video-off");
