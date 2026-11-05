@@ -35,7 +35,26 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "publisher": "Hopp",
+    "copyright": "© 2026 Hopp",
+    "category": "SocialNetworking",
+    "shortDescription": "Voice and chat for you and your friends",
+    "longDescription": "Hopp is voice and chat for friends: clear low-latency voice, servers with text and voice channels, and private end-to-end encrypted DMs. Free, no ads, light on your computer.",
+    "homepage": "https://hopp-cloud.hoppchat.workers.dev/",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "compression": "lzma",
+        "installerHooks": "installer/hooks.nsh"
+      }
+    }
   },
   "plugins": {
     "deep-link": {
