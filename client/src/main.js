@@ -1397,7 +1397,8 @@ function openMenu(items, x, y, above) {
 }
 
 /** A menu's rows: buttons, ticks, sliders that stay open while you drag, and submenus. */
-function menuItems(items) {
+var submenuTimer = 0;
+function menuItems(items, inSub = false) {
   return items.map((item) => {
     if (item === "sep") return el("div", "menu-sep");
     if (item.heading) return el("div", "menu-heading", item.heading);
@@ -1434,8 +1435,9 @@ function menuItems(items) {
     if (item.submenu) {
       const open = () => {
         const r = b.getBoundingClientRect();
+        clearTimeout(submenuTimer);
         const sub = $("server-submenu");
-        sub.replaceChildren(...menuItems(item.submenu));
+        sub.replaceChildren(...menuItems(item.submenu, true));
         sub.hidden = false;
         const left = r.right + 4 + 220 > window.innerWidth ? r.left - 224 : r.right + 4;
         sub.style.left = left + "px";
@@ -1445,8 +1447,24 @@ function menuItems(items) {
       b.addEventListener("click", open);
       return b;
     }
-    b.addEventListener("mouseenter", () => ($("server-submenu").hidden = true));
+    // Another row of the main menu closes an open submenu, after a moment, so passing over
+    // a row on the way into the submenu doesn't.
+    if (!inSub) {
+      b.addEventListener("mouseenter", () => {
+        clearTimeout(submenuTimer);
+        submenuTimer = setTimeout(() => ($("server-submenu").hidden = true), 300);
+      });
+    }
     b.addEventListener("click", () => {
+      // A tick changes in place and the menu stays, for the next one.
+      if (item.check !== undefined) {
+        item.check = !item.check;
+        const box = b.querySelector(".menu-check");
+        box.classList.toggle("on", item.check);
+        box.replaceChildren(...(item.check ? [icon("check")] : []));
+        item.action(item.check);
+        return;
+      }
       closePopovers();
       item.action();
     });
@@ -9055,9 +9073,9 @@ function openUserMenu(u, row, e) {
         setUserVolume(v);
       } },
     });
-    items.push({ label: "Mute", check: vol === 0, action: () => {
+    items.push({ label: "Mute", check: vol === 0, action: (on) => {
       cardUser = u;
-      setUserVolume(vol === 0 ? 100 : 0);
+      setUserVolume(on ? 0 : 100);
     } });
     if (can("moderate") && outranks(u)) {
       items.push(...voiceModItems(u));
@@ -10315,10 +10333,12 @@ function voiceMod() {
 function voiceModItems(u) {
   if (!voiceMod() || u.voice_channel === null) return [];
   const others = voiceChannels().filter((c) => c.id !== u.voice_channel);
+  // What the server says now (the menu may stay open across changes).
+  const latest = () => state.roster?.users.find((x) => x.session_id === u.session_id) ?? u;
   return [
     "sep",
-    { label: "Server mute", check: !!u.server_muted, action: () => call("server_mute", { sessionId: u.session_id, muted: !u.server_muted, deafened: !!u.server_deafened }) },
-    { label: "Server deafen", check: !!u.server_deafened, action: () => call("server_mute", { sessionId: u.session_id, muted: !!u.server_muted, deafened: !u.server_deafened }) },
+    { label: "Server mute", check: !!u.server_muted, action: (on) => call("server_mute", { sessionId: u.session_id, muted: on, deafened: !!latest().server_deafened }) },
+    { label: "Server deafen", check: !!u.server_deafened, action: (on) => call("server_mute", { sessionId: u.session_id, muted: !!latest().server_muted, deafened: on }) },
     ...(others.length ? [{ label: "Move to", submenu: others.map((c) => ({ label: c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) })) }] : []),
     { label: "Disconnect", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
   ];
@@ -10695,3 +10715,6 @@ async function checkAfk() {
   }
 }
 setInterval(checkAfk, 30_000);
+
+// Reaching the submenu keeps it open.
+$("server-submenu").addEventListener("mouseenter", () => clearTimeout(submenuTimer));
