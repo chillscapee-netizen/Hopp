@@ -44,6 +44,12 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const PATH_TIMEOUT: Duration = Duration::from_secs(5);
 /// A peer we haven't reached in this long is reported as unreachable (their network blocks direct voice).
 const UNREACHABLE_AFTER: Duration = Duration::from_secs(8);
+/// After either side's addresses change, every address is probed this long alongside the
+/// current path, so a new way through opens at once instead of after the old path times out.
+const REPROBE_FOR: Duration = Duration::from_secs(3);
+/// A STUN question unanswered this long goes to the next server (three tries in all).
+const STUN_RETRY: Duration = Duration::from_millis(500);
+const STUN_TRIES: u8 = 3;
 
 /// A UDP socket for both IPv4 and IPv6 (one port), or IPv4 only where IPv6 is off.
 pub fn dual_stack_socket() -> std::io::Result<UdpSocket> {
@@ -106,9 +112,7 @@ pub fn public_address(socket: &UdpSocket) -> Option<SocketAddr> {
     let found = STUN_SERVERS.iter().find_map(|server| {
         let addr = server.to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)?;
         let txid: [u8; 12] = rand::random();
-        let mut request = vec![0x00, 0x01, 0x00, 0x00];
-        request.extend_from_slice(&STUN_MAGIC);
-        request.extend_from_slice(&txid);
+        let request = stun_binding(&txid);
         let mut buf = [0u8; 512];
         for _ in 0..3 {
             socket.send_to(&request, wire(addr, dual)).ok()?;
@@ -129,6 +133,19 @@ pub fn public_address(socket: &UdpSocket) -> Option<SocketAddr> {
     });
     let _ = socket.set_read_timeout(old_timeout);
     found
+}
+
+/// A STUN binding request: "which address do you see me from?"
+fn stun_binding(txid: &[u8; 12]) -> Vec<u8> {
+    let mut request = vec![0x00, 0x01, 0x00, 0x00];
+    request.extend_from_slice(&STUN_MAGIC);
+    request.extend_from_slice(txid);
+    request
+}
+
+/// The STUN servers' addresses, looked up once (voice mustn't wait on DNS mid-call).
+pub fn stun_servers() -> Vec<SocketAddr> {
+    STUN_SERVERS.iter().filter_map(|s| s.to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)).collect()
 }
 
 /// Reads the (XOR-)MAPPED-ADDRESS out of a STUN binding response.
@@ -235,6 +252,17 @@ struct Link {
     searching_since: Instant,
     /// What we last told the app: reachable or not.
     reported: Option<bool>,
+    /// Until when every address is probed alongside the path (someone's network changed).
+    reprobe_until: Option<Instant>,
+}
+
+/// Asking STUN for our public address while voice runs: the receiving thread gets the answer.
+#[derive(Default)]
+struct StunAsk {
+    servers: Vec<SocketAddr>,
+    /// The question in flight: transaction, server, when, and how many tries so far.
+    pending: Option<([u8; 12], SocketAddr, Instant, u8)>,
+    answer: Option<SocketAddr>,
 }
 
 /// Everyone in our voice channel and how to reach them.
@@ -247,6 +275,9 @@ pub struct Mesh {
     pub turn: Mutex<Option<Turn>>,
     /// Where peers can reach us; grows a relay address when we get one.
     pub endpoint: Mutex<Option<PeerEndpoint>>,
+    stun: Mutex<StunAsk>,
+    /// Set to have voice look at our network again right away, as if it had changed.
+    pub recheck: std::sync::atomic::AtomicBool,
 }
 
 /// After this long without a direct path, probes go through our relay too.
@@ -269,7 +300,74 @@ impl Mesh {
             links: Mutex::new(HashMap::new()),
             turn: Mutex::new(None),
             endpoint: Mutex::new(None),
+            stun: Mutex::new(StunAsk::default()),
+            recheck: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Where to ask for our public address mid-call.
+    pub fn set_stun_servers(&self, servers: Vec<SocketAddr>) {
+        self.stun.lock().unwrap().servers = servers;
+    }
+
+    /// Starts asking STUN for our public address; the packet to send and where.
+    pub fn stun_request(&self) -> Option<(SocketAddr, Vec<u8>)> {
+        let mut stun = self.stun.lock().unwrap();
+        let server = *stun.servers.first()?;
+        let txid: [u8; 12] = rand::random();
+        stun.pending = Some((txid, server, Instant::now(), 1));
+        Some((server, stun_binding(&txid)))
+    }
+
+    /// The question again, to the next server, when the last one went unanswered.
+    pub fn stun_retry(&self) -> Option<(SocketAddr, Vec<u8>)> {
+        let mut stun = self.stun.lock().unwrap();
+        let (_, _, sent, tries) = stun.pending?;
+        if sent.elapsed() < STUN_RETRY {
+            return None;
+        }
+        if tries >= STUN_TRIES || stun.servers.is_empty() {
+            stun.pending = None;
+            return None;
+        }
+        let server = stun.servers[tries as usize % stun.servers.len()];
+        let txid: [u8; 12] = rand::random();
+        stun.pending = Some((txid, server, Instant::now(), tries + 1));
+        Some((server, stun_binding(&txid)))
+    }
+
+    /// A packet that may be STUN's answer to us. True if it was (and is used up).
+    pub fn stun_heard(&self, from: SocketAddr, packet: &[u8]) -> bool {
+        let mut stun = self.stun.lock().unwrap();
+        let Some((txid, server, _, _)) = stun.pending else { return false };
+        if canonical(from) != server {
+            return false;
+        }
+        let Some(public) = parse_stun(packet, &txid) else { return false };
+        stun.pending = None;
+        stun.answer = Some(public);
+        true
+    }
+
+    /// Our public address, once STUN has answered.
+    pub fn take_stun_answer(&self) -> Option<SocketAddr> {
+        self.stun.lock().unwrap().answer.take()
+    }
+
+    /// Our own network changed (wifi to cable, a new address): every peer is tried again on
+    /// all their addresses at once, and the relay, tied to the old address, is let go.
+    pub fn network_changed(&self) {
+        let now = Instant::now();
+        for link in self.links.lock().unwrap().values_mut() {
+            link.reprobe_until = Some(now + REPROBE_FOR);
+            link.last_ping = None;
+            if link.relayed {
+                link.path = None;
+                link.relayed = false;
+                link.searching_since = now;
+            }
+        }
+        *self.turn.lock().unwrap() = None;
     }
 
     /// Adds a peer or updates its addresses.
@@ -289,7 +387,12 @@ impl Mesh {
             rtt_ms: None,
             searching_since: Instant::now(),
             reported: None,
+            reprobe_until: None,
         });
+        // Their addresses changed (their network did): try the new ones right away.
+        if !link.candidates.is_empty() && link.candidates != candidates {
+            link.reprobe_until = Some(Instant::now() + REPROBE_FOR);
+        }
         link.candidates = candidates;
         // Probe the new addresses right away.
         link.last_ping = None;
@@ -343,13 +446,22 @@ impl Mesh {
                 link.path = None;
                 link.searching_since = now;
             }
-            let interval = if link.path.is_some() { KEEPALIVE_INTERVAL } else { PROBE_INTERVAL };
+            let reprobing = link.reprobe_until.is_some_and(|t| now < t);
+            if !reprobing {
+                link.reprobe_until = None;
+            }
+            let interval = if link.path.is_some() && !reprobing { KEEPALIVE_INTERVAL } else { PROBE_INTERVAL };
             if link.last_ping.is_some_and(|t| now - t < interval) {
                 continue;
             }
             link.last_ping = Some(now);
             match link.path {
-                Some(path) => out.push((path, link.relayed)),
+                Some(path) => {
+                    out.push((path, link.relayed));
+                    if reprobing {
+                        out.extend(link.candidates.iter().filter(|&&c| c != path || link.relayed).map(|&c| (c, false)));
+                    }
+                }
                 None => {
                     out.extend(link.candidates.iter().map(|&c| (c, false)));
                     if relay && now - link.searching_since > RELAY_PROBE_AFTER {
@@ -416,8 +528,9 @@ impl Mesh {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::net::SocketAddrV4;
 
     #[test]
     fn sealed_packets_open_only_with_the_right_key() {
@@ -433,6 +546,87 @@ mod tests {
         // Claiming to be someone else breaks the tag.
         packet[4] ^= 1;
         assert_eq!(open(&cipher, &packet), None);
+    }
+
+    fn endpoint(id: SessionId, addrs: &[&str]) -> PeerEndpoint {
+        PeerEndpoint { session_id: id, public: None, local: addrs.iter().map(|a| a.to_string()).collect() }
+    }
+
+    #[test]
+    fn new_addresses_are_tried_at_once_alongside_the_path() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        mesh.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        assert!(mesh.heard(2, "10.0.0.2:5000".parse().unwrap(), false));
+        mesh.due_pings();
+        // Their network changed: the new address is probed now, with the old path still kept.
+        mesh.set_peer(&endpoint(2, &["192.168.1.9:5000"]));
+        let due = mesh.due_pings();
+        assert!(due.contains(&("10.0.0.2:5000".parse().unwrap(), false)), "{due:?}");
+        assert!(due.contains(&("192.168.1.9:5000".parse().unwrap(), false)), "{due:?}");
+        // And again soon, not after a whole keepalive second.
+        std::thread::sleep(PROBE_INTERVAL + Duration::from_millis(20));
+        assert!(!mesh.due_pings().is_empty());
+        // The new address answers: voice goes there.
+        assert!(mesh.heard(2, "192.168.1.9:5000".parse().unwrap(), false));
+        assert_eq!(mesh.paths(), vec![("192.168.1.9:5000".parse().unwrap(), false)]);
+    }
+
+    #[test]
+    fn the_same_addresses_again_change_nothing() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        mesh.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        assert!(mesh.heard(2, "10.0.0.2:5000".parse().unwrap(), false));
+        mesh.due_pings();
+        mesh.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        // Pinged at once (set_peer always does), but only on the path: nothing to reprobe.
+        assert_eq!(mesh.due_pings(), vec![("10.0.0.2:5000".parse().unwrap(), false)]);
+        assert!(mesh.due_pings().is_empty(), "then the usual keepalive pace");
+    }
+
+    #[test]
+    fn our_network_changing_reprobes_everyone_and_drops_relayed_paths() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        mesh.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        mesh.set_peer(&endpoint(3, &["10.0.0.3:5000"]));
+        assert!(mesh.heard(2, "10.0.0.2:5000".parse().unwrap(), false));
+        assert!(mesh.heard(3, "203.0.113.3:7000".parse().unwrap(), true));
+        mesh.due_pings();
+        mesh.network_changed();
+        let due = mesh.due_pings();
+        // The direct path is kept and pinged at once; the relayed one is gone (the relay was ours).
+        assert!(due.contains(&("10.0.0.2:5000".parse().unwrap(), false)), "{due:?}");
+        assert!(due.contains(&("10.0.0.3:5000".parse().unwrap(), false)), "{due:?}");
+        assert_eq!(mesh.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false)]);
+        assert!(mesh.turn.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn stun_answers_mid_call_are_matched_to_our_question() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        let server: SocketAddr = "198.51.100.1:3478".parse().unwrap();
+        mesh.set_stun_servers(vec![server]);
+        let (to, request) = mesh.stun_request().unwrap();
+        assert_eq!(to, server);
+        let txid: [u8; 12] = request[8..20].try_into().unwrap();
+        let answer = stun_answer(&txid, "203.0.113.9:41000".parse().unwrap());
+        // Not from the server we asked, or not our transaction: ignored.
+        assert!(!mesh.stun_heard("198.51.100.2:3478".parse().unwrap(), &answer));
+        assert!(!mesh.stun_heard(server, &stun_answer(&[0; 12], "203.0.113.9:41000".parse().unwrap())));
+        assert!(mesh.stun_heard(server, &answer));
+        assert_eq!(mesh.take_stun_answer(), Some("203.0.113.9:41000".parse().unwrap()));
+        assert!(!mesh.stun_heard(server, &answer), "answered once");
+    }
+
+    /// A STUN binding response with an XOR-MAPPED-ADDRESS, as a server would send.
+    pub(crate) fn stun_answer(txid: &[u8; 12], public: SocketAddrV4) -> Vec<u8> {
+        let mut resp = vec![0x01, 0x01, 0x00, 0x0c];
+        resp.extend_from_slice(&STUN_MAGIC);
+        resp.extend_from_slice(txid);
+        resp.extend_from_slice(&[0x00, 0x20, 0x00, 0x08, 0x00, 0x01]);
+        resp.extend_from_slice(&(public.port() ^ 0x2112).to_be_bytes());
+        let ip = public.ip().octets();
+        resp.extend(ip.iter().zip(STUN_MAGIC).map(|(b, m)| b ^ m));
+        resp
     }
 
     #[test]

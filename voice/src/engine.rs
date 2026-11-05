@@ -46,6 +46,10 @@ const PEER_TIMEOUT: Duration = Duration::from_secs(10);
 const RELAY_RENEW_AFTER: Duration = Duration::from_secs(3 * 3600);
 /// While a relay is needed but missing, it is asked for again this often.
 const RELAY_ASK_AGAIN: Duration = Duration::from_secs(30);
+/// How often voice looks at our own network for a change (wifi to cable, a new address).
+const NETWORK_CHECK: Duration = Duration::from_secs(2);
+/// How often STUN is asked again for our public address, in case the router changed it.
+const STUN_REFRESH: Duration = Duration::from_secs(30);
 /// About 200 ms of mic-test audio; older audio is dropped so the echo stays close.
 const MONITOR_MAX: usize = SAMPLE_RATE as usize / 5;
 /// The mic test in voice starts playing once 30 ms are buffered.
@@ -169,15 +173,10 @@ impl VoiceEngine {
         if public.is_none() {
             tracing::warn!("no STUN server answered; only peers on this network can be reached");
         }
-        // Where peers can try us: this network's address, and our IPv6 address on the internet.
-        let mut local: Vec<String> = mesh::local_ip().map(|ip| SocketAddr::new(ip, port).to_string()).into_iter().collect();
-        if mesh::is_dual(&socket) {
-            if let Some(v6) = mesh::global_ipv6() {
-                local.push(SocketAddr::new(v6.into(), port).to_string());
-            }
-        }
+        let local = local_endpoints(our_addresses(mesh::is_dual(&socket)), port);
         let endpoint = PeerEndpoint { session_id, public: public.map(|a| a.to_string()), local };
         let mesh = Mesh::new(session_id, &key);
+        mesh.set_stun_servers(mesh::stun_servers());
         *mesh.endpoint.lock().unwrap() = Some(endpoint.clone());
         let route = Route::Mesh(Arc::new(mesh));
         Self::start_with(socket, session_id, route, Some(endpoint), devices, settings)
@@ -817,6 +816,33 @@ impl Net {
     }
 }
 
+/// This computer's addresses: on the local network, and IPv6 on the internet (dual-stack only).
+type OurAddresses = (Option<std::net::IpAddr>, Option<std::net::Ipv6Addr>);
+
+fn our_addresses(dual: bool) -> OurAddresses {
+    (mesh::local_ip(), if dual { mesh::global_ipv6() } else { None })
+}
+
+/// Where peers can try us on those addresses.
+fn local_endpoints((lan, v6): OurAddresses, port: u16) -> Vec<String> {
+    lan.map(|ip| SocketAddr::new(ip, port)).into_iter().chain(v6.map(|ip| SocketAddr::new(ip.into(), port))).map(|a| a.to_string()).collect()
+}
+
+/// Following our own network during a call, so moving from wifi to cable (or the router
+/// handing out a new address) doesn't cut anyone off.
+struct Roaming {
+    addresses: OurAddresses,
+    checked: Instant,
+    asked_stun: Instant,
+}
+
+impl Roaming {
+    fn new(dual: bool) -> Self {
+        // STUN was asked just before voice started.
+        Roaming { addresses: our_addresses(dual), checked: Instant::now(), asked_stun: Instant::now() }
+    }
+}
+
 struct Encoder {
     session_id: SessionId,
     net: Net,
@@ -826,6 +852,54 @@ struct Encoder {
 }
 
 impl Encoder {
+    /// Notices our network changing, and tells the channel our new addresses.
+    /// Returns true when it changed (the relay, tied to the old address, is gone).
+    fn roam(&mut self, m: &Mesh, roaming: &mut Roaming) -> bool {
+        let now = Instant::now();
+        let forced = m.recheck.swap(false, Ordering::Relaxed);
+        let mut changed = false;
+        if forced || now - roaming.checked >= NETWORK_CHECK {
+            roaming.checked = now;
+            let addresses = our_addresses(self.net.dual);
+            if forced || addresses != roaming.addresses {
+                tracing::info!("our network changed ({:?} to {:?}); telling the channel", roaming.addresses, addresses);
+                roaming.addresses = addresses;
+                changed = true;
+                m.network_changed();
+                let port = self.net.socket.local_addr().map(|a| a.port()).unwrap_or(0);
+                let mut endpoint = m.endpoint.lock().unwrap();
+                if let Some(e) = endpoint.as_mut() {
+                    // The old public address and relay are gone with the old network; STUN
+                    // tells us the new public one in a moment.
+                    e.local = local_endpoints(addresses, port);
+                    e.public = None;
+                    let _ = self.events.send(EngineEvent::Endpoint { endpoint: e.clone() });
+                }
+                roaming.asked_stun = now - STUN_REFRESH;
+            }
+        }
+        if now - roaming.asked_stun >= STUN_REFRESH {
+            roaming.asked_stun = now;
+            if let Some((to, request)) = m.stun_request() {
+                let _ = self.net.socket.send_to(&request, mesh::wire(to, self.net.dual));
+            }
+        }
+        if let Some((to, request)) = m.stun_retry() {
+            let _ = self.net.socket.send_to(&request, mesh::wire(to, self.net.dual));
+        }
+        if let Some(public) = m.take_stun_answer() {
+            let mut endpoint = m.endpoint.lock().unwrap();
+            if let Some(e) = endpoint.as_mut() {
+                if e.public.as_deref() != Some(public.to_string().as_str()) {
+                    tracing::info!("our public address is now {public}");
+                    e.public = Some(public.to_string());
+                    let _ = self.events.send(EngineEvent::Endpoint { endpoint: e.clone() });
+                }
+            }
+        }
+        changed
+    }
+
     fn set_speaking(&mut self, speaking: bool) {
         if speaking != self.speaking {
             self.speaking = speaking;
@@ -857,7 +931,16 @@ impl Encoder {
 
         let mut relay_announced: Option<SocketAddr> = None;
         let mut relay_asked: Option<Instant> = None;
+        let mut roaming = Roaming::new(self.net.dual);
         while !stop.load(Ordering::Relaxed) {
+            if let Route::Mesh(m) = &self.net.route {
+                let m = m.clone();
+                if self.roam(&m, &mut roaming) {
+                    // A new relay is needed from the new network, if anyone needs one.
+                    relay_announced = None;
+                    relay_asked = None;
+                }
+            }
             self.net.tick();
             if let Route::Mesh(m) = &self.net.route {
                 let m = m.clone();
@@ -981,6 +1064,9 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
             from = mesh::canonical(peer);
             relayed = true;
             inner = data;
+        }
+        if !relayed && mesh.stun_heard(from, packet) {
+            continue;
         }
         let packet = if relayed { &inner[..] } else { packet };
         // Peer to peer: only sealed packets from people in our channel count.
@@ -1327,6 +1413,40 @@ mod tests {
         assert!(!renewed.local.contains(endpoint.local.last().unwrap()), "the old address is gone");
         b.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec![new_addr] });
         assert!(connected(&b_events), "engine 2 reaches engine 1 through the new relay");
+    }
+
+    #[test]
+    fn a_changed_network_is_announced_with_the_new_public_address() {
+        // A stand-in STUN server on this computer that says we're at 203.0.113.50:4242.
+        let stun = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let stun_addr = stun.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((len, from)) = stun.recv_from(&mut buf) {
+                if len >= 20 {
+                    let txid: [u8; 12] = buf[8..20].try_into().unwrap();
+                    let _ = stun.send_to(&crate::mesh::tests::stun_answer(&txid, "203.0.113.50:4242".parse().unwrap()), from);
+                }
+            }
+        });
+        let (a, events) = VoiceEngine::start_mesh(1, [9; 32], &DeviceChoice::default(), Arc::new(AudioSettings::default())).unwrap();
+        let Route::Mesh(m) = &a.route else { unreachable!() };
+        m.set_stun_servers(vec![stun_addr]);
+        while events.try_recv().is_ok() {}
+        m.recheck.store(true, Ordering::Relaxed);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut announced = Vec::new();
+        while Instant::now() < deadline {
+            if let Ok(EngineEvent::Endpoint { endpoint }) = events.recv_timeout(Duration::from_millis(100)) {
+                announced.push(endpoint.public.clone());
+                if endpoint.public.as_deref() == Some("203.0.113.50:4242") {
+                    break;
+                }
+            }
+        }
+        // First the new local addresses (public unknown for a moment), then the public one.
+        assert_eq!(announced.first(), Some(&None), "{announced:?}");
+        assert_eq!(announced.last(), Some(&Some("203.0.113.50:4242".to_string())), "{announced:?}");
     }
 
     #[test]
