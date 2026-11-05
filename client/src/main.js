@@ -4929,7 +4929,9 @@ function onDmEvent(m) {
     conv.last_at = Math.max(conv.last_at, m.message.sent_at);
     const mine = m.message.from_key === state.me?.key;
     const viewing = state.openDm === peer && document.hasFocus() && !online();
-    if (mine || viewing) conv.last_read = conv.last_at;
+    // Your own message is read here (the cloud knows); one you're looking at is marked
+    // read below, which also tells the cloud, so it doesn't come back as unread.
+    if (mine) conv.last_read = conv.last_at;
     state.conversations.set(peer, conv);
     // Our own message coming back: it replaces the one shown while sending.
     if (m.nonce) {

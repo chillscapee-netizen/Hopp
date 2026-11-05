@@ -50,10 +50,11 @@ fn arg(name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
 
-/// The code in a hopp://CODE (or strom://CODE) invite link, if the text has one.
+/// The code in an invite link (hopp://CODE, strom://CODE or https://…/i/CODE), if the text has one.
 fn invite_code(text: &str) -> Option<String> {
     text.split_whitespace().find_map(|word| {
-        let rest = word.strip_prefix("hopp://").or_else(|| word.strip_prefix("strom://"))?;
+        // hopp://CODE, or the web link https://…/i/CODE.
+        let rest = word.strip_prefix("hopp://").or_else(|| word.strip_prefix("strom://")).or_else(|| word.split_once("/i/").map(|(_, code)| code))?;
         let code = rest.trim_end_matches('/');
         (code.len() >= 6 && code.len() <= 16 && code.chars().all(|c| c.is_ascii_alphanumeric())).then(|| code.to_uppercase())
     })
@@ -607,6 +608,14 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_links_are_understood_in_every_form() {
+        for text in ["hopp://CGAQPK9Q", "join us: https://hopp-cloud.hoppchat.workers.dev/i/CGAQPK9Q", "strom://cgaqpk9q/"] {
+            assert_eq!(invite_code(text).as_deref(), Some("CGAQPK9Q"), "{text}");
+        }
+        assert_eq!(invite_code("https://example.com/page"), None);
+    }
 
     #[test]
     fn the_echo_says_back_what_it_hears_a_second_later() {
