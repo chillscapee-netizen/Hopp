@@ -3061,3 +3061,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* A server you come back to shows what you saw last, quietly, until it answers. */
 .stale { opacity: 0.6; pointer-events: none; transition: opacity 150ms; }
+
+/* Invite cards: the initials in the middle of the icon, a calm line on top, no outline. */
+.invite-card { border-color: transparent; }
+.invite-card-icon { display: grid; place-items: center; font-weight: 700; color: var(--text); }
+.invite-card-kicker { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
