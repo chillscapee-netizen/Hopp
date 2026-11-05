@@ -5051,6 +5051,7 @@ function renderDmView(keepScroll) {
     scroller.addEventListener("scroll", () => {
       if (scroller.scrollTop < 40 && !state.dmComplete.has(peer)) loadOlderDms(peer);
     });
+    stickToBottom(scroller, list);
     view.dataset.lockText = lock.textContent;
     view.lock = lock;
   }
@@ -7987,3 +7988,23 @@ async function deleteDm(peer, m, skipConfirm) {
   }
   invoke("account_send", { msg: { type: "dm_delete", with: peer, id: m.id } }).catch((err) => toast(friendlyError(err), true));
 }
+
+// ---------- staying at the bottom ----------
+//
+// Cards, GIFs and pictures finish loading after a message list is drawn. When you're
+// at the bottom, the list stays there as they grow instead of jumping up and back.
+
+function stickToBottom(scroller, list) {
+  let atBottom = true;
+  scroller.addEventListener("scroll", () => {
+    atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+  });
+  const keep = () => {
+    if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+  };
+  new ResizeObserver(keep).observe(list);
+  // Cards filled in, pictures and GIFs finishing: the same, without waiting for a frame.
+  new MutationObserver(keep).observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class", "src"] });
+  list.addEventListener("load", keep, true);
+}
+stickToBottom($("scroller"), $("messages"));

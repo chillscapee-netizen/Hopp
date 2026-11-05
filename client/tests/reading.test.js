@@ -19,6 +19,23 @@
   scroller.dispatchEvent(new Event("scroll"));
   check("jumps back down and hides", scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 5 && $("jump-bar").hidden);
 
+  // Something in the list grows after it's drawn (a GIF or card loading): at the bottom, it stays there.
+  const grower = el("div");
+  grower.style.height = "0px";
+  $("messages").append(grower);
+  await wait(50);
+  scroller.scrollTop = scroller.scrollHeight;
+  scroller.dispatchEvent(new Event("scroll"));
+  grower.style.height = "300px";
+  await wait(100);
+  check("stays at the bottom while things load", scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 5);
+  scroller.scrollTop = 0;
+  scroller.dispatchEvent(new Event("scroll"));
+  grower.style.height = "500px";
+  await wait(100);
+  check("scrolled up: left where you are", scroller.scrollTop === 0);
+  grower.remove();
+
   // Mark as read: a whole server, then one channel.
   const crew = prefs.servers.find((s) => s.address === "cloud:crew0001");
   state.reads.set(readKey(crew.address, 3), { server: crew.address, channel: 3, read_id: 1, last_id: 9, mentions: 2 });
