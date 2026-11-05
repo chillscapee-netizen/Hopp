@@ -8,6 +8,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { troubleMessage } from "./trouble";
+import { budgetBytes, LOGIN_TTL_S, LOGINS_PER_DAY, monthUsage, newLogin, relayConfigured, revoke, USAGE_FRESH_MS, USAGE_TRUSTED_MS, type TurnLogin } from "./relay";
 import type { Env } from "./index";
 
 const ACCOUNT_PROTOCOL = 1;
@@ -133,6 +134,77 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql = ctx.storage.sql;
     this.sql.exec("CREATE TABLE IF NOT EXISTS names (name TEXT PRIMARY KEY, key TEXT NOT NULL, released_at INTEGER)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS names_by_key ON names (key)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS relay (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS relay_logins (username TEXT PRIMARY KEY, until INTEGER NOT NULL)");
+  }
+
+  // ---------- the voice relay, for all of Hopp ----------
+
+  private relayGet(key: string): string | null {
+    const row = this.sql.exec("SELECT value FROM relay WHERE key = ?", key).toArray()[0];
+    return row ? String(row.value) : null;
+  }
+
+  private relaySet(key: string, value: string) {
+    this.sql.exec("INSERT INTO relay (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
+  }
+
+  /** This month's relay usage: read from Cloudflare when stale, else what we read last. Null if unknown. */
+  private async relayUsage(): Promise<number | null> {
+    const now = Date.now();
+    const month = new Date().toISOString().slice(0, 7);
+    const kept = JSON.parse(this.relayGet("usage") ?? "null") as { bytes: number; at: number; month: string } | null;
+    if (kept && kept.month === month && now - kept.at < USAGE_FRESH_MS) return kept.bytes;
+    try {
+      const bytes = await monthUsage(this.env);
+      this.relaySet("usage", JSON.stringify({ bytes, at: now, month }));
+      return bytes;
+    } catch (err) {
+      console.error("relay usage unreadable:", String(err));
+      return kept && kept.month === month && now - kept.at < USAGE_TRUSTED_MS ? kept.bytes : null;
+    }
+  }
+
+  /** Over budget: every login still live is cut off, once. */
+  private async stopRelay() {
+    const now = Date.now();
+    for (const row of this.sql.exec("SELECT username FROM relay_logins WHERE until > ?", now).toArray()) await revoke(this.env, String(row.username));
+    this.sql.exec("DELETE FROM relay_logins");
+  }
+
+  /** A relay login for someone who can't be reached directly, if the month's budget allows. */
+  async relayLogin(): Promise<{ login?: TurnLogin; error?: string }> {
+    if (!relayConfigured(this.env)) return { error: "The voice relay isn't set up on this Hopp Cloud." };
+    const used = await this.relayUsage();
+    if (used === null) return { error: "The voice relay is resting for a moment. Try again soon." };
+    if (used >= budgetBytes(this.env)) {
+      await this.stopRelay();
+      return { error: "The voice relay has used this month's free amount. It's back next month." };
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const [d, n] = (this.relayGet("today") ?? "").split(" ");
+    const count = d === day ? Number(n) : 0;
+    if (count >= LOGINS_PER_DAY) return { error: "The voice relay is busy today. Try again tomorrow." };
+    const login = await newLogin(this.env);
+    if (!login) return { error: "The voice relay didn't answer. Try again in a moment." };
+    this.relaySet("today", `${day} ${count + 1}`);
+    const now = Date.now();
+    this.sql.exec("DELETE FROM relay_logins WHERE until < ?", now);
+    this.sql.exec("INSERT OR REPLACE INTO relay_logins (username, until) VALUES (?, ?)", login.username, now + LOGIN_TTL_S * 1000);
+    // While logins are live, the budget is checked again every 15 minutes.
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + USAGE_FRESH_MS);
+    return { login };
+  }
+
+  async alarm() {
+    const now = Date.now();
+    this.sql.exec("DELETE FROM relay_logins WHERE until < ?", now);
+    const live = this.sql.exec("SELECT count(*) AS n FROM relay_logins").one().n as number;
+    if (!live) return;
+    const used = await this.relayUsage();
+    // Unknown usage while logins are live: stop rather than guess.
+    if (used === null || used >= budgetBytes(this.env)) return this.stopRelay();
+    await this.ctx.storage.setAlarm(now + USAGE_FRESH_MS);
   }
 
   /** Gives `name` to `key`, releasing the key's previous name. Null on success, else why not. */
@@ -1023,7 +1095,7 @@ export class StromAccount extends DurableObject<Env> {
    */
   private async relayLogin(ws: WebSocket) {
     const fail = (message: string) => this.send(ws, { type: "error", message, for: "turn_login" });
-    if (!this.env.TURN_KEY_ID || !this.env.TURN_KEY_TOKEN) return fail("The voice relay isn't set up on this Hopp Cloud.");
+    if (!relayConfigured(this.env)) return fail("The voice relay isn't set up on this Hopp Cloud.");
     const now = Date.now();
     const kept = this.meta("turn_login");
     if (kept) {
@@ -1035,27 +1107,12 @@ export class StromAccount extends DurableObject<Env> {
     const count = d === day ? Number(n) : 0;
     if (count >= RELAY_LOGINS_PER_DAY) return fail("The voice relay is busy for you today. Try again tomorrow.");
     this.setMeta("turn_today", `${day} ${count + 1}`);
-    const ttl = 86_400;
-    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${this.env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.env.TURN_KEY_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ ttl }),
-    });
-    if (!res.ok) return fail("The voice relay didn't answer. Try again in a moment.");
-    const body = (await res.json()) as { iceServers?: unknown };
-    const servers = (Array.isArray(body.iceServers) ? body.iceServers : [body.iceServers]) as { urls?: string | string[]; username?: string; credential?: string }[];
-    for (const s of servers) {
-      const urls = Array.isArray(s?.urls) ? s.urls : s?.urls ? [s.urls] : [];
-      // Voice goes over UDP: "turn:host:port?transport=udp" (or no transport, which means UDP).
-      const url = urls.find((u) => /^turn:/.test(u) && !/transport=tcp/.test(u));
-      const server = url?.replace(/^turn:/, "").replace(/\?.*$/, "");
-      if (server && s.username && s.credential) {
-        const login = { server, username: s.username, credential: s.credential };
-        this.setMeta("turn_login", JSON.stringify({ login, until: now + (ttl / 2) * 1000 }));
-        return this.send(ws, { type: "turn_login", login });
-      }
-    }
-    return fail("The voice relay sent something unexpected.");
+    const got = await directory(this.env).relayLogin();
+    if (!got.login) return fail(got.error ?? "The voice relay isn't available.");
+    // Kept for half its life, so a rejoin doesn't fetch a new one.
+    this.setMeta("turn_login", JSON.stringify({ login: got.login, until: now + (LOGIN_TTL_S / 2) * 1000 }));
+    return this.send(ws, { type: "turn_login", login: got.login });
+
   }
 
   /** A file handshake from a friend. False when none of our devices is online. */

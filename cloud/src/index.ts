@@ -30,6 +30,15 @@ export interface Env {
    */
   TURN_KEY_ID?: string;
   TURN_KEY_TOKEN?: string;
+  /**
+   * The relay's spending guard reads real usage from Cloudflare (both needed, or no relay):
+   *   npx wrangler secret put CF_ACCOUNT_ID         (the account id, from the dashboard)
+   *   npx wrangler secret put CF_ANALYTICS_TOKEN    (an API token with "Account Analytics: Read")
+   */
+  CF_ACCOUNT_ID?: string;
+  CF_ANALYTICS_TOKEN?: string;
+  /** Stop handing out relay logins at this many GB a month (default 800; the free amount is 1,000). */
+  RELAY_BUDGET_GB?: string;
 }
 
 /** Server ids are long and random, so they can't be guessed. */

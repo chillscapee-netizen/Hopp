@@ -654,3 +654,88 @@ pub(crate) mod testing {
         }
     }
 }
+
+/// Against Cloudflare's real relay: set HOPP_TURN_LOGIN to a JSON file from
+/// generate-ice-servers and run with --ignored.
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use std::net::UdpSocket;
+
+    #[test]
+    #[ignore = "needs a real relay login (HOPP_TURN_LOGIN)"]
+    fn a_packet_goes_through_the_real_relay_both_ways() {
+        let path = std::env::var("HOPP_TURN_LOGIN").expect("HOPP_TURN_LOGIN");
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let s = json["iceServers"].as_array().unwrap().iter().find(|s| s["username"].is_string()).unwrap();
+        let login = TurnLogin { server: "turn.cloudflare.com:3478".into(), username: s["username"].as_str().unwrap().into(), credential: s["credential"].as_str().unwrap().into() };
+        let server = std::net::ToSocketAddrs::to_socket_addrs(login.server.as_str()).unwrap().find(SocketAddr::is_ipv4).unwrap();
+
+        let a = UdpSocket::bind("0.0.0.0:0").unwrap();
+        a.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        let (mut turn, first) = Turn::new(server, &login);
+        a.send_to(&first, server).unwrap();
+        let mut buf = [0u8; 2048];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(turn.state(), State::Ready(_) | State::Failed) && Instant::now() < deadline {
+            if let Ok((n, _)) = a.recv_from(&mut buf) {
+                for out in turn.handle(&buf[..n]).1 {
+                    a.send_to(&out, server).unwrap();
+                }
+            }
+            for out in turn.tick() {
+                a.send_to(&out, server).unwrap();
+            }
+        }
+        let State::Ready(relayed) = turn.state() else { panic!("no allocation: {:?}", turn.state()) };
+        println!("relay address {relayed}");
+
+        // A second socket on this computer, seen from the internet at its own public address.
+        let b = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let b_public = crate::mesh::public_address(&b).expect("STUN for the second socket");
+        b.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        a.send_to(&turn.permit(b_public.ip()).unwrap(), server).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        while let Ok((n, _)) = a.recv_from(&mut buf) {
+            turn.handle(&buf[..n]);
+        }
+
+        // B -> relay -> A.
+        let mut got = None;
+        for _ in 0..10 {
+            b.send_to(b"hello through the relay", relayed).unwrap();
+            if let Ok((n, _)) = a.recv_from(&mut buf) {
+                if let (Some((from, data)), _) = turn.handle(&buf[..n]) {
+                    got = Some((from, data));
+                    break;
+                }
+            }
+        }
+        let (from, data) = got.expect("B's packet came through the relay");
+        assert_eq!(data, b"hello through the relay");
+        assert_eq!(from.ip(), b_public.ip());
+
+        // A -> relay -> B (a Send indication, then a channel once bound).
+        let mut back = false;
+        for _ in 0..10 {
+            let (wrapped, bind) = turn.wrap(from, b"and back");
+            if let Some(bind) = bind {
+                a.send_to(&bind, server).unwrap();
+            }
+            a.send_to(&wrapped, server).unwrap();
+            while let Ok((n, _)) = a.recv_from(&mut buf) {
+                turn.handle(&buf[..n]);
+            }
+            if let Ok((n, src)) = b.recv_from(&mut buf) {
+                assert_eq!(&buf[..n], b"and back");
+                assert_eq!(src, relayed);
+                back = true;
+                break;
+            }
+        }
+        assert!(back, "A's packet reached B through the relay");
+        if let Some(bye) = turn.release() {
+            let _ = a.send_to(&bye, server);
+        }
+    }
+}
