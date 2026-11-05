@@ -40,7 +40,8 @@ const GROUP_NAME_MAX = 40;
 export interface Group { id: string; name: string; members: string[]; created_at: number }
 /** Calls: what each kind of signal may carry. The key is sealed for the callee, like a direct message. */
 const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint"]);
-const CALL_ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
+// "ip:port" for IPv4, "[ip]:port" for IPv6.
+const CALL_ENDPOINT = /^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$/;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
 const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 

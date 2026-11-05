@@ -24,7 +24,8 @@ const CHAT_PER_SECOND = 1;
 const TYPING_INTERVAL_MS = 2000;
 const INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 /** Voice endpoints: "a.b.c.d:port", a few local addresses at most. */
-const ENDPOINT = /^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/;
+// "ip:port" for IPv4, "[ip]:port" for IPv6.
+const ENDPOINT = /^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$/;
 const MAX_LOCAL_ENDPOINTS = 4;
 const MAX_REACTIONS = 20;
 /** Peer-to-peer voice: each person sends to every other, so keep channels small. */

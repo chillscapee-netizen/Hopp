@@ -6,13 +6,17 @@
 //! network) around the channel. Peers then probe each other's addresses until
 //! one answers; probing from both sides opens a path through most home routers.
 //!
+//! The socket speaks IPv4 and IPv6 at once. IPv6 matters: the networks that make
+//! direct voice hard (mobile data, carrier-grade NAT) usually have IPv6, where
+//! computers reach each other without a router translating addresses.
+//!
 //! Packets are encrypted and authenticated with the channel's key, which only
 //! members of the channel get from the server:
 //! kind (1) | sender (4) | salt (4) | counter (4) | ciphertext | tag (16).
 //! The header is authenticated too; the nonce is salt, counter and sender.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -39,9 +43,62 @@ const PATH_TIMEOUT: Duration = Duration::from_secs(5);
 /// A peer we haven't reached in this long is reported as unreachable (their network blocks direct voice).
 const UNREACHABLE_AFTER: Duration = Duration::from_secs(8);
 
+/// A UDP socket for both IPv4 and IPv6 (one port), or IPv4 only where IPv6 is off.
+pub fn dual_stack_socket() -> std::io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let dual = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).and_then(|s| {
+        s.set_only_v6(false)?;
+        s.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)).into())?;
+        Ok(s)
+    });
+    match dual {
+        Ok(s) => Ok(s.into()),
+        Err(e) => {
+            tracing::info!("no IPv6 on this computer ({e}); voice uses IPv4 only");
+            UdpSocket::bind("0.0.0.0:0")
+        }
+    }
+}
+
+/// Whether a socket is the dual-stack kind (IPv4 addresses then go out IPv4-mapped).
+pub fn is_dual(socket: &UdpSocket) -> bool {
+    socket.local_addr().is_ok_and(|a| a.is_ipv6())
+}
+
+/// The address to hand the socket: IPv4 written as IPv4-mapped IPv6 on a dual-stack socket.
+pub fn wire(addr: SocketAddr, dual: bool) -> SocketAddr {
+    match addr {
+        SocketAddr::V4(v4) if dual => SocketAddr::new(IpAddr::V6(v4.ip().to_ipv6_mapped()), v4.port()),
+        other => other,
+    }
+}
+
+/// The plain form of an address a socket reported (IPv4-mapped back to IPv4).
+pub fn canonical(addr: SocketAddr) -> SocketAddr {
+    SocketAddr::new(addr.ip().to_canonical(), addr.port())
+}
+
+/// This computer's own IPv6 address on the internet, if it has one.
+pub fn global_ipv6() -> Option<Ipv6Addr> {
+    // Connecting a UDP socket sends nothing; it only picks the outgoing address.
+    let socket = UdpSocket::bind("[::]:0").ok()?;
+    socket.connect("[2001:4860:4860::8888]:80").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V6(ip) if is_global_v6(&ip) => Some(ip),
+        _ => None,
+    }
+}
+
+/// Reachable across the internet: not loopback, link-local, unique-local or mapped.
+fn is_global_v6(ip: &Ipv6Addr) -> bool {
+    let first = ip.segments()[0];
+    !ip.is_loopback() && !ip.is_unspecified() && ip.to_ipv4_mapped().is_none() && (first & 0xffc0) != 0xfe80 && (first & 0xfe00) != 0xfc00
+}
+
 /// Asks a STUN server which public address `socket` appears from.
 /// Must run before anything else reads from the socket.
 pub fn public_address(socket: &UdpSocket) -> Option<SocketAddr> {
+    let dual = is_dual(socket);
     let old_timeout = socket.read_timeout().ok().flatten();
     socket.set_read_timeout(Some(Duration::from_millis(400))).ok()?;
     let found = STUN_SERVERS.iter().find_map(|server| {
@@ -52,11 +109,11 @@ pub fn public_address(socket: &UdpSocket) -> Option<SocketAddr> {
         request.extend_from_slice(&txid);
         let mut buf = [0u8; 512];
         for _ in 0..3 {
-            socket.send_to(&request, addr).ok()?;
+            socket.send_to(&request, wire(addr, dual)).ok()?;
             let deadline = Instant::now() + Duration::from_millis(400);
             while Instant::now() < deadline {
                 match socket.recv_from(&mut buf) {
-                    Ok((len, from)) if from == addr => {
+                    Ok((len, from)) if canonical(from) == addr => {
                         if let Some(public) = parse_stun(&buf[..len], &txid) {
                             return Some(public);
                         }
@@ -184,7 +241,8 @@ pub struct Mesh {
 
 fn parse_addrs(peer: &PeerEndpoint) -> Vec<SocketAddr> {
     // Local addresses first: on the same network they work even when the router can't loop back.
-    peer.local.iter().chain(&peer.public).filter_map(|a| a.parse().ok()).filter(SocketAddr::is_ipv4).take(5).collect()
+    // IPv6 ones are tried alongside; whichever answers first carries the voice.
+    peer.local.iter().chain(&peer.public).filter_map(|a| a.parse::<SocketAddr>().ok()).map(canonical).take(6).collect()
 }
 
 impl Mesh {
@@ -251,6 +309,7 @@ impl Mesh {
 
     /// Records a genuine packet from `id` arriving from `from`. False if `id` isn't in our channel.
     pub fn heard(&self, id: SessionId, from: SocketAddr) -> bool {
+        let from = canonical(from);
         let mut links = self.links.lock().unwrap();
         let Some(link) = links.get_mut(&id) else { return false };
         if link.path != Some(from) {
@@ -367,5 +426,48 @@ mod network_tests {
         let public = public_address(&socket).expect("a STUN server answered");
         assert!(public.port() != 0);
         println!("public address: {}", public.ip().is_ipv4());
+    }
+
+    #[test]
+    fn dual_stack_sockets_talk_over_ipv4_and_ipv6() {
+        let a = dual_stack_socket().unwrap();
+        let b = dual_stack_socket().unwrap();
+        if !is_dual(&a) {
+            return; // No IPv6 on this machine: IPv4 is covered by the other tests.
+        }
+        b.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut buf = [0u8; 16];
+        let b_port = b.local_addr().unwrap().port();
+        let a_port = a.local_addr().unwrap().port();
+
+        // IPv4 through a dual-stack socket: written IPv4-mapped, read back as plain IPv4.
+        let to_b4: SocketAddr = format!("127.0.0.1:{b_port}").parse().unwrap();
+        a.send_to(b"four", wire(to_b4, true)).unwrap();
+        let (n, from) = b.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"four");
+        assert_eq!(canonical(from), format!("127.0.0.1:{a_port}").parse::<SocketAddr>().unwrap());
+
+        // IPv6, same port.
+        let to_b6: SocketAddr = format!("[::1]:{b_port}").parse().unwrap();
+        a.send_to(b"six", wire(to_b6, true)).unwrap();
+        let (n, from) = b.recv_from(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"six");
+        assert_eq!(canonical(from), format!("[::1]:{a_port}").parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn only_internet_ipv6_addresses_are_offered() {
+        for (ip, global) in [("2a02:aa1:1000::1", true), ("fe80::1", false), ("fd12:3456::1", false), ("::1", false), ("::ffff:10.0.0.1", false)] {
+            assert_eq!(is_global_v6(&ip.parse().unwrap()), global, "{ip}");
+        }
+    }
+
+    #[test]
+    fn peers_offer_ipv6_and_ipv4_candidates() {
+        let peer = PeerEndpoint { session_id: 2, public: Some("203.0.113.5:4000".into()), local: vec!["192.168.1.5:4000".into(), "[2a02:aa1::5]:4000".into()] };
+        let got = parse_addrs(&peer);
+        assert!(got.contains(&"[2a02:aa1::5]:4000".parse().unwrap()));
+        assert!(got.contains(&"203.0.113.5:4000".parse().unwrap()));
+        assert_eq!(got[0], "192.168.1.5:4000".parse().unwrap(), "same network first");
     }
 }

@@ -155,17 +155,20 @@ impl VoiceEngine {
         devices: &DeviceChoice,
         settings: Arc<AudioSettings>,
     ) -> anyhow::Result<(Self, Receiver<EngineEvent>)> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        let socket = mesh::dual_stack_socket()?;
         let port = socket.local_addr()?.port();
         let public = mesh::public_address(&socket);
         if public.is_none() {
             tracing::warn!("no STUN server answered; only peers on this network can be reached");
         }
-        let endpoint = PeerEndpoint {
-            session_id,
-            public: public.map(|a| a.to_string()),
-            local: mesh::local_ip().map(|ip| SocketAddr::new(ip, port).to_string()).into_iter().collect(),
-        };
+        // Where peers can try us: this network's address, and our IPv6 address on the internet.
+        let mut local: Vec<String> = mesh::local_ip().map(|ip| SocketAddr::new(ip, port).to_string()).into_iter().collect();
+        if mesh::is_dual(&socket) {
+            if let Some(v6) = mesh::global_ipv6() {
+                local.push(SocketAddr::new(v6.into(), port).to_string());
+            }
+        }
+        let endpoint = PeerEndpoint { session_id, public: public.map(|a| a.to_string()), local };
         let route = Route::Mesh(Arc::new(Mesh::new(session_id, &key)));
         Self::start_with(socket, session_id, route, Some(endpoint), devices, settings)
     }
@@ -645,6 +648,8 @@ fn monitor(settings: &AudioSettings, clean: &AudioFrame) {
 /// Sends our packets the way the route needs: plain to the relay, sealed to each peer.
 struct Net {
     socket: UdpSocket,
+    /// The socket speaks IPv4 and IPv6; IPv4 addresses go out IPv4-mapped.
+    dual: bool,
     route: Route,
     session_id: SessionId,
     sealer: Option<Sealer>,
@@ -662,6 +667,7 @@ impl Net {
             Route::Relay { .. } => None,
         };
         Net {
+            dual: mesh::is_dual(&socket),
             socket,
             route,
             session_id,
@@ -697,7 +703,7 @@ impl Net {
                 let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
                 sealer.seal(mesh::KIND_PING, &nonce.to_be_bytes(), &mut self.packet);
                 for addr in due {
-                    let _ = self.socket.send_to(&self.packet, addr);
+                    let _ = self.socket.send_to(&self.packet, mesh::wire(addr, self.dual));
                 }
             }
         }
@@ -720,7 +726,7 @@ impl Net {
                 let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
                 sealer.seal(mesh::KIND_VOICE, &self.plain, &mut self.packet);
                 for addr in paths {
-                    let _ = self.socket.send_to(&self.packet, addr);
+                    let _ = self.socket.send_to(&self.packet, mesh::wire(addr, self.dual));
                 }
             }
         }
@@ -730,7 +736,7 @@ impl Net {
     fn pong(&mut self, payload: &[u8], to: SocketAddr) {
         if let Some(sealer) = self.sealer.as_mut() {
             sealer.seal(mesh::KIND_PONG, payload, &mut self.packet);
-            let _ = self.socket.send_to(&self.packet, to);
+            let _ = self.socket.send_to(&self.packet, mesh::wire(to, self.dual));
         }
     }
 }

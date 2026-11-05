@@ -624,3 +624,18 @@ test("pictures: members upload signed pictures, send them, and they go with the 
   owner.close();
   bob.close();
 });
+
+test("voice addresses can be IPv6 as well as IPv4", async () => {
+  const { id, owner, invite } = await newServer();
+  const bob = await join(id, "bob", { invite });
+  const lobby = channelId(owner, "Lobby");
+  owner.send({ type: "join_voice", channel: lobby });
+  await owner.waitFor((m) => m.type === "voice_session");
+  owner.send({ type: "voice_endpoint", public: "203.0.113.5:40000", local: ["192.168.1.2:40000", "[2a00:801:210:5c27::1]:40000", "[not:an:addr"] });
+  bob.send({ type: "join_voice", channel: lobby });
+  const session = await bob.waitFor((m) => m.type === "voice_session");
+  const peer = session.peers.find((p) => p.session_id === owner.id);
+  assert.deepEqual(peer.local, ["192.168.1.2:40000", "[2a00:801:210:5c27::1]:40000"]);
+  owner.close();
+  bob.close();
+});
