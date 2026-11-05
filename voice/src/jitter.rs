@@ -74,6 +74,15 @@ impl JitterBuffer {
         self.packets.insert(seq, data);
     }
 
+    /// A frame repeated inside a later packet: fills its gap if it's still missing and not
+    /// yet played. It arrives late by design, so it doesn't count toward the jitter.
+    pub fn fill_in(&mut self, seq: u32, data: Vec<u8>) {
+        if self.next.is_some_and(|n| seq < n) || self.packets.len() >= CAPACITY {
+            return;
+        }
+        self.packets.entry(seq).or_insert(data);
+    }
+
     /// Frames to collect before starting playback: enough to cover about 2.5 times the jitter.
     pub fn target(&self) -> usize {
         let frames = 1 + (2.5 * self.jitter_ms / FRAME_MS).ceil() as usize;
@@ -128,6 +137,24 @@ mod tests {
         jb.push(10, pkt(10));
         assert_eq!(jb.pop(), Playout::Packet(pkt(10)));
         assert_eq!(jb.pop(), Playout::Packet(pkt(11)));
+    }
+
+    #[test]
+    fn repeated_frames_fill_gaps_but_never_replay() {
+        let mut jb = JitterBuffer::default();
+        jb.push(1, pkt(1));
+        jb.push(4, pkt(4));
+        // Packet 4 carried 2 and 3 along: the burst of two is fully recovered.
+        jb.fill_in(2, pkt(2));
+        jb.fill_in(3, pkt(3));
+        jb.fill_in(4, vec![99]);
+        assert_eq!(jb.pop(), Playout::Packet(pkt(1)));
+        assert_eq!(jb.pop(), Playout::Packet(pkt(2)));
+        assert_eq!(jb.pop(), Playout::Packet(pkt(3)));
+        assert_eq!(jb.pop(), Playout::Packet(pkt(4)), "the original wins over a repeat");
+        // Something already played is never queued again.
+        jb.fill_in(2, pkt(2));
+        assert_eq!(jb.pop(), Playout::Conceal);
     }
 
     #[test]

@@ -29,6 +29,15 @@ use crate::turn::{State as TurnState, Turn};
 pub const KIND_VOICE: u8 = 0x10;
 pub const KIND_PING: u8 = 0x11;
 pub const KIND_PONG: u8 = 0x12;
+/// Voice with earlier frames repeated inside, for networks that lose packets.
+/// Only sent to peers whose pings show they understand it.
+pub const KIND_VOICE_RED: u8 = 0x13;
+/// Our pings carry this after the nonce, then loss reports; older Hopp sends the nonce alone.
+const PING_FORMAT: u8 = 1;
+/// A loss report older than this no longer steers how we send.
+const LOSS_REPORT_FRESH: Duration = Duration::from_secs(5);
+/// Frames a loss measurement spans before it counts (a quarter second of talking).
+const LOSS_WINDOW: u32 = 25;
 const HEADER: usize = 1 + 4 + 4 + 4;
 const TAG: usize = 16;
 
@@ -226,7 +235,7 @@ impl Sealer {
 
 /// Checks and decrypts a packet: (kind, sender, payload).
 pub fn open(cipher: &ChaCha20Poly1305, buf: &[u8]) -> Option<(u8, SessionId, Vec<u8>)> {
-    if buf.len() < HEADER + TAG || !matches!(buf[0], KIND_VOICE | KIND_PING | KIND_PONG) {
+    if buf.len() < HEADER + TAG || !matches!(buf[0], KIND_VOICE | KIND_PING | KIND_PONG | KIND_VOICE_RED) {
         return None;
     }
     let (header, rest) = buf.split_at(HEADER);
@@ -235,6 +244,59 @@ pub fn open(cipher: &ChaCha20Poly1305, buf: &[u8]) -> Option<(u8, SessionId, Vec
     let n = nonce(&header[5..9], &header[9..13], &header[1..5]);
     cipher.decrypt_in_place_detached(&n, header, &mut payload, Tag::from_slice(tag)).ok()?;
     Some((buf[0], u32::from_be_bytes(header[1..5].try_into().ok()?), payload))
+}
+
+/// How much of someone's voice reaches us: sequence numbers seen against the span they cover.
+#[derive(Default)]
+struct LossMeter {
+    /// Older frames than this belong to a window already counted.
+    floor: u32,
+    first: Option<u32>,
+    highest: u32,
+    count: u32,
+    /// Smoothed loss in percent: rises fast, settles slowly.
+    percent: f32,
+    measured: bool,
+}
+
+impl LossMeter {
+    fn heard(&mut self, seq: u32) {
+        if seq < self.floor {
+            // Far behind: they restarted their voice, so counting starts over.
+            if self.floor - seq > 1000 {
+                *self = LossMeter::default();
+            } else {
+                return;
+            }
+        }
+        match self.first {
+            None => {
+                self.first = Some(seq);
+                self.highest = seq;
+                self.count = 1;
+            }
+            Some(_) => {
+                self.highest = self.highest.max(seq);
+                self.count += 1;
+            }
+        }
+    }
+
+    /// Closes the window once it spans enough; the smoothed loss, once there's any measurement.
+    fn report(&mut self) -> Option<u8> {
+        if let Some(first) = self.first {
+            let span = self.highest - first + 1;
+            if span >= LOSS_WINDOW {
+                let lost = span.saturating_sub(self.count) as f32 * 100.0 / span as f32;
+                self.percent = if lost > self.percent { (self.percent + lost) / 2.0 } else { self.percent * 0.8 + lost * 0.2 };
+                self.measured = true;
+                self.floor = self.highest + 1;
+                self.first = None;
+                self.count = 0;
+            }
+        }
+        self.measured.then(|| self.percent.round().min(100.0) as u8)
+    }
 }
 
 struct Link {
@@ -254,6 +316,12 @@ struct Link {
     reported: Option<bool>,
     /// Until when every address is probed alongside the path (someone's network changed).
     reprobe_until: Option<Instant>,
+    /// How much of their voice reaches us.
+    loss_in: LossMeter,
+    /// How much of our voice reaches them, as they last reported it.
+    loss_out: Option<(u8, Instant)>,
+    /// They understand voice with repeated frames (their pings say so).
+    red: bool,
 }
 
 /// Asking STUN for our public address while voice runs: the receiving thread gets the answer.
@@ -388,6 +456,9 @@ impl Mesh {
             searching_since: Instant::now(),
             reported: None,
             reprobe_until: None,
+            loss_in: LossMeter::default(),
+            loss_out: None,
+            red: false,
         });
         // Their addresses changed (their network did): try the new ones right away.
         if !link.candidates.is_empty() && link.candidates != candidates {
@@ -406,9 +477,51 @@ impl Mesh {
         self.links.lock().unwrap().retain(|&id, _| keep(id));
     }
 
-    /// Where our voice should go: every peer with a working path, and whether it's relayed.
-    pub fn paths(&self) -> Vec<(SocketAddr, bool)> {
-        self.links.lock().unwrap().values().filter_map(|l| l.path.map(|p| (p, l.relayed))).collect()
+    /// Where our voice should go: every peer with a working path, whether it's relayed,
+    /// and whether they understand repeated frames.
+    pub fn paths(&self) -> Vec<(SocketAddr, bool, bool)> {
+        self.links.lock().unwrap().values().filter_map(|l| l.path.map(|p| (p, l.relayed, l.red))).collect()
+    }
+
+    /// A voice frame from them arrived: counted toward how much of their voice reaches us.
+    pub fn heard_voice(&self, id: SessionId, seq: u32) {
+        if let Some(link) = self.links.lock().unwrap().get_mut(&id) {
+            link.loss_in.heard(seq);
+        }
+    }
+
+    /// What our pings say: the nonce, our format, and how much of each peer's voice reaches us.
+    pub fn ping_payload(&self, nonce: u32) -> Vec<u8> {
+        let mut out = nonce.to_be_bytes().to_vec();
+        out.push(PING_FORMAT);
+        for (&id, link) in self.links.lock().unwrap().iter_mut().take(40) {
+            if let Some(loss) = link.loss_in.report() {
+                out.extend_from_slice(&id.to_be_bytes());
+                out.push(loss);
+            }
+        }
+        out
+    }
+
+    /// A peer's ping: learns what they understand and how much of our voice reaches them.
+    pub fn ping_heard(&self, id: SessionId, payload: &[u8]) {
+        let mut links = self.links.lock().unwrap();
+        let Some(link) = links.get_mut(&id) else { return };
+        if payload.len() < 5 || payload[4] != PING_FORMAT {
+            return;
+        }
+        link.red = true;
+        for entry in payload[5..].as_chunks::<5>().0 {
+            if u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]) == self.me {
+                link.loss_out = Some((entry[4].min(100), Instant::now()));
+            }
+        }
+    }
+
+    /// The worst loss anyone reports for our voice lately, in percent.
+    pub fn worst_loss(&self) -> u8 {
+        let links = self.links.lock().unwrap();
+        links.values().filter(|l| l.path.is_some()).filter_map(|l| l.loss_out).filter(|(_, at)| at.elapsed() < LOSS_REPORT_FRESH).map(|(loss, _)| loss).max().unwrap_or(0)
     }
 
     /// Every IP a peer might reach us from: the relay must be told to let them through.
@@ -553,6 +666,60 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn loss_is_measured_and_settles_slowly() {
+        let mut m = LossMeter::default();
+        assert_eq!(m.report(), None, "nothing measured yet");
+        // 50 frames, every fifth lost: 20 %, but the first window only moves halfway there.
+        for seq in (0..50).filter(|s| s % 5 != 1) {
+            m.heard(seq);
+        }
+        assert_eq!(m.report(), Some(10));
+        assert_eq!(m.report(), Some(10), "an open window doesn't change it");
+        // A clean stretch brings it down gently, not at once.
+        for seq in 50..100 {
+            m.heard(seq);
+        }
+        assert_eq!(m.report(), Some(8));
+        // Late frames from a counted window don't count twice.
+        m.heard(60);
+        assert_eq!(m.first, None);
+        // A sender that restarted (numbers far behind) is counted afresh.
+        for seq in 5000..5030 {
+            m.heard(seq);
+        }
+        m.report();
+        m.heard(3);
+        assert_eq!(m.first, Some(3), "far behind means a restart");
+    }
+
+    #[test]
+    fn pings_carry_loss_reports_both_ways() {
+        let a = Mesh::new(1, &[1; 32]);
+        let b = Mesh::new(2, &[1; 32]);
+        a.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        b.set_peer(&endpoint(1, &["10.0.0.1:5000"]));
+        assert!(a.heard(2, "10.0.0.2:5000".parse().unwrap(), false));
+        assert!(b.heard(1, "10.0.0.1:5000".parse().unwrap(), false));
+        // B hears only half of A's voice.
+        for seq in (0..40).step_by(2) {
+            b.heard_voice(1, seq);
+        }
+        let ping = b.ping_payload(77);
+        assert_eq!(&ping[..4], &77u32.to_be_bytes());
+        assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)], "not yet known to understand repeats");
+        a.ping_heard(2, &ping);
+        assert_eq!(a.worst_loss(), 24, "half lost, and the first window moves halfway");
+        assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, true)]);
+        // An old-style ping (the nonce alone) is understood as before and teaches nothing.
+        let c = Mesh::new(3, &[1; 32]);
+        c.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
+        assert!(c.heard(2, "10.0.0.2:5000".parse().unwrap(), false));
+        c.ping_heard(2, &77u32.to_be_bytes());
+        assert_eq!(c.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)]);
+        assert_eq!(c.worst_loss(), 0);
+    }
+
+    #[test]
     fn new_addresses_are_tried_at_once_alongside_the_path() {
         let mesh = Mesh::new(1, &[1; 32]);
         mesh.set_peer(&endpoint(2, &["10.0.0.2:5000"]));
@@ -568,7 +735,7 @@ pub(crate) mod tests {
         assert!(!mesh.due_pings().is_empty());
         // The new address answers: voice goes there.
         assert!(mesh.heard(2, "192.168.1.9:5000".parse().unwrap(), false));
-        assert_eq!(mesh.paths(), vec![("192.168.1.9:5000".parse().unwrap(), false)]);
+        assert_eq!(mesh.paths(), vec![("192.168.1.9:5000".parse().unwrap(), false, false)]);
     }
 
     #[test]
@@ -596,7 +763,7 @@ pub(crate) mod tests {
         // The direct path is kept and pinged at once; the relayed one is gone (the relay was ours).
         assert!(due.contains(&("10.0.0.2:5000".parse().unwrap(), false)), "{due:?}");
         assert!(due.contains(&("10.0.0.3:5000".parse().unwrap(), false)), "{due:?}");
-        assert_eq!(mesh.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false)]);
+        assert_eq!(mesh.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)]);
         assert!(mesh.turn.lock().unwrap().is_none());
     }
 
@@ -737,11 +904,11 @@ mod network_tests {
         let via_relay: SocketAddr = "203.0.113.5:4001".parse().unwrap();
         // Only the relay works at first.
         assert!(mesh.heard(1, via_relay, true));
-        assert_eq!(mesh.paths(), vec![(via_relay, true)]);
+        assert_eq!(mesh.paths(), vec![(via_relay, true, false)]);
         // A direct packet arrives: voice switches to it, and the relay can't take it back while it lives.
         assert!(mesh.heard(1, direct, false));
-        assert_eq!(mesh.paths(), vec![(direct, false)]);
+        assert_eq!(mesh.paths(), vec![(direct, false, false)]);
         assert!(mesh.heard(1, via_relay, true));
-        assert_eq!(mesh.paths(), vec![(direct, false)]);
+        assert_eq!(mesh.paths(), vec![(direct, false, false)]);
     }
 }

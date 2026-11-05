@@ -50,6 +50,23 @@ const RELAY_ASK_AGAIN: Duration = Duration::from_secs(30);
 const NETWORK_CHECK: Duration = Duration::from_secs(2);
 /// How often STUN is asked again for our public address, in case the router changed it.
 const STUN_REFRESH: Duration = Duration::from_secs(30);
+/// How often the encoder looks at the loss reports and adjusts.
+const ADAPT_EVERY: Duration = Duration::from_secs(1);
+
+/// How to send voice when this much of it (percent) gets lost on the way: Opus's own error
+/// correction tuned to the loss, a lower bitrate when the network struggles (loss is usually
+/// congestion), and the last frames repeated in each packet once it's bad, so even a burst
+/// of lost packets is heard rather than turned into robot voice.
+/// Returns (bitrate, expected loss for Opus, frames repeated).
+fn voice_policy(loss: u8) -> (i32, i32, usize) {
+    let expected = (loss as i32 + 5).min(40);
+    match loss {
+        0..=2 => (BITRATE, 5, 0),
+        3..=7 => (56_000, expected, 0),
+        8..=14 => (40_000, expected, 1),
+        _ => (32_000, expected, 2),
+    }
+}
 /// About 200 ms of mic-test audio; older audio is dropped so the echo stays close.
 const MONITOR_MAX: usize = SAMPLE_RATE as usize / 5;
 /// The mic test in voice starts playing once 30 ms are buffered.
@@ -691,6 +708,12 @@ struct Net {
     last_relay_ping: Option<Instant>,
     packet: Vec<u8>,
     plain: Vec<u8>,
+    /// The same voice with earlier frames repeated, for peers that understand it.
+    red_packet: Vec<u8>,
+    /// Our last frames sent, to repeat in the next packets when the network loses some.
+    recent: VecDeque<(u32, Vec<u8>)>,
+    /// How many earlier frames to repeat in each packet (0 on a good network).
+    redundancy: usize,
 }
 
 impl Net {
@@ -709,6 +732,9 @@ impl Net {
             last_relay_ping: None,
             packet: Vec::with_capacity(1500),
             plain: Vec::with_capacity(1500),
+            red_packet: Vec::with_capacity(1500),
+            recent: VecDeque::with_capacity(3),
+            redundancy: 0,
         }
     }
 
@@ -733,8 +759,9 @@ impl Net {
                 if due.is_empty() {
                     return;
                 }
+                let payload = m.ping_payload(nonce);
                 let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
-                sealer.seal(mesh::KIND_PING, &nonce.to_be_bytes(), &mut self.packet);
+                sealer.seal(mesh::KIND_PING, &payload, &mut self.packet);
                 let m = m.clone();
                 for (addr, relayed) in due {
                     self.send_mesh(&m, addr, relayed);
@@ -751,18 +778,35 @@ impl Net {
             }
             Route::Mesh(m) => {
                 let paths = m.paths();
-                if paths.is_empty() {
-                    return;
-                }
-                self.plain.clear();
-                self.plain.extend_from_slice(&seq.to_be_bytes());
-                self.plain.extend_from_slice(opus);
-                let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
-                sealer.seal(mesh::KIND_VOICE, &self.plain, &mut self.packet);
                 let m = m.clone();
-                for (addr, relayed) in paths {
-                    self.send_mesh(&m, addr, relayed);
+                if !paths.is_empty() {
+                    let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
+                    // Earlier frames ride along for peers that understand it, when the network loses packets.
+                    let repeats: Vec<&(u32, Vec<u8>)> =
+                        self.recent.iter().rev().take(self.redundancy).filter(|(s, _)| seq.wrapping_sub(*s) as usize <= self.redundancy).collect();
+                    let with_repeats = !repeats.is_empty() && paths.iter().any(|p| p.2);
+                    if with_repeats {
+                        red_payload(seq, &repeats, opus, &mut self.plain);
+                        sealer.seal(mesh::KIND_VOICE_RED, &self.plain, &mut self.red_packet);
+                    }
+                    self.plain.clear();
+                    self.plain.extend_from_slice(&seq.to_be_bytes());
+                    self.plain.extend_from_slice(opus);
+                    sealer.seal(mesh::KIND_VOICE, &self.plain, &mut self.packet);
+                    for (addr, relayed, red) in paths {
+                        if red && with_repeats {
+                            std::mem::swap(&mut self.packet, &mut self.red_packet);
+                            self.send_mesh(&m, addr, relayed);
+                            std::mem::swap(&mut self.packet, &mut self.red_packet);
+                        } else {
+                            self.send_mesh(&m, addr, relayed);
+                        }
+                    }
                 }
+                if self.recent.len() == 2 {
+                    self.recent.pop_front();
+                }
+                self.recent.push_back((seq, opus.to_vec()));
             }
         }
     }
@@ -814,6 +858,41 @@ impl Net {
             _ => None,
         }
     }
+}
+
+/// Voice with earlier frames repeated: seq (4) | count (1) | count × (seq offset (1) | length (2) | frame) | this frame.
+fn red_payload(seq: u32, repeats: &[&(u32, Vec<u8>)], opus: &[u8], out: &mut Vec<u8>) {
+    out.clear();
+    out.extend_from_slice(&seq.to_be_bytes());
+    out.push(repeats.len() as u8);
+    for (s, frame) in repeats {
+        out.push(seq.wrapping_sub(*s) as u8);
+        out.extend_from_slice(&(frame.len() as u16).to_be_bytes());
+        out.extend_from_slice(frame);
+    }
+    out.extend_from_slice(opus);
+}
+
+/// Voice read back: its seq, the frames repeated in it (seq, frame), and the frame itself.
+type RedVoice<'a> = (u32, Vec<(u32, &'a [u8])>, &'a [u8]);
+
+/// Reads voice with repeated frames.
+fn read_red(payload: &[u8]) -> Option<RedVoice<'_>> {
+    let seq = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
+    let count = *payload.get(4)? as usize;
+    let mut at = 5;
+    let mut repeats = Vec::with_capacity(count.min(4));
+    for _ in 0..count.min(4) {
+        let back = *payload.get(at)? as u32;
+        let len = u16::from_be_bytes(payload.get(at + 1..at + 3)?.try_into().ok()?) as usize;
+        let frame = payload.get(at + 3..at + 3 + len)?;
+        if back > 0 {
+            repeats.push((seq.wrapping_sub(back), frame));
+        }
+        at += 3 + len;
+    }
+    let opus = payload.get(at..)?;
+    (!opus.is_empty()).then_some((seq, repeats, opus))
 }
 
 /// This computer's addresses: on the local network, and IPv6 on the internet (dual-stack only).
@@ -919,7 +998,7 @@ impl Encoder {
         encoder.set_signal(opus::Signal::Voice)?;
         encoder.set_complexity(10)?;
         encoder.set_inband_fec(true)?;
-        encoder.set_packet_loss_perc(10)?;
+        encoder.set_packet_loss_perc(voice_policy(0).1)?;
 
         let mut opus_buf = [0u8; 1275];
         let mut seq = 0u32;
@@ -932,7 +1011,23 @@ impl Encoder {
         let mut relay_announced: Option<SocketAddr> = None;
         let mut relay_asked: Option<Instant> = None;
         let mut roaming = Roaming::new(self.net.dual);
+        let mut policy = voice_policy(0);
+        let mut adapted = Instant::now();
         while !stop.load(Ordering::Relaxed) {
+            if let Route::Mesh(m) = &self.net.route {
+                if adapted.elapsed() >= ADAPT_EVERY {
+                    adapted = Instant::now();
+                    let loss = m.worst_loss();
+                    let next = voice_policy(loss);
+                    if next != policy {
+                        tracing::info!("{loss}% of our voice is lost on the way; sending at {} kbit/s, error correction for {}%, {} frame(s) repeated", next.0 / 1000, next.1, next.2);
+                        policy = next;
+                        encoder.set_bitrate(opus::Bitrate::Bits(policy.0))?;
+                        encoder.set_packet_loss_perc(policy.1)?;
+                        self.net.redundancy = policy.2;
+                    }
+                }
+            }
             if let Route::Mesh(m) = &self.net.route {
                 let m = m.clone();
                 if self.roam(&m, &mut roaming) {
@@ -1077,10 +1172,24 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
         match kind {
             mesh::KIND_VOICE if payload.len() > 4 => {
                 let seq = u32::from_be_bytes(payload[..4].try_into().unwrap());
+                mesh.heard_voice(sender, seq);
                 mixer.lock().unwrap().push(sender, seq, payload[4..].to_vec());
             }
-            mesh::KIND_PING => net.pong(&payload, from, relayed),
-            mesh::KIND_PONG if payload.len() == 4 => {
+            mesh::KIND_VOICE_RED => {
+                let Some((seq, repeats, opus)) = read_red(&payload) else { continue };
+                mesh.heard_voice(sender, seq);
+                let mut mixer = mixer.lock().unwrap();
+                mixer.push(sender, seq, opus.to_vec());
+                for (s, frame) in repeats {
+                    mixer.fill_in(sender, s, frame.to_vec());
+                }
+            }
+            mesh::KIND_PING if payload.len() >= 4 => {
+                mesh.ping_heard(sender, &payload);
+                // Only the nonce comes back: that's all the round trip needs.
+                net.pong(&payload[..4], from, relayed);
+            }
+            mesh::KIND_PONG if payload.len() >= 4 => {
                 let rtt = net.now_ms().wrapping_sub(u32::from_be_bytes(payload[..4].try_into().unwrap()));
                 if let Some(slowest) = mesh.record_rtt(sender, rtt) {
                     let _ = events.send(EngineEvent::Latency { ms: slowest });
@@ -1145,6 +1254,13 @@ impl Mixer {
         };
         peer.last_heard = Instant::now();
         peer.jitter.push(seq, opus);
+    }
+
+    /// A frame repeated in a later packet: fills a gap if it's still missing.
+    fn fill_in(&mut self, sender: SessionId, seq: u32, opus: Vec<u8>) {
+        if let Some(peer) = self.peers.get_mut(&sender) {
+            peer.jitter.fill_in(seq, opus);
+        }
     }
 
     fn fill(&mut self, out: &mut [f32]) {
@@ -1413,6 +1529,36 @@ mod tests {
         assert!(!renewed.local.contains(endpoint.local.last().unwrap()), "the old address is gone");
         b.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec![new_addr] });
         assert!(connected(&b_events), "engine 2 reaches engine 1 through the new relay");
+    }
+
+    #[test]
+    fn repeated_frames_survive_the_trip() {
+        let recent = [(8u32, vec![8u8; 30]), (9u32, vec![9u8; 31])];
+        let repeats: Vec<&(u32, Vec<u8>)> = recent.iter().collect();
+        let mut out = Vec::new();
+        red_payload(10, &repeats, &[10u8; 40], &mut out);
+        let (seq, got, opus) = read_red(&out).unwrap();
+        assert_eq!(seq, 10);
+        assert_eq!(opus, &[10u8; 40][..]);
+        assert_eq!(got, vec![(8, &[8u8; 30][..]), (9, &[9u8; 31][..])]);
+        // Cut short or nonsense: refused, never a panic.
+        for len in 0..out.len() - 40 {
+            assert!(read_red(&out[..len]).is_none(), "cut at {len}");
+        }
+        assert!(read_red(&[0, 0, 0, 1, 200, 1, 255, 255]).is_none());
+    }
+
+    #[test]
+    fn worse_networks_get_sturdier_voice() {
+        assert_eq!(voice_policy(0), (BITRATE, 5, 0));
+        let mut last = voice_policy(0);
+        for loss in 1..=100 {
+            let p = voice_policy(loss);
+            assert!(p.0 <= last.0 && p.1 >= last.1 && p.2 >= last.2, "never less sturdy as loss grows ({loss}%)");
+            assert!(p.1 <= 40 && p.2 <= 2);
+            last = p;
+        }
+        assert_eq!(voice_policy(20).2, 2, "bad loss repeats two frames: a burst of two is heard");
     }
 
     #[test]
