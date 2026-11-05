@@ -443,6 +443,9 @@ async fn connect(
                 ServerMsg::Pins { channel, messages } => {
                     let _ = ui.emit("pins", serde_json::json!({ "channel": channel, "messages": messages }));
                 }
+                ServerMsg::ScreenSignal { from, data } => {
+                    let _ = ui.emit("screen-signal", serde_json::json!({ "from": from, "data": data }));
+                }
                 ServerMsg::SearchResults { query, messages } => {
                     let _ = ui.emit("search-results", serde_json::json!({ "query": query, "messages": messages }));
                 }
@@ -773,6 +776,16 @@ fn pin_message(state: State<'_, AppState>, channel: ChannelId, id: u64, on: bool
 #[tauri::command]
 fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetPins { channel }))
+}
+
+#[tauri::command]
+fn set_sharing(state: State<'_, AppState>, on: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetSharing { on }))
+}
+
+#[tauri::command]
+fn screen_signal(state: State<'_, AppState>, to: SessionId, data: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::ScreenSignal { to, data }))
 }
 
 #[tauri::command]
@@ -1387,6 +1400,8 @@ fn main() {
             react,
             load_older,
             search_messages,
+            set_sharing,
+            screen_signal,
             pin_message,
             get_pins,
             start_call,

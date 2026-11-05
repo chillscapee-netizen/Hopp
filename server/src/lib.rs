@@ -397,7 +397,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             let session_id = st.next_id;
             st.next_id += 1;
             let owner = st.config.owner.as_deref() == Some(public_key.as_str());
-            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None };
+            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None, sharing: false };
             st.broadcast(&ServerMsg::UserJoined { user: user.clone() });
             let token = rand::random();
             let client = Client {
@@ -416,7 +416,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
-                features: vec!["search".into()],
+                features: vec!["search".into(), "screen".into()],
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -457,10 +457,34 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             };
             match msg {
                 ClientMsg::JoinVoice { channel } => match st.channel(channel) {
-                    Some(c) if c.kind == ChannelKind::Voice => st.update_user(session_id, |u| u.voice_channel = Some(channel)),
+                    Some(c) if c.kind == ChannelKind::Voice => st.update_user(session_id, |u| {
+                        u.voice_channel = Some(channel);
+                        u.sharing = false;
+                    }),
                     _ => error("That voice channel doesn't exist."),
                 },
-                ClientMsg::LeaveVoice => st.update_user(session_id, |u| u.voice_channel = None),
+                ClientMsg::LeaveVoice => st.update_user(session_id, |u| {
+                    u.voice_channel = None;
+                    u.sharing = false;
+                }),
+                ClientMsg::SetSharing { on } => {
+                    let in_voice = st.clients.get(&session_id).is_some_and(|c| c.user.voice_channel.is_some());
+                    if on && !in_voice {
+                        error("Join a voice channel to share your screen.");
+                    } else {
+                        st.update_user(session_id, |u| u.sharing = on);
+                    }
+                }
+                ClientMsg::ScreenSignal { to, data } => {
+                    let mine = st.clients.get(&session_id).and_then(|c| c.user.voice_channel);
+                    let theirs = st.clients.get(&to).and_then(|c| c.user.voice_channel);
+                    // Only between people in the same voice channel, and never huge.
+                    if mine.is_some() && mine == theirs && to != session_id && data.len() <= MAX_SCREEN_SIGNAL {
+                        if let Some(c) = st.clients.get(&to) {
+                            let _ = c.tx.send(ServerMsg::ScreenSignal { from: session_id, data });
+                        }
+                    }
+                }
                 ClientMsg::SetState { muted, deafened } => st.update_user(session_id, |u| {
                     u.muted = muted;
                     u.deafened = deafened;

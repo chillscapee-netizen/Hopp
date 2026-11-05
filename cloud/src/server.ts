@@ -15,6 +15,8 @@ const MAX_ICON_LEN = 200_000;
 const MAX_CHAT_LEN = 2000;
 const MAX_CHANNELS = 50;
 const MAX_MEMBERS_ONLINE = 500;
+/** A screen-sharing handshake message is never bigger than this. */
+const MAX_SCREEN_SIGNAL = 65_536;
 /** A search returns at most this many messages, newest first. */
 const SEARCH_RESULTS = 25;
 /** The least time between one person's searches. */
@@ -79,6 +81,8 @@ interface User {
   owner: boolean;
   public_key: string;
   role?: Role;
+  /** Sharing their screen with their voice channel. */
+  sharing?: boolean;
 }
 /** Who may do what: the owner names admins, admins name moderators. */
 type Role = "owner" | "admin" | "mod";
@@ -644,7 +648,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search"],
+      features: ["search", "screen"],
     });
     for (const ch of channels.filter((c) => c.kind === "text")) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
@@ -681,7 +685,10 @@ export class StromServer extends DurableObject<Env> {
           this.setMeta(`voice_key:${ch.id}`, key);
         }
         delete s.endpoint;
-        this.updateUser(ws, s, (u) => (u.voice_channel = ch.id));
+        this.updateUser(ws, s, (u) => {
+          u.voice_channel = ch.id;
+          u.sharing = false;
+        });
         const peers = others
           .filter(([, o]) => o.endpoint)
           .map(([, o]) => ({ session_id: o.user!.session_id, ...o.endpoint }));
@@ -689,7 +696,22 @@ export class StromServer extends DurableObject<Env> {
       }
       case "leave_voice":
         delete s.endpoint;
-        return this.updateUser(ws, s, (u) => (u.voice_channel = null));
+        return this.updateUser(ws, s, (u) => {
+          u.voice_channel = null;
+          u.sharing = false;
+        });
+      case "set_sharing":
+        if (msg.on && user.voice_channel === null) return this.error(ws, "Join a voice channel to share your screen.");
+        return this.updateUser(ws, s, (u) => (u.sharing = !!msg.on));
+      case "screen_signal": {
+        // Passed on between people in the same voice channel; the video itself goes between them.
+        const data = String(msg.data ?? "");
+        const to = Number(msg.to);
+        if (user.voice_channel === null || data.length > MAX_SCREEN_SIGNAL || to === user.session_id) return;
+        const target = this.members().find(([, m]) => m.user!.session_id === to && m.user!.voice_channel === user.voice_channel);
+        if (target) this.send(target[0], { type: "screen_signal", from: user.session_id, data });
+        return;
+      }
       case "voice_endpoint": {
         const channel = user.voice_channel;
         if (channel === null) return;

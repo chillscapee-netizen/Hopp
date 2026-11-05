@@ -661,7 +661,7 @@ test("voice addresses can be IPv6 as well as IPv4", async () => {
 
 test("search finds words in any case across channels, newest first", async () => {
   const { owner } = await newServer();
-  assert.deepEqual(owner.welcome.features, ["search"], "the server says it can search");
+  assert.ok(owner.welcome.features.includes("search"), "the server says it can search");
   const general = channelId(owner, "general");
   for (const text of ["Raid tonight at eight", "nothing to see here", "100% sure", "who's up for the RAID?"]) {
     owner.send({ type: "send_chat", channel: general, text });
@@ -679,4 +679,31 @@ test("search finds words in any case across channels, newest first", async () =>
   owner.send({ type: "search", query: "here" });
   assert.match(await errorOf(owner), /too fast/i);
   owner.close();
+});
+
+test("screen sharing: a flag for the voice channel, handshakes passed on within it only", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("screen"));
+  const bob = await join(id, "bob", { invite });
+  const carol = await join(id, "carol", { invite });
+  const lobby = channelId(owner, "Lobby");
+  const gaming = channelId(owner, "Gaming");
+  owner.send({ type: "set_sharing", on: true });
+  assert.match(await errorOf(owner), /voice channel/);
+  for (const [c, ch] of [[owner, lobby], [bob, lobby], [carol, gaming]]) {
+    c.send({ type: "join_voice", channel: ch });
+    await c.waitFor((m) => m.type === "voice_session");
+  }
+  owner.send({ type: "set_sharing", on: true });
+  const me = owner.welcome.session_id;
+  await bob.waitFor((m) => m.type === "user_updated" && m.user.session_id === me && m.user.sharing === true);
+  owner.send({ type: "screen_signal", to: carol.welcome.session_id, data: "wrong room" });
+  owner.send({ type: "screen_signal", to: bob.welcome.session_id, data: "offer" });
+  const got = await bob.waitFor((m) => m.type === "screen_signal");
+  assert.deepEqual(got, { type: "screen_signal", from: me, data: "offer" });
+  await sleep(200);
+  assert.ok(!carol.inbox.some((m) => m.type === "screen_signal"), "nothing crosses into another channel");
+  owner.send({ type: "leave_voice" });
+  await bob.waitFor((m) => m.type === "user_updated" && m.user.session_id === me && m.user.sharing === false && m.user.voice_channel === null);
+  for (const c of [owner, bob, carol]) c.close();
 });

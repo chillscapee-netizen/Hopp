@@ -67,7 +67,13 @@ pub struct User {
     /// "owner", "admin" or "mod" on cloud servers; `None` for everyone else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Sharing their screen with their voice channel.
+    #[serde(default)]
+    pub sharing: bool,
 }
+
+/// The most a screen-sharing handshake message may hold (an offer with its codecs fits easily).
+pub const MAX_SCREEN_SIGNAL: usize = 65_536;
 
 /// What a client signs to prove it holds the private key for its identity.
 pub fn auth_message(nonce: &[u8]) -> Vec<u8> {
@@ -249,6 +255,12 @@ pub enum ClientMsg {
     /// containing `query` (any case). Only for servers whose welcome lists "search":
     /// older ones drop a connection that sends something they don't know.
     Search { query: String },
+    /// Screen sharing, for servers whose welcome lists "screen": whether we share our screen
+    /// with our voice channel. Leaving voice stops it.
+    SetSharing { on: bool },
+    /// Screen sharing: part of a video handshake for `to`, who must be in our voice channel.
+    /// The server only passes it on.
+    ScreenSignal { to: SessionId, data: String },
     /// Owner only.
     CreateChannel { name: String, kind: ChannelKind },
     /// Owner only.
@@ -367,6 +379,8 @@ pub enum ServerMsg {
     OlderHistory { channel: ChannelId, messages: Vec<ChatMessage>, done: bool },
     /// What a search found, newest first (at most [`SEARCH_RESULTS`]).
     SearchResults { query: String, messages: Vec<ChatMessage> },
+    /// Part of a screen-sharing handshake from someone in our voice channel.
+    ScreenSignal { from: SessionId, data: String },
     Typing { channel: ChannelId, session_id: SessionId },
     /// Sent to a user right before the server drops them.
     Kicked { banned: bool },

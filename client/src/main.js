@@ -1656,6 +1656,7 @@ listen("roster", (e) => {
   }
   if (draftKey() !== state.draftAt) restoreDraft();
   applyUserVolumes();
+  syncScreen();
   renderAll();
 });
 
@@ -2134,6 +2135,16 @@ function userRow(u, className, size, sub) {
     row.append(nameLine);
   }
   // Voice details (muted, deafened, your volume for them) belong in the voice channel.
+  if (className === "voice-user" && u.sharing) {
+    const live = el("button", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE");
+    live.type = "button";
+    live.dataset.tip = isSelf ? "You're sharing your screen" : watching?.from === u.session_id ? "You're watching" : "Watch their screen";
+    live.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!isSelf) watchScreen(u.session_id);
+    });
+    row.append(live);
+  }
   if (className === "voice-user" && state.unreachable.has(u.session_id)) {
     const warn = icon("signal", "xs unreachable");
     warn.dataset.tip = "Can't connect directly: you can't hear each other";
@@ -2172,8 +2183,11 @@ function renderVoicePanel() {
   status.dataset.tip = error ? friendlyError(error) : !ready ? "Opening your microphone and finding the others…" : direct
     ? latency ? `Direct to the others, slowest round trip ${latency}` : alone ? "Voice goes straight to the others when they join" : "Connecting to the others…"
     : latency ? `Latency to the server: ${latency}` : "Measuring latency…";
-  const where = `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
+  const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
   $("voice-where").textContent = latency ? `${where} · ${latency}` : where;
+  $("share-btn").hidden = !canShare();
+  $("share-btn").classList.toggle("on", !!screenShare.stream);
+  $("share-btn").setAttribute("aria-label", screenShare.stream ? "Stop sharing your screen" : "Share your screen");
 }
 
 function renderUserPanel() {
@@ -9414,4 +9428,210 @@ $("desktop-notify").addEventListener("change", (e) => {
 $("notify-text").addEventListener("change", (e) => {
   prefs.notifyText = e.target.checked;
   save("notifyText", e.target.checked ? "1" : "0");
+});
+
+// ---------- screen sharing ----------
+//
+// Video goes straight between the one sharing and each viewer (WebRTC, encrypted on the way),
+// through the relay when a network blocks that; the server only passes the handshake along,
+// and only within a voice channel. One screen to watch at a time.
+
+/** Our own share: the screen, and a connection per viewer. */
+var screenShare = { stream: null, peers: new Map() };
+/** The screen we watch: whose, its connection, and handshake bits that came early. */
+var watching = null;
+
+function screenSend(to, msg) {
+  return invoke("screen_signal", { to, data: JSON.stringify(msg) }).catch(() => {});
+}
+
+function canShare() {
+  return connected() && myVoice() !== null && !!state.roster?.features?.includes("screen");
+}
+
+async function startShare() {
+  if (!canShare() || screenShare.stream) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (err) {
+    // Closing the picker isn't an error.
+    if (err?.name !== "NotAllowedError" && err?.name !== "AbortError") toast("Couldn't share your screen. " + (err?.message ?? ""), true);
+    return;
+  }
+  const track = stream.getVideoTracks()[0];
+  if (!track || !canShare()) return stream.getTracks().forEach((t) => t.stop());
+  // Text and windows stay sharp; motion gives way first.
+  track.contentHint = "detail";
+  // Windows' own "Stop sharing" ends it too.
+  track.addEventListener("ended", () => stopShare());
+  screenShare.stream = stream;
+  call("set_sharing", { on: true });
+  renderVoicePanel();
+}
+
+function stopShare(quiet = false) {
+  if (!screenShare.stream) return;
+  for (const [viewer, pc] of screenShare.peers) {
+    if (!quiet) screenSend(viewer, { k: "stop", s: "viewer" });
+    pc.close();
+  }
+  screenShare.peers.clear();
+  screenShare.stream.getTracks().forEach((t) => t.stop());
+  screenShare.stream = null;
+  if (!quiet && connected()) call("set_sharing", { on: false });
+  renderVoicePanel();
+}
+
+/** Someone asked to watch: a connection carrying our screen to them. */
+async function serveViewer(viewer) {
+  screenShare.peers.get(viewer)?.close();
+  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  if (!screenShare.stream) return pc.close();
+  pc.pendingIce = [];
+  screenShare.peers.set(viewer, pc);
+  pc.onicecandidate = (e) => e.candidate && screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
+  pc.onconnectionstatechange = () => {
+    if ((pc.connectionState === "failed" || pc.connectionState === "closed") && screenShare.peers.get(viewer) === pc) screenShare.peers.delete(viewer);
+  };
+  const track = screenShare.stream.getVideoTracks()[0];
+  pc.addTrack(track, screenShare.stream);
+  await pc.setLocalDescription(await pc.createOffer());
+  screenSend(viewer, { k: "offer", s: "viewer", sdp: pc.localDescription.sdp });
+}
+
+/** High quality: up to 6 Mbit/s, and sharp text before smooth motion. */
+function tuneScreenSender(pc) {
+  for (const sender of pc.getSenders()) {
+    const p = sender.getParameters();
+    if (!p.encodings?.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = 6_000_000;
+    p.degradationPreference = "maintain-resolution";
+    sender.setParameters(p).catch(() => {});
+  }
+}
+
+function watchScreen(session) {
+  if (watching?.from === session) return;
+  stopWatching();
+  const w = { from: session, pc: null, pending: [] };
+  watching = w;
+  renderScreenStage();
+  renderSidebar();
+  screenSend(session, { k: "watch", s: "sharer" });
+  setTimeout(() => {
+    if (watching === w && !w.pc) {
+      toast("Couldn't reach their screen. Try again in a moment.", true);
+      stopWatching();
+    }
+  }, 10_000);
+}
+
+function stopWatching(tell = true) {
+  if (!watching) return;
+  if (tell) screenSend(watching.from, { k: "stop", s: "sharer" });
+  watching.pc?.close();
+  watching = null;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  renderScreenStage();
+  renderSidebar();
+}
+
+listen("screen-signal", async (e) => {
+  const from = e.payload.from;
+  let m;
+  try {
+    m = JSON.parse(e.payload.data);
+  } catch {
+    return;
+  }
+  if (m.s === "sharer") {
+    // To us, as the one sharing.
+    if (!screenShare.stream) return;
+    if (m.k === "watch") return serveViewer(from);
+    const pc = screenShare.peers.get(from);
+    if (!pc) return;
+    if (m.k === "answer") {
+      await pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
+      for (const c of pc.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      tuneScreenSender(pc);
+    } else if (m.k === "ice") {
+      if (pc.remoteDescription) await pc.addIceCandidate(m.c).catch(() => {});
+      else pc.pendingIce.push(m.c);
+    } else if (m.k === "stop") {
+      pc.close();
+      screenShare.peers.delete(from);
+    }
+    return;
+  }
+  // To us, as a viewer.
+  const w = watching;
+  if (!w || w.from !== from) return;
+  if (m.k === "offer") {
+    w.pc?.close();
+    const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+    if (watching !== w) return pc.close();
+    w.pc = pc;
+    pc.ontrack = (ev) => ($("screen-video").srcObject = ev.streams[0] ?? new MediaStream([ev.track]));
+    pc.onicecandidate = (ev) => ev.candidate && screenSend(from, { k: "ice", s: "sharer", c: ev.candidate.toJSON() });
+    await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
+    for (const c of w.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+    await pc.setLocalDescription(await pc.createAnswer());
+    screenSend(from, { k: "answer", s: "sharer", sdp: pc.localDescription.sdp });
+  } else if (m.k === "ice") {
+    if (w.pc?.remoteDescription) await w.pc.addIceCandidate(m.c).catch(() => {});
+    else w.pending.push(m.c);
+  } else if (m.k === "stop") {
+    stopWatching(false);
+  }
+});
+
+/** After every roster change: sharing and watching only while it still makes sense. */
+function syncScreen() {
+  if (!canShare()) {
+    stopShare(true);
+    stopWatching(false);
+    return;
+  }
+  if (watching) {
+    const u = state.roster.users.find((x) => x.session_id === watching.from);
+    if (!u || !u.sharing || u.voice_channel !== myVoice()) {
+      if (u && !u.sharing) toast((u.name ?? "They") + " stopped sharing.");
+      stopWatching(false);
+    }
+  }
+  for (const [viewer, pc] of screenShare.peers) {
+    if (!state.roster.users.some((u) => u.session_id === viewer && u.voice_channel === myVoice())) {
+      pc.close();
+      screenShare.peers.delete(viewer);
+    }
+  }
+}
+
+function renderScreenStage() {
+  const stage = $("screen-stage");
+  stage.hidden = !watching;
+  const video = $("screen-video");
+  if (!watching) {
+    video.srcObject = null;
+    return;
+  }
+  $("screen-who").textContent = (userName(watching.from) ?? "Someone") + "'s screen";
+  $("screen-wait").hidden = !!video.srcObject && !video.paused;
+}
+
+$("screen-video").addEventListener("playing", () => ($("screen-wait").hidden = true));
+$("screen-video").addEventListener("dblclick", () => toggleScreenFull());
+$("screen-full").addEventListener("click", () => toggleScreenFull());
+$("screen-close").addEventListener("click", () => stopWatching());
+$("share-btn").addEventListener("click", () => (screenShare.stream ? stopShare() : startShare()));
+
+function toggleScreenFull() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else $("screen-video").parentElement.requestFullscreen().catch(() => {});
+}
+
+window.addEventListener("beforeunload", () => {
+  stopWatching();
+  stopShare();
 });

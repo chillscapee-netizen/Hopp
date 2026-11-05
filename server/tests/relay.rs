@@ -702,3 +702,41 @@ async fn search_finds_words_in_any_case_newest_first() {
     let ServerMsg::SearchResults { messages, .. } = alice.wait_for(|m| matches!(m, ServerMsg::SearchResults { .. })).await else { unreachable!() };
     assert!(messages.is_empty());
 }
+
+#[tokio::test]
+async fn screen_sharing_is_passed_on_within_a_voice_channel_only() {
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let mut bob = FakeClient::connect(&server, "bob").await;
+    let mut carol = FakeClient::connect(&server, "carol").await;
+    // Not in voice: no sharing.
+    alice.send(ClientMsg::SetSharing { on: true }).await;
+    assert!(alice.error().await.contains("voice channel"));
+    alice.join_voice(LOBBY).await;
+    bob.join_voice(LOBBY).await;
+    carol.join_voice(GAMING).await;
+    alice.send(ClientMsg::SetSharing { on: true }).await;
+    let a = alice.session_id;
+    bob.wait_for(|m| matches!(m, ServerMsg::UserUpdated { user } if user.session_id == a && user.sharing)).await;
+    // A handshake reaches someone in the same channel...
+    let b = bob.session_id;
+    alice.send(ClientMsg::ScreenSignal { to: b, data: "offer".into() }).await;
+    let ServerMsg::ScreenSignal { from, data } = bob.wait_for(|m| matches!(m, ServerMsg::ScreenSignal { .. })).await else { unreachable!() };
+    assert_eq!((from, data.as_str()), (a, "offer"));
+    // ...but not someone in another channel.
+    let c = carol.session_id;
+    alice.send(ClientMsg::ScreenSignal { to: c, data: "offer".into() }).await;
+    alice.send(ClientMsg::ScreenSignal { to: b, data: "after".into() }).await;
+    bob.wait_for(|m| matches!(m, ServerMsg::ScreenSignal { data, .. } if data == "after")).await;
+    carol.send(ClientMsg::Ping).await;
+    loop {
+        match recv(&mut carol.reader).await {
+            ServerMsg::Pong => break,
+            ServerMsg::ScreenSignal { .. } => panic!("a handshake crossed into another voice channel"),
+            _ => {}
+        }
+    }
+    // Leaving voice stops the sharing.
+    alice.send(ClientMsg::LeaveVoice).await;
+    bob.wait_for(|m| matches!(m, ServerMsg::UserUpdated { user } if user.session_id == a && !user.sharing && user.voice_channel.is_none())).await;
+}
