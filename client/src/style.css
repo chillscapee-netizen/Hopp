@@ -2821,3 +2821,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .setting-row[hidden] { display: none; }
 .setting-row .row-label { display: grid; gap: 2px; }
 .setting-row .row-sub { color: var(--muted); font-size: 13px; line-height: 1.4; }
+
+.msg-picture.loading { background: linear-gradient(90deg, var(--elev) 0%, var(--elev-2) 50%, var(--elev) 100%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }

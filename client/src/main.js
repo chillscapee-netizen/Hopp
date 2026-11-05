@@ -4925,8 +4925,15 @@ function renderDmView(keepScroll) {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
-        sendDm(peer, input);
+        if (state.dmAttachment?.peer === peer) sendDmPicture(peer, input);
+        else sendDm(peer, input);
       }
+    });
+    input.addEventListener("paste", (e) => {
+      const file = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+      if (!file) return;
+      e.preventDefault();
+      attachDmPicture(peer, file);
     });
     input.addEventListener("input", () => {
       input.style.height = "auto";
@@ -4951,13 +4958,42 @@ function renderDmView(keepScroll) {
         (gif) => sendDm(peer, { value: gif.url, style: {} }),
       );
     });
-    row.append(input, emoji);
-    box.append(row);
+    const attach = el("button", "composer-icon attach-btn");
+    attach.type = "button";
+    attach.dataset.tip = "Add a picture";
+    attach.setAttribute("aria-label", "Add a picture");
+    attach.append(icon("plus"));
+    const file = el("input");
+    file.type = "file";
+    file.accept = "image/png,image/jpeg,image/webp,image/gif";
+    file.hidden = true;
+    attach.addEventListener("click", () => file.click());
+    file.addEventListener("change", () => {
+      attachDmPicture(peer, file.files?.[0]);
+      file.value = "";
+    });
+    row.append(attach, file, input, emoji);
+    const tray = el("div", "attach-tray");
+    tray.id = "dm-attach-tray";
+    tray.hidden = true;
+    box.append(tray, row);
     const lock = el("p", "dm-lock");
     lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
     form.append(box);
     view.append(scroller, form);
     body.replaceChildren(view);
+    view.addEventListener("dragover", (e) => {
+      if ([...(e.dataTransfer?.types ?? [])].includes("Files")) e.preventDefault();
+    });
+    view.addEventListener("drop", (e) => {
+      const files = [...(e.dataTransfer?.files ?? [])];
+      if (!files.length) return;
+      e.preventDefault();
+      const picture = files.find((f) => f.type.startsWith("image/"));
+      if (picture) attachDmPicture(peer, picture);
+      else toast("Only pictures can be shared for now (PNG, JPEG, WebP or GIF).", true);
+    });
+    renderDmAttachment();
     scroller.addEventListener("scroll", () => {
       if (scroller.scrollTop < 40 && !state.dmComplete.has(peer)) loadOlderDms(peer);
     });
@@ -4988,7 +5024,12 @@ function renderDmView(keepScroll) {
       headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
-    if (m.text !== null && GIF_URL.test(m.text.trim())) {
+    if (m.text !== null && DM_PICTURE.test(m.text)) {
+      const [whole, owner, id, key, w, h] = m.text.match(DM_PICTURE);
+      const caption = m.text.slice(whole.length).trim();
+      if (caption) li.append(messageText(caption));
+      li.append(dmPictureView(owner, id, key, Number(w), Number(h)));
+    } else if (m.text !== null && GIF_URL.test(m.text.trim())) {
       const img = el("img", "msg-gif");
       img.src = m.text.trim();
       img.alt = "GIF";
@@ -5094,6 +5135,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
   if (GIF_URL.test(text.trim())) return "GIF";
   return plainText(text)
@@ -7361,6 +7403,11 @@ function renderAttachment() {
   tray.hidden = !show;
   $("composer").classList.toggle("has-attachment", show);
   if (!show) return tray.replaceChildren();
+  fillTray(tray, a, clearAttachment);
+}
+
+/** A picture waiting to be sent: its thumbnail, a remove button and a hint. */
+function fillTray(tray, a, clear) {
   const card = el("div", "attach-card" + (a.sending ? " sending" : ""));
   const img = el("img");
   img.src = a.url;
@@ -7373,7 +7420,7 @@ function renderAttachment() {
     remove.dataset.tip = "Remove";
     remove.setAttribute("aria-label", "Remove picture");
     remove.append(icon("x", "xs"));
-    remove.addEventListener("click", clearAttachment);
+    remove.addEventListener("click", clear);
     card.append(remove);
   }
   tray.replaceChildren(card, el("span", "attach-hint", a.sending ? "" : "Add a caption, or press Enter to send"));
@@ -7463,4 +7510,125 @@ for (const type of ["dragover", "drop"]) {
   document.addEventListener(type, (e) => {
     if ([...(e.dataTransfer?.types ?? [])].includes("Files")) e.preventDefault();
   });
+}
+
+// ---------- pictures in DMs ----------
+//
+// Encrypted here with a fresh key (AES-GCM), stored as noise in the sender's account,
+// and the key travels only inside the sealed message:
+// "hopp-dm-image:<owner key>:<id>:<key> <width>x<height>", then the caption.
+
+var DM_PICTURE = /^hopp-dm-image:([0-9a-f]{64}):([0-9a-f]{32}):([A-Za-z0-9_-]{43}) (\d{1,5})x(\d{1,5})(?:\n|$)/;
+state.dmAttachment = null; // { peer, blob, type, width, height, url, sending }
+const dmPictures = new Map(); // picture id -> Promise of a blob URL
+
+function bytesToB64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlToBytes(text) {
+  const b64 = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+async function attachDmPicture(peer, file) {
+  if (!file || !/^image\//.test(file.type)) return;
+  try {
+    const shrunk = await shrinkChatPicture(file);
+    clearDmAttachment();
+    state.dmAttachment = { peer, ...shrunk, url: URL.createObjectURL(shrunk.blob), sending: false };
+    renderDmAttachment();
+    $("dm-input")?.focus();
+  } catch (err) {
+    toast(friendlyError(err?.message ?? err), true);
+  }
+}
+
+function clearDmAttachment() {
+  if (state.dmAttachment?.url) URL.revokeObjectURL(state.dmAttachment.url);
+  state.dmAttachment = null;
+  renderDmAttachment();
+}
+
+function renderDmAttachment() {
+  const view = document.querySelector(".dm-view");
+  const tray = view?.querySelector("#dm-attach-tray");
+  if (!tray) return;
+  const a = state.dmAttachment;
+  const show = !!a && a.peer === view.dataset.peer;
+  tray.hidden = !show;
+  if (!show) return tray.replaceChildren();
+  fillTray(tray, a, clearDmAttachment);
+}
+
+async function sendDmPicture(peer, input) {
+  const a = state.dmAttachment;
+  if (!a || a.sending) return;
+  a.sending = true;
+  renderDmAttachment();
+  try {
+    const key = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aes = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, await a.blob.arrayBuffer()));
+    const payload = new Uint8Array(iv.length + sealed.length);
+    payload.set(iv);
+    payload.set(sealed, iv.length);
+    const id = await invoke("upload_dm_image", { cloud: cloudHttp(), data: Array.from(payload) });
+    const caption = input.value.trim();
+    input.value = "";
+    input.style.height = "auto";
+    clearDmAttachment();
+    sendDm(peer, { value: `hopp-dm-image:${state.me.key}:${id}:${bytesToB64url(key)} ${a.width}x${a.height}${caption ? "\n" + caption : ""}`, style: {} });
+  } catch (err) {
+    a.sending = false;
+    renderDmAttachment();
+    toast(friendlyError(err?.message ?? err), true);
+  }
+}
+
+/** Fetches and decrypts a DM picture once; later views reuse it. */
+function dmPictureUrl(owner, id, key) {
+  if (!dmPictures.has(id)) {
+    dmPictures.set(id, (async () => {
+      const res = await fetch(`${cloudHttp()}/accounts/${owner}/images/${id}`);
+      if (!res.ok) throw new Error("gone");
+      const data = new Uint8Array(await res.arrayBuffer());
+      const aes = await crypto.subtle.importKey("raw", b64urlToBytes(key), "AES-GCM", false, ["decrypt"]);
+      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(0, 12) }, aes, data.slice(12));
+      return URL.createObjectURL(new Blob([plain]));
+    })().catch((err) => {
+      dmPictures.delete(id);
+      throw err;
+    }));
+  }
+  return dmPictures.get(id);
+}
+
+function dmPictureView(owner, id, key, width, height) {
+  const fit = Math.min(1, 400 / width, 320 / height);
+  const box = el("button", "msg-picture loading");
+  box.type = "button";
+  box.style.width = `${Math.max(48, Math.round(width * fit))}px`;
+  box.style.aspectRatio = `${width} / ${height}`;
+  const img = el("img");
+  img.alt = "Image";
+  box.append(img);
+  dmPictureUrl(owner, id, key).then(
+    (url) => {
+      img.src = url;
+      box.classList.remove("loading");
+    },
+    () => {
+      box.classList.remove("loading");
+      box.classList.add("gone");
+      box.replaceChildren(icon("x", "xs"), el("span", "", "Picture no longer available"));
+    },
+  );
+  box.addEventListener("click", () => {
+    if (!img.src) return;
+    $("lightbox-img").src = img.src;
+    $("lightbox").showModal();
+  });
+  return box;
 }

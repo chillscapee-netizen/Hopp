@@ -73,6 +73,9 @@ const dmHistory = {
   ],
 };
 
+/** Encrypted DM pictures the app uploaded, by id (what the cloud would store). */
+const uploadedDm = new Map();
+
 const commands = {
   account_status: () => ({ exists: true, name: "Marcus", public_key: ME, logged_in: true, remembered: true, backed_up: true }),
   take_pending_link: () => null,
@@ -120,6 +123,7 @@ const commands = {
   upload_image: ({ data, kind }) => { sent.push({ type: "upload_image", size: data.length, kind }); return "ab".repeat(16); },
   update_server: (a) => { sent.push({ type: "update_server", ...a }); },
   update_channel: (a) => { sent.push({ type: "update_channel", ...a }); },
+  upload_dm_image: ({ data }) => { const id = "cd".repeat(16); uploadedDm.set(id, new Uint8Array(data)); sent.push({ type: "upload_dm_image", size: data.length }); return id; },
   gif_search: () => ({ gifs: [], next: null }),
   fetch_profile: ({ key }) => ({ key, username: null, display_name: "Someone", avatar: null, bio: "" }),
   send_chat: ({ channel, text }) => {

@@ -78,6 +78,12 @@ interface Session {
   key?: string;
 }
 
+// Pictures in DMs: encrypted in the app with a key that only travels inside the
+// (also encrypted) message, so this store only ever holds noise. Capped per account.
+const MAX_DM_IMAGE_BYTES = 330_000;
+const MAX_DM_IMAGE_STORE = 50_000_000;
+const DM_IMAGES_PER_DAY = 40;
+
 const hexToBytes = (hex: string): Uint8Array | null => {
   if (!/^([0-9a-f]{2})*$/i.test(hex)) return null;
   const out = new Uint8Array(hex.length / 2);
@@ -177,6 +183,7 @@ export class StromAccount extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS dms (
         id TEXT PRIMARY KEY, peer TEXT NOT NULL, from_key TEXT NOT NULL, sealed TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS dms_by_peer ON dms (peer, sent_at);
+      CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, data BLOB NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS conversations (peer TEXT PRIMARY KEY, last_at INTEGER NOT NULL, last_read INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', members TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS channel_reads (
@@ -262,10 +269,66 @@ export class StromAccount extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const image = new URL(request.url).pathname.match(/\/images(?:\/([0-9a-f]{32}))?$/);
+    if (image) {
+      try {
+        if (image[1] && request.method === "GET") return this.serveImage(image[1]);
+        if (!image[1] && request.method === "POST") return await this.uploadImage(request);
+        return new Response("Not allowed", { status: 405 });
+      } catch (err) {
+        return Response.json({ error: troubleMessage(err) }, { status: 503 });
+      }
+    }
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ stage: "hello" } satisfies Session);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** An encrypted picture; only those with the key in the message can see it. */
+  private serveImage(id: string): Response {
+    const row = this.sql.exec("SELECT data FROM images WHERE id = ?", id).toArray()[0];
+    if (!row) return new Response("Gone", { status: 404 });
+    return new Response(row.data as ArrayBuffer, {
+      headers: { "content-type": "application/octet-stream", "cache-control": "private, max-age=31536000, immutable", "access-control-allow-origin": "*" },
+    });
+  }
+
+  /** The account's owner stores an encrypted picture for a DM, signed with their Hopp ID. */
+  private async uploadImage(request: Request): Promise<Response> {
+    const fail = (error: string, status = 400) => Response.json({ error }, { status });
+    const owner = this.meta("key");
+    const key = (request.headers.get("X-Hopp-Key") ?? "").toLowerCase();
+    const time = Number(request.headers.get("X-Hopp-Time"));
+    const signature = hexToBytes(request.headers.get("X-Hopp-Signature") ?? "");
+    if (!owner || key !== owner || signature?.length !== 64) return fail("Not signed.", 401);
+    if (!Number.isFinite(time) || Math.abs(Date.now() - time) > 5 * 60_000) return fail("Your computer's clock is off. Check the time and try again.", 401);
+    const data = new Uint8Array(await request.arrayBuffer());
+    if (data.length < 29 || data.length > MAX_DM_IMAGE_BYTES) return fail("That picture is too big.");
+    const digest = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
+    const signed = new TextEncoder().encode(`hopp-image-v1\0account:${owner}\0${digest}\0${time}`);
+    let valid = false;
+    try {
+      const pub = await crypto.subtle.importKey("raw", hexToBytes(owner)!, { name: "Ed25519" }, false, ["verify"]);
+      valid = await crypto.subtle.verify({ name: "Ed25519" }, pub, signature, signed);
+    } catch {
+      valid = false;
+    }
+    if (!valid) return fail("Not signed.", 401);
+    const now = Date.now();
+    const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE created_at > ?", now - 86_400_000).one().n);
+    if (today >= DM_IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
+    const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+    this.sql.exec("INSERT INTO images (id, data, size, created_at) VALUES (?, ?, ?, ?)", id, data, data.length, now);
+    // Past the account's share of storage, the oldest pictures make room.
+    let total = Number(this.sql.exec("SELECT coalesce(sum(size), 0) AS n FROM images").one().n);
+    while (total > MAX_DM_IMAGE_STORE) {
+      const oldest = this.sql.exec("SELECT id, size FROM images ORDER BY created_at LIMIT 1").toArray()[0];
+      if (!oldest) break;
+      this.sql.exec("DELETE FROM images WHERE id = ?", oldest.id);
+      total -= Number(oldest.size);
+    }
+    return Response.json({ id });
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {

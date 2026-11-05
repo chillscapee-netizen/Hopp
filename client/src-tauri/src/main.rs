@@ -1008,6 +1008,33 @@ async fn upload_image(state: State<'_, AppState>, cloud: String, server_id: Stri
     body["id"].as_str().map(str::to_string).ok_or_else(|| "Couldn't send the picture.".into())
 }
 
+/// Stores an already encrypted picture for a DM in our own account, signed with our
+/// Hopp ID. Returns its id; the key to read it only travels inside the sealed message.
+#[tauri::command]
+async fn upload_dm_image(state: State<'_, AppState>, cloud: String, data: Vec<u8>) -> CmdResult<String> {
+    let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    let key = identity.public_key();
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let signature = identity.sign_image(&format!("account:{key}"), &data, time);
+    let response = reqwest::Client::new()
+        .post(format!("{}/accounts/{}/images", cloud.trim_end_matches('/'), key))
+        .header("content-type", "application/octet-stream")
+        .header("X-Hopp-Key", &key)
+        .header("X-Hopp-Time", time.to_string())
+        .header("X-Hopp-Signature", signature)
+        .body(data)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(body["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("Couldn't send the picture ({status}).")));
+    }
+    body["id"].as_str().map(str::to_string).ok_or_else(|| "Couldn't send the picture.".into())
+}
+
 /// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
 #[tauri::command]
 async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
@@ -1327,6 +1354,7 @@ fn main() {
             transfer_ownership,
             get_members,
             upload_image,
+            upload_dm_image,
             app_version,
             set_autostart,
             shell::window_compact,

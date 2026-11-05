@@ -25,6 +25,7 @@ export interface Env {
 
 /** Server ids are long and random, so they can't be guessed. */
 const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
+const ACCOUNT_IMAGE_PATH = /^\/accounts\/([0-9a-f]{64})\/images(?:\/([0-9a-f]{32}))?$/;
 const IMAGE_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/images(?:\/([0-9a-f]{32}))?$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
 const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
@@ -43,6 +44,10 @@ export default {
 
     // GIFs for the picker: search, or what's popular. The key stays here, and answers are cached.
     if (url.pathname === "/gifs" && request.method === "GET") return gifs(url, env, ctx);
+
+    // Encrypted pictures in DMs, kept by the sender's account.
+    const accountImage = url.pathname.match(ACCOUNT_IMAGE_PATH);
+    if (accountImage) return accountOf(env, accountImage[1]).fetch(request);
 
     // Pictures in a server's chat: uploads (signed by a member) and the pictures themselves.
     const image = url.pathname.match(IMAGE_PATH);

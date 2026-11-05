@@ -469,3 +469,28 @@ test("an account creates at most ten servers a day", async () => {
   assert.equal(reply.type, "error");
   assert.match(reply.message, /lot of servers today/);
 });
+
+test("DM pictures: only the account's owner stores them, and they come back as stored", async () => {
+  const me = newKey();
+  const device = await Device.open(me, "Pic");
+  const HTTP = BASE.replace(/^ws/, "http");
+  const noise = crypto.randomBytes(500);
+  const upload = (key, sign = key, time = Date.now()) => {
+    const digest = crypto.createHash("sha256").update(noise).digest("hex");
+    const signature = crypto.sign(null, Buffer.from(`hopp-image-v1\0account:${me.pub}\0${digest}\0${time}`), sign.privateKey).toString("hex");
+    return fetch(`${HTTP}/accounts/${me.pub}/images`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", "X-Hopp-Key": key.pub, "X-Hopp-Time": String(time), "X-Hopp-Signature": signature },
+      body: noise,
+    });
+  };
+  assert.equal((await upload(newKey())).status, 401, "someone else can't store pictures in my account");
+  assert.equal((await upload(me, newKey())).status, 401, "a wrong signature is refused");
+  const ok = await upload(me);
+  assert.equal(ok.status, 200);
+  const { id } = await ok.json();
+  const back = await fetch(`${HTTP}/accounts/${me.pub}/images/${id}`);
+  assert.deepEqual(Buffer.from(await back.arrayBuffer()), noise);
+  assert.equal((await fetch(`${HTTP}/accounts/${me.pub}/images/${"0".repeat(32)}`)).status, 404);
+  device.close();
+});
