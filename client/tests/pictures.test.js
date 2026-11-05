@@ -43,6 +43,29 @@
   startEdit({ id: 990, channel: 0, text, author_key: ME });
   check("pictures aren't edited", !state.editing);
 
+  // Dropping: a picture lands in the tray; any other file gets a clear word.
+  const dropOn = (target, file) => {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const ev = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt });
+    target.dispatchEvent(ev);
+    return ev;
+  };
+  const small = document.createElement("canvas");
+  small.width = 200;
+  small.height = 120;
+  small.getContext("2d").fillRect(0, 0, 50, 50);
+  const smallPng = small.toDataURL("image/png");
+  dropOn($("scroller"), new File([Uint8Array.from(atob(smallPng.split(",")[1]), (c) => c.charCodeAt(0))], "drop.png", { type: "image/png" }));
+  for (let i = 0; i < 100 && !state.attachment; i++) await wait(200);
+  check("dropped picture waits in the tray", !!state.attachment);
+  clearAttachment();
+  dropOn($("scroller"), new File(["hello"], "notes.txt", { type: "text/plain" }));
+  await wait(100);
+  check("other files get a clear word", document.body.textContent.includes("Only pictures can be shared"));
+  const stray = dropOn($("sidebar") ?? document.body, new File(["x"], "x.txt", { type: "text/plain" }));
+  check("a stray drop doesn't open the file", stray.defaultPrevented);
+
   // Self-hosted servers have no picture button.
   await connectTo(prefs.servers.find((s) => s.address === "192.168.8.35"));
   await wait(200);

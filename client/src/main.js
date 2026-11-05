@@ -7289,11 +7289,18 @@ function pictureUrl(id) {
 
 /** Shrinks a picture until it's light enough to send. */
 async function shrinkPicture(file) {
-  const bitmap = await createImageBitmap(file);
-  let scale = Math.min(1, PICTURE_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const source = URL.createObjectURL(file);
+  const bitmap = await new Promise((ok, fail) => {
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = () => fail(new Error("That file isn't a picture Hopp can read."));
+    img.src = source;
+  }).finally(() => setTimeout(() => URL.revokeObjectURL(source), 0));
+  const natural = { width: bitmap.naturalWidth, height: bitmap.naturalHeight };
+  let scale = Math.min(1, PICTURE_MAX_SIDE / Math.max(natural.width, natural.height));
   for (let attempt = 0; attempt < 8; attempt++) {
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const width = Math.max(1, Math.round(natural.width * scale));
+    const height = Math.max(1, Math.round(natural.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -7427,8 +7434,17 @@ chatSection.addEventListener("dragleave", (e) => {
 });
 chatSection.addEventListener("drop", (e) => {
   chatSection.classList.remove("dropping");
-  const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));
-  if (!file) return;
+  const files = [...(e.dataTransfer?.files ?? [])];
+  if (!files.length) return;
   e.preventDefault();
-  attachPicture(file);
+  const file = files.find((f) => f.type.startsWith("image/"));
+  if (file) attachPicture(file);
+  else toast("Only pictures can be shared for now (PNG, JPEG, WebP or GIF).", true);
 });
+
+// A file dropped anywhere else mustn't replace the app with the file itself.
+for (const type of ["dragover", "drop"]) {
+  document.addEventListener(type, (e) => {
+    if ([...(e.dataTransfer?.types ?? [])].includes("Files")) e.preventDefault();
+  });
+}
