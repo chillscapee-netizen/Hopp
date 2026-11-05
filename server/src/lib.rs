@@ -585,7 +585,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             let all = st.storage.load_before(channel, u64::MAX, 100_000).unwrap_or_else(|| st.history.get(&channel).map(|h| h.iter().cloned().collect()).unwrap_or_default());
                             messages.extend(all.into_iter().filter(|m| m.text.to_lowercase().contains(&needle)));
                         }
-                        messages.sort_by(|a, b| b.id.cmp(&a.id));
+                        messages.sort_by_key(|m| std::cmp::Reverse(m.id));
                         messages.truncate(SEARCH_RESULTS);
                     }
                     let _ = tx.send(ServerMsg::SearchResults { query, messages });
