@@ -779,6 +779,19 @@ fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetPins { channel }))
 }
 
+/// The soundboard: a short sound everyone in our voice channel or call hears.
+#[tauri::command]
+fn play_soundboard(state: State<'_, AppState>, name: String) -> CmdResult {
+    let in_voice = state.conn.lock().unwrap().as_ref().is_some_and(|c| c.engine.is_some()) || state.call.lock().unwrap().is_some();
+    if !in_voice {
+        return Err("Join a voice channel or a call to use the soundboard.".into());
+    }
+    if !state.audio.play_sound(&name) {
+        return Err("Unmute to use the soundboard.".into());
+    }
+    Ok(())
+}
+
 /// Moderators: takes someone out of voice.
 #[tauri::command]
 fn disconnect_voice(state: State<'_, AppState>, session_id: SessionId) -> CmdResult {
@@ -1446,6 +1459,7 @@ fn main() {
             link_preview,
             set_sharing,
             disconnect_voice,
+            play_soundboard,
             move_voice,
             server_mute,
             screen_signal,

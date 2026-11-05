@@ -10,6 +10,7 @@ pub mod jitter;
 pub mod mesh;
 pub mod turn;
 pub mod settings;
+pub mod soundboard;
 
 pub use account::{connect_account, AccountLink};
 pub use control::{connect, parse_invite, Control, Roster, INVITE_SCHEME};

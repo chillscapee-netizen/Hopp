@@ -3178,3 +3178,13 @@ body { background: var(--frame-bg, var(--frame)); }
 /* Sliders everywhere: a thin track and a round handle. */
 input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 16%, transparent); }
 input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); }
+
+/* The soundboard: a grid of little sounds, above the voice panel. */
+.voice-actions { grid-template-columns: repeat(3, 1fr); }
+.soundboard { width: 300px; padding: 12px; }
+.soundboard-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.sound { display: flex; align-items: center; gap: 8px; padding: 9px 10px; background: var(--hover); border: none; border-radius: 10px; color: var(--text-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 80ms; }
+.sound:hover { background: var(--active); color: var(--text); }
+.sound:active { transform: scale(0.97); }
+.sound-emoji { font-size: 18px; line-height: 1; }
+.soundboard-hint { margin: 10px 2px 0; color: var(--faint); font-size: 12px; }

@@ -4244,7 +4244,7 @@ document.addEventListener("mousedown", (e) => {
 
 const tip = $("tooltip");
 /** Icons that say what they are: no tooltip, just the icon (the words stay for screen readers). */
-var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action, .category-add, .channel-row";
+var PLAIN_ICONS = "#soundboard-btn, .icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action, .category-add, .channel-row";
 
 document.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
@@ -10718,3 +10718,39 @@ setInterval(checkAfk, 30_000);
 
 // Reaching the submenu keeps it open.
 $("server-submenu").addEventListener("mouseenter", () => clearTimeout(submenuTimer));
+
+// ---------- the soundboard ----------
+//
+// Short sounds everyone in your voice channel or call hears (deafened people don't).
+
+var SOUNDBOARD = [
+  ["ding", "Ding", "🔔"], ["tada", "Ta-da", "🎉"], ["horn", "Air horn", "📯"], ["drums", "Ba-dum-tss", "🥁"],
+  ["boing", "Boing", "🌀"], ["sad", "Sad trombone", "🎺"], ["cheer", "Cheer", "👏"], ["pop", "Pop", "🫧"],
+];
+var soundboardAt = 0;
+
+function openSoundboard(anchor) {
+  const pop = $("soundboard");
+  if (!pop.hidden) return closePopovers();
+  const grid = el("div", "soundboard-grid");
+  for (const [name, label, emoji] of SOUNDBOARD) {
+    const b = el("button", "sound");
+    b.type = "button";
+    b.append(el("span", "sound-emoji", emoji), el("span", "sound-name", label));
+    b.addEventListener("click", () => playSoundboard(name));
+    grid.append(b);
+  }
+  pop.replaceChildren(el("div", "pins-title", "Soundboard"), grid, el("p", "soundboard-hint", "Everyone in the channel hears it."));
+  const r = anchor.getBoundingClientRect();
+  placePopover(pop, r.left, r.top);
+  pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + "px";
+}
+
+async function playSoundboard(name) {
+  // One every couple of seconds, so it stays fun.
+  if (Date.now() - soundboardAt < 2000) return;
+  soundboardAt = Date.now();
+  await invoke("play_soundboard", { name }).catch((err) => toast(friendlyError(err), true));
+}
+
+$("soundboard-btn").addEventListener("click", (e) => openSoundboard(e.currentTarget));

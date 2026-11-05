@@ -1100,12 +1100,20 @@ impl Encoder {
                     muted_speech = 0;
                     let _ = self.events.send(EngineEvent::SpeakingWhileMuted);
                 }
-                let transmit = wants_to_talk && !silenced;
+                // A soundboard sound rides along (and is sent even between words).
+                let mut frame = *clean;
+                let clip = {
+                    let mut q = settings.clip_out.lock().unwrap();
+                    let n = q.len().min(FRAME_SAMPLES);
+                    frame.iter_mut().zip(q.drain(..n)).for_each(|(s, c)| *s = soft_limit(*s + c));
+                    n > 0
+                };
+                let transmit = (wants_to_talk || clip) && !silenced;
                 let started = transmit && !self.speaking;
                 self.set_speaking(transmit);
 
                 // Encode every frame, sent or not: the encoder stays warm and the pre-roll stays fresh.
-                let len = encoder.encode_float(clean, &mut opus_buf)?;
+                let len = encoder.encode_float(&frame, &mut opus_buf)?;
                 if transmit {
                     if started {
                         for p in preroll.drain(..) {
@@ -1318,6 +1326,12 @@ impl Mixer {
         if let Some(render) = &self.render {
             // The mic test's own voice stays out of this, or it would cancel itself.
             let _ = render.try_send(mix);
+        }
+        // Our own soundboard sound, for our ears too.
+        {
+            let mut q = self.settings.clip_local.lock().unwrap();
+            let n = q.len().min(FRAME_SAMPLES);
+            mix.iter_mut().zip(q.drain(..n)).for_each(|(m, s)| *m = soft_limit(*m + s * gain));
         }
         if self.settings.monitor.load(Ordering::Relaxed) {
             let mut q = self.settings.monitor_queue.lock().unwrap();

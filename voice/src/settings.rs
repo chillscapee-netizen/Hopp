@@ -38,6 +38,10 @@ pub struct AudioSettings {
     /// The mic test: play our own processed microphone back locally.
     pub(crate) monitor: AtomicBool,
     pub(crate) monitor_queue: Mutex<VecDeque<f32>>,
+    /// A soundboard sound on its way to the others (mixed into what we send).
+    pub(crate) clip_out: Mutex<VecDeque<f32>>,
+    /// The same sound for our own ears.
+    pub(crate) clip_local: Mutex<VecDeque<f32>>,
 }
 
 impl Default for AudioSettings {
@@ -59,7 +63,23 @@ impl Default for AudioSettings {
             user_volumes: Mutex::new(HashMap::new()),
             monitor: AtomicBool::new(false),
             monitor_queue: Mutex::new(VecDeque::new()),
+            clip_out: Mutex::new(VecDeque::new()),
+            clip_local: Mutex::new(VecDeque::new()),
         }
+    }
+}
+
+impl AudioSettings {
+    /// Plays a soundboard sound for everyone in our voice channel or call, and for us.
+    /// False when it can't: muted, or it's not a sound we know. One at a time.
+    pub fn play_sound(&self, name: &str) -> bool {
+        if self.muted() || self.deafened() {
+            return false;
+        }
+        let Some(clip) = crate::soundboard::clip(name) else { return false };
+        *self.clip_out.lock().unwrap() = clip.iter().copied().collect();
+        *self.clip_local.lock().unwrap() = clip.into_iter().collect();
+        true
     }
 }
 
