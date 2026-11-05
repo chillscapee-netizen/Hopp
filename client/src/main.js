@@ -3332,7 +3332,7 @@ function bannerFrom(picture) {
     const g = c.getContext("2d");
     g.drawImage(img, 0, 0, 1, 1);
     const [r, gr, b] = g.getImageData(0, 0, 1, 1).data;
-    banner.style.setProperty("--banner", `color-mix(in srgb, rgb(${r} ${gr} ${b}) 45%, #2a2a2e)`);
+    banner.style.setProperty("--banner", `color-mix(in srgb, rgb(${r} ${gr} ${b}) 45%, var(--main))`);
   };
   img.src = picture;
 }
