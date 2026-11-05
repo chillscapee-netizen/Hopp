@@ -2959,3 +2959,8 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .signal-bars.poor { color: var(--red); }
 .user-card-connection { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .user-card-connection .signal-bars { margin-left: 0; }
+
+/* Group calls: more people, smaller faces, wrapping onto a second row. */
+.call-people { flex-wrap: wrap; justify-content: center; max-width: 560px; }
+.call-people.many { gap: 18px; }
+.call-people.many .avatar.s80 { width: 64px; height: 64px; font-size: 22px; }

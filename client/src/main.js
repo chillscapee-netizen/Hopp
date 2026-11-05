@@ -6686,8 +6686,133 @@ function hex(bytes) {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function callSend(c, kind, extra = {}) {
-  return invoke("account_send", { msg: { type: "call", to: c.peer, call_id: c.id, kind, ...extra } }).catch(() => {});
+/**
+ * A call signal. A call with a friend goes to them; a group call goes to `to` (a list of
+ * Hopp IDs), or else to everyone in the call for an address, everyone in the group otherwise.
+ */
+function callSend(c, kind, extra = {}, to) {
+  if (!c.group) return invoke("account_send", { msg: { type: "call", to: c.peer, call_id: c.id, kind, ...extra } }).catch(() => {});
+  const targets = to ?? (kind === "endpoint" ? [...c.inCall] : groupOthers(c.group));
+  return Promise.all(targets.map((t) => invoke("account_send", { msg: { type: "call", to: t, group: c.group, call_id: c.id, kind, ...extra } }).catch(() => {})));
+}
+
+/** Everyone in a group but us. */
+function groupOthers(groupId) {
+  return (state.groups.get(groupId)?.members ?? []).filter((k) => k !== state.me?.key);
+}
+
+/** Someone's number in a group call: from their Hopp ID, so every computer agrees on it. */
+function callSession(key) {
+  return parseInt(key.slice(0, 8), 16) >>> 0 || 1;
+}
+
+/** Group calls going on that we know of (rung, joined or seen), by group: { id, key, from, inCall }. */
+state.groupCalls = new Map();
+
+/** Calls everyone in a group. We're in the call at once; they join as they answer. */
+async function startGroupCall(groupId) {
+  if (state.call) return toast("You're already in a call.", true);
+  if (!state.accountConnected) return toast("You're offline. Calls need a connection.", true);
+  const running = state.groupCalls.get(groupId);
+  if (running?.inCall.size) return joinGroupCall(groupId);
+  const others = groupOthers(groupId);
+  if (!others.length) return toast("There's nobody else in this group to call.", true);
+  const key = hex(crypto.getRandomValues(new Uint8Array(32)));
+  const c = { id: crypto.randomUUID(), group: groupId, peer: groupId, role: "caller", status: "ringing", key, me: callSession(state.me.key), inCall: new Set(), endpoints: new Map(), startedAt: null, engineReady: false };
+  state.call = c;
+  renderCall();
+  // The key goes sealed for each member, like a message only they can read.
+  await Promise.all(
+    others.map(async (k) => {
+      try {
+        const sealed = await invoke("dm_seal", { peer: k, text: key });
+        await invoke("account_send", { msg: { type: "call", to: k, group: groupId, call_id: c.id, kind: "ring", sealed } });
+      } catch {}
+    }),
+  );
+  if (state.call !== c) return;
+  startRinging("ringback");
+  c.timeout = setTimeout(() => {
+    if (state.call === c && !c.inCall.size) {
+      toast("Nobody joined the call.");
+      endCall("missed");
+    }
+  }, CALL_RING_MS);
+  await beginCallVoice(c);
+}
+
+/** Joins a group call that's already going (one we missed or declined). */
+async function joinGroupCall(groupId) {
+  const g = state.groupCalls.get(groupId);
+  if (!g) return;
+  if (state.call) return toast("You're already in a call.", true);
+  const c = { id: g.id, group: groupId, peer: groupId, role: "callee", status: "connecting", key: g.key, me: callSession(state.me.key), inCall: new Set(g.inCall), endpoints: new Map(), startedAt: null, engineReady: false };
+  state.call = c;
+  callSend(c, "join");
+  renderCall();
+  await beginCallVoice(c);
+}
+
+/** A group call's signal: ringing, people joining, their addresses, people leaving. */
+async function handleGroupCallSignal(m) {
+  const c = state.call?.id === m.call_id ? state.call : null;
+  const known = state.groupCalls.get(m.group);
+  if (m.kind === "ring") {
+    if (c) return;
+    let key;
+    try {
+      key = await invoke("dm_open", { peer: m.from, sealed: m.sealed });
+    } catch {
+      return;
+    }
+    state.groupCalls.set(m.group, { id: m.call_id, key, from: m.from, inCall: new Set([m.from]) });
+    // Already in another call: the group shows it's going on, without ringing over it.
+    if (state.call) return renderCall();
+    const call = { id: m.call_id, group: m.group, peer: m.group, from: m.from, role: "callee", status: "ringing", key, me: callSession(state.me.key), inCall: new Set([m.from]), endpoints: new Map(), startedAt: null, engineReady: false };
+    state.call = call;
+    startRinging("ring");
+    call.timeout = setTimeout(() => state.call === call && call.status === "ringing" && endCall("unanswered"), CALL_RING_MS + 5000);
+    desktopNotify(personFor(m.from), "Incoming group call", `call:${m.group}`, groupName(state.groups.get(m.group)));
+    renderCall();
+    return;
+  }
+  if (known?.id === m.call_id) {
+    if (m.kind === "join" || m.kind === "endpoint") known.inCall.add(m.from);
+    if (m.kind === "leave") known.inCall.delete(m.from);
+    if (!known.inCall.size && !c) state.groupCalls.delete(m.group);
+  }
+  if (!c) return renderCall();
+  if (m.kind === "join") {
+    c.inCall.add(m.from);
+    if (c.status !== "ringing" || c.role === "caller") {
+      stopRinging();
+      clearTimeout(c.timeout);
+    }
+    // Tell the newcomer where we are; they tell us the same.
+    if (c.engineReady && c.myEndpoint) callSend(c, "endpoint", c.myEndpoint, [m.from]);
+  } else if (m.kind === "endpoint") {
+    c.inCall.add(m.from);
+    const peer = { session_id: callSession(m.from), public: m.public ?? null, local: m.local ?? [] };
+    c.endpoints.set(m.from, peer);
+    if (c.engineReady) invoke("call_peer", { callId: c.id, peer });
+    if (c.status !== "ringing") {
+      c.status = "live";
+      c.startedAt ??= Date.now();
+    }
+    if (c.role === "caller") {
+      stopRinging();
+      clearTimeout(c.timeout);
+      c.status = "live";
+      c.startedAt ??= Date.now();
+    }
+  } else if (m.kind === "leave") {
+    c.inCall.delete(m.from);
+    c.endpoints.delete(m.from);
+    if (c.engineReady) invoke("call_drop_peer", { callId: c.id, sessionId: callSession(m.from) });
+    // Everyone else gone: the call is over here too (or never answered, if it was ringing).
+    if (!c.inCall.size && (c.status !== "ringing" || c.role === "callee")) return endCall("empty");
+  }
+  renderCall();
 }
 
 async function startCall(peer) {
@@ -6710,6 +6835,7 @@ async function startCall(peer) {
 }
 
 async function handleCallSignal(m) {
+  if (m.group) return handleGroupCallSignal(m);
   const c = state.call;
   const name = personFor(m.from).display_name;
   if (m.kind === "ring") {
@@ -6759,7 +6885,7 @@ async function handleCallSignal(m) {
 function handleCallSelf(m) {
   const c = state.call;
   if (!c || c.id !== m.call_id || c.role !== "callee" || c.status !== "ringing") return;
-  if (m.kind === "answer" || m.kind === "decline") {
+  if (m.kind === "answer" || m.kind === "decline" || m.kind === "join") {
     clearTimeout(c.timeout);
     stopRinging();
     state.call = null;
@@ -6779,8 +6905,11 @@ async function beginCallVoice(c) {
   }
   if (state.call !== c) return invoke("end_call");
   c.engineReady = true;
-  if (c.peerEndpoint) invoke("call_peer", { callId: c.id, peer: c.peerEndpoint });
-  callSend(c, "endpoint", { public: me?.public ?? null, local: me?.local ?? [] });
+  c.myEndpoint = { public: me?.public ?? null, local: me?.local ?? [] };
+  if (c.group) {
+    for (const peer of c.endpoints.values()) invoke("call_peer", { callId: c.id, peer });
+  } else if (c.peerEndpoint) invoke("call_peer", { callId: c.id, peer: c.peerEndpoint });
+  callSend(c, "endpoint", c.myEndpoint);
   playSound("join");
 }
 
@@ -6790,7 +6919,7 @@ async function answerCall() {
   clearTimeout(c.timeout);
   stopRinging();
   c.status = "connecting";
-  callSend(c, "answer");
+  callSend(c, c.group ? "join" : "answer");
   renderCall();
   openDm(c.peer);
   await beginCallVoice(c);
@@ -6810,9 +6939,16 @@ async function endCall(reason) {
   state.call = null;
   clearTimeout(c.timeout);
   stopRinging();
-  if (reason !== "remote" && reason !== "declined" && reason !== "unanswered") callSend(c, "end");
+  if (c.group) {
+    // Leaving a group call: the others carry on, and the group still shows it's going on.
+    // Someone who never answered was never in it: nothing to leave.
+    const wasIn = c.role === "caller" || c.status !== "ringing";
+    if (wasIn && reason !== "declined" && reason !== "unanswered") callSend(c, "leave");
+    if (c.inCall.size) state.groupCalls.set(c.group, { id: c.id, key: c.key, from: c.from, inCall: new Set(c.inCall) });
+    else state.groupCalls.delete(c.group);
+  } else if (reason !== "remote" && reason !== "declined" && reason !== "unanswered") callSend(c, "end");
   // Nobody picked up: leave a note in the conversation.
-  if (c.role === "caller" && reason === "missed") sendDmText(c.peer, "📞 Missed call");
+  if (c.role === "caller" && reason === "missed" && !c.group) sendDmText(c.peer, "📞 Missed call");
   if (c.engineReady) {
     await invoke("end_call").catch(() => {});
     playSound("leave");
@@ -6856,34 +6992,53 @@ function renderCall() {
   // Incoming call card.
   $("incoming-call").hidden = !ringingHere;
   if (ringingHere) {
-    const p = personFor(c.peer);
+    const p = personFor(c.group ? c.from : c.peer);
     $("incoming-avatar").replaceChildren(avatar(p.display_name, "s40", undefined, p.avatar));
-    $("incoming-name").textContent = p.display_name;
+    $("incoming-name").textContent = c.group ? groupName(state.groups.get(c.group)) : p.display_name;
+    $("incoming-what").textContent = c.group ? `${p.display_name} is calling the group…` : "Incoming call…";
   }
   // The panel above your name.
   $("call-panel").hidden = !c || ringingHere;
   if (c && !ringingHere) {
     $("call-status-text").textContent = callStatusText(c);
-    $("call-where").textContent = personFor(c.peer).display_name;
+    $("call-where").textContent = c.group ? groupName(state.groups.get(c.group)) : personFor(c.peer).display_name;
     $("call-panel").classList.toggle("live", c.status === "live");
   }
   // The call button and the stage in the conversation.
-  const dmOpen = !!state.openDm && !online() && !isGroup(state.openDm);
-  $("dm-call-btn").hidden = !dmOpen || !!c;
+  const dmOpen = !!state.openDm && !online();
+  // A group call going on that we're not in: the group offers to join it.
+  const elsewhere = dmOpen && isGroup(state.openDm) && !(c && c.peer === state.openDm) ? state.groupCalls.get(state.openDm) : null;
+  const joinable = elsewhere?.inCall.size ? elsewhere : null;
+  $("dm-call-btn").hidden = !dmOpen || !!c || !!joinable;
   const here = c && dmOpen && c.peer === state.openDm && !ringingHere;
   const stage = $("call-stage");
-  stage.hidden = !here;
+  stage.hidden = !here && !joinable;
+  const who = (person, id) => {
+    const wrap = el("div", "call-person");
+    wrap.dataset.session = id;
+    wrap.dataset.tip = person.display_name ?? "";
+    wrap.append(avatar(person.display_name ?? "?", "s80", undefined, person.avatar));
+    return wrap;
+  };
+  if (joinable) {
+    const people = el("div", "call-people");
+    for (const k of joinable.inCall) people.append(who(personFor(k), callSession(k)));
+    const join = el("button", "call-btn accept");
+    join.type = "button";
+    join.dataset.tip = "Join the call";
+    join.append(icon("phone"));
+    join.addEventListener("click", () => joinGroupCall(state.openDm));
+    const actions = el("div", "call-stage-actions");
+    actions.append(join);
+    stage.replaceChildren(people, el("div", "call-stage-status", "Call in progress"), actions);
+  }
   if (here) {
     const me = state.me ?? {};
-    const peer = personFor(c.peer);
-    const who = (person, id) => {
-      const wrap = el("div", "call-person");
-      wrap.dataset.session = id;
-      wrap.append(avatar(person.display_name ?? "?", "s80", undefined, person.avatar));
-      return wrap;
-    };
     const people = el("div", "call-people");
-    people.append(who({ display_name: state.account?.name, avatar: me.avatar }, c.me), who(peer, c.other));
+    people.classList.toggle("many", !!c.group && c.inCall.size > 2);
+    people.append(who({ display_name: state.account?.name, avatar: me.avatar }, c.me));
+    if (c.group) for (const k of c.inCall) people.append(who(personFor(k), callSession(k)));
+    else people.append(who(personFor(c.peer), c.other));
     const status = el("div", "call-stage-status", callStatusText(c));
     const actions = el("div", "call-stage-actions");
     const hang = el("button", "call-btn decline");
@@ -6896,7 +7051,7 @@ function renderCall() {
   }
 }
 
-$("dm-call-btn").addEventListener("click", () => state.openDm && startCall(state.openDm));
+$("dm-call-btn").addEventListener("click", () => state.openDm && (isGroup(state.openDm) ? startGroupCall(state.openDm) : startCall(state.openDm)));
 $("call-accept").addEventListener("click", answerCall);
 $("call-decline").addEventListener("click", declineCall);
 $("call-hangup").addEventListener("click", () => endCall());
@@ -6922,16 +7077,20 @@ listen("call-voice", (e) => {
   } else if (ev.type === "need_relay") {
     useRelay();
   } else if (ev.type === "endpoint" && state.call) {
-    callSend(state.call, "endpoint", { public: ev.endpoint.public ?? null, local: ev.endpoint.local ?? [] });
+    state.call.myEndpoint = { public: ev.endpoint.public ?? null, local: ev.endpoint.local ?? [] };
+    callSend(state.call, "endpoint", state.call.myEndpoint);
   } else if (ev.type === "peer_reach" && state.call) {
-    state.call.unreachable = !ev.reachable;
-    if (!ev.reachable && relayState.unavailable) toast(`Can't connect to ${personFor(state.call.peer).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
+    const c = state.call;
+    const key = c.group ? [...c.inCall].find((k) => callSession(k) === ev.session_id) : c.peer;
+    // In a group call one person out of reach doesn't make the whole call "can't connect".
+    if (!c.group) c.unreachable = !ev.reachable;
+    if (!ev.reachable && relayState.unavailable && key) toast(`Can't connect to ${personFor(key).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
     renderCall();
   }
 });
 
 // Hanging up when the app goes away, so the friend isn't left talking to nobody.
-window.addEventListener("beforeunload", () => state.call && callSend(state.call, "end"));
+window.addEventListener("beforeunload", () => state.call && callSend(state.call, state.call.group ? "leave" : "end"));
 
 // ---------- group conversations ----------
 

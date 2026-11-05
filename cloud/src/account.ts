@@ -42,7 +42,8 @@ const GROUP_NAME_MAX = 40;
 
 export interface Group { id: string; name: string; members: string[]; created_at: number }
 /** Calls: what each kind of signal may carry. The key is sealed for the callee, like a direct message. */
-const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint"]);
+// "join" and "leave" are for group calls, where people come and go while it runs.
+const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint", "join", "leave"]);
 // "ip:port" for IPv4, "[ip]:port" for IPv6.
 const CALL_ENDPOINT = /^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$/;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
@@ -656,8 +657,15 @@ export class StromAccount extends DurableObject<Env> {
         const kind = String(msg.kind ?? "");
         const callId = String(msg.call_id ?? "");
         if (!CALL_KINDS.has(kind) || !/^[0-9a-f-]{8,40}$/.test(callId)) return error("Bad call signal.");
-        if (this.friend(to)?.state !== "friend") return error("You can only call friends.");
+        // A group call goes to the group's members, friends or not; any other call only to friends.
+        const groupId = msg.group === undefined || msg.group === null ? null : String(msg.group);
         const signal: Record<string, unknown> = { kind, call_id: callId };
+        if (groupId) {
+          const group = this.group(groupId);
+          if (!group || !group.members.includes(myKey)) return error("You're not in that group anymore.");
+          if (to === myKey || !group.members.includes(to)) return error("They're not in that group.");
+          signal.group = groupId;
+        } else if (this.friend(to)?.state !== "friend") return error("You can only call friends.");
         if (kind === "ring") {
           const sealed = String(msg.sealed ?? "");
           if (!/^[0-9a-f]{40,400}$/.test(sealed)) return error("Bad call signal.");
@@ -669,8 +677,8 @@ export class StromAccount extends DurableObject<Env> {
         }
         const reached = await accountOf(this.env, to).callSignal(myKey, signal);
         // Your other devices stop ringing once one of them answers or declines.
-        this.toDevices({ type: "call_self", with: to, kind, call_id: callId }, ws);
-        if (kind === "ring" && !reached) this.send(ws, { type: "call", from: to, kind: "offline", call_id: callId });
+        this.toDevices({ type: "call_self", with: groupId ?? to, kind, call_id: callId }, ws);
+        if (kind === "ring" && !reached && !groupId) this.send(ws, { type: "call", from: to, kind: "offline", call_id: callId });
         return;
       }
       case "turn_login":
@@ -1139,9 +1147,13 @@ export class StromAccount extends DurableObject<Env> {
     return true;
   }
 
-  /** A call signal from a friend. False when none of our devices is online to hear it. */
+  /** A call signal from a friend, or from someone in a group with us. False when none of
+   *  our devices is online to hear it (or it isn't for us). */
   async callSignal(fromKey: string, signal: Record<string, unknown>): Promise<boolean> {
-    if (this.friend(fromKey)?.state !== "friend") return false;
+    if (typeof signal.group === "string") {
+      const group = this.group(signal.group);
+      if (!group || !group.members.includes(fromKey) || this.friend(fromKey)?.state === "blocked") return false;
+    } else if (this.friend(fromKey)?.state !== "friend") return false;
     if (this.devices().length === 0) return false;
     this.toDevices({ ...signal, type: "call", from: fromKey });
     return true;

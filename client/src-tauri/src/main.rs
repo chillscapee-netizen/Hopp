@@ -700,6 +700,14 @@ fn set_relay(state: State<'_, AppState>, login: strom_voice::turn::TurnLogin) ->
     Ok(())
 }
 
+/// A group call: stop sending to someone who left it.
+#[tauri::command]
+fn call_drop_peer(state: State<'_, AppState>, call_id: String, session_id: SessionId) {
+    if let Some(call) = state.call.lock().unwrap().as_ref().filter(|c| c.id == call_id) {
+        call.engine.retain_peers(|id| id != session_id);
+    }
+}
+
 #[tauri::command]
 fn end_call(state: State<'_, AppState>) {
     *state.call.lock().unwrap() = None;
@@ -1374,6 +1382,7 @@ fn main() {
             get_pins,
             start_call,
             call_peer,
+            call_drop_peer,
             end_call,
             leave_server,
             delete_server,

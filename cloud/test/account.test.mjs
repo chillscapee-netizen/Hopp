@@ -455,6 +455,46 @@ test("group conversations: create, send to everyone, rename, leave", async () =>
   for (const d of [a.d, b.d, c.d, again]) d.close();
 });
 
+test("group calls: ring, join and endpoints reach members who aren't friends; outsiders can't", async () => {
+  const a = await userWithName("ka");
+  const b = await userWithName("kb");
+  const c = await userWithName("kc");
+  const outsider = await userWithName("ko");
+  for (const x of [b, c]) {
+    a.d.send({ type: "friend_request", username: x.name });
+    await x.d.waitFor((m) => m.type === "friend");
+    x.d.send({ type: "friend_accept", key: a.key.pub });
+    await a.d.waitFor((m) => m.type === "friend" && m.friend.key === x.key.pub && m.friend.state === "friend");
+  }
+  a.d.send({ type: "group_create", members: [b.key.pub, c.key.pub], name: "Squad" });
+  const { group } = await a.d.waitFor((m) => m.type === "group");
+  await b.d.waitFor((m) => m.type === "group");
+  await c.d.waitFor((m) => m.type === "group");
+  const id = "1234abcd-9999";
+
+  a.d.send({ type: "call", to: b.key.pub, group: group.id, call_id: id, kind: "ring", sealed: "ab".repeat(30) });
+  assert.deepEqual(await b.d.waitFor((m) => m.type === "call"), { type: "call", from: a.key.pub, kind: "ring", call_id: id, sealed: "ab".repeat(30), group: group.id });
+  // b and c aren't friends, but in the group b's join and address reach c.
+  b.d.send({ type: "call", to: c.key.pub, group: group.id, call_id: id, kind: "join" });
+  assert.equal((await c.d.waitFor((m) => m.type === "call")).kind, "join");
+  b.d.send({ type: "call", to: c.key.pub, group: group.id, call_id: id, kind: "endpoint", public: "203.0.113.5:4000", local: ["192.168.1.5:4000"] });
+  const ep = await c.d.waitFor((m) => m.type === "call" && m.kind === "endpoint");
+  assert.equal(ep.public, "203.0.113.5:4000");
+  assert.equal(ep.group, group.id);
+  // Without the group, b can't call c: they aren't friends.
+  b.d.send({ type: "call", to: c.key.pub, call_id: id, kind: "join" });
+  assert.match((await b.d.waitFor((m) => m.type === "error")).message, /only call friends/);
+  // Someone outside the group can't use it to reach anyone.
+  outsider.d.send({ type: "call", to: a.key.pub, group: group.id, call_id: id, kind: "ring", sealed: "ab".repeat(30) });
+  assert.match((await outsider.d.waitFor((m) => m.type === "error")).message, /not in that group/);
+  // Nor can a member point a group call at someone outside it.
+  a.d.send({ type: "call", to: outsider.key.pub, group: group.id, call_id: id, kind: "ring", sealed: "ab".repeat(30) });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /not in that group/);
+  b.d.send({ type: "call", to: a.key.pub, group: group.id, call_id: id, kind: "leave" });
+  assert.equal((await a.d.waitFor((m) => m.type === "call" && m.kind === "leave")).from, b.key.pub);
+  for (const x of [a, b, c, outsider]) x.d.close();
+});
+
 test("an account creates at most ten servers a day", async () => {
   const key = newKey();
   for (let i = 0; i < 10; i++) (await joinServer(crypto.randomBytes(12).toString("hex"), "maker", key, { create: "S" + i })).close();
