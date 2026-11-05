@@ -3099,3 +3099,10 @@ body { background: var(--frame-bg, var(--frame)); }
 .voice-tile-marks .live-pill { margin-left: 0; }
 .voice-stage-foot { display: flex; align-items: center; gap: 10px; min-height: 8px; }
 .voice-stage-hint, .voice-stage-empty { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+/* A moderator's mute shows in red; people can be dragged onto another voice channel. */
+.flags .flag { display: inline-flex; }
+.flags .i.server { color: var(--red); }
+.voice-user[draggable="true"] { cursor: grab; }
+.voice-user.dragging { opacity: 0.5; }
+.channel-row.drop-into { background: color-mix(in srgb, var(--green) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 50%, transparent); }

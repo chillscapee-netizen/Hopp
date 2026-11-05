@@ -1589,6 +1589,7 @@ async function disconnect() {
 
 async function joinVoice(id) {
   if (myVoice() === id) return;
+  state.voiceByMe = true;
   // One voice at a time: joining a channel ends a call.
   if (state.call) await endCall();
   state.voiceState = { ready: false };
@@ -1596,7 +1597,10 @@ async function joinVoice(id) {
   await call("join_voice", { channel: id });
 }
 
-$("hangup-btn").addEventListener("click", () => call("leave_voice"));
+$("hangup-btn").addEventListener("click", () => {
+  state.voiceByMe = true;
+  call("leave_voice");
+});
 
 // ---------- server & voice events ----------
 
@@ -1630,6 +1634,7 @@ function voiceCompany() {
 
 listen("roster", (e) => {
   const before = myVoice();
+  const mineBefore = state.roster?.users.find((u) => u.session_id === state.roster.me);
   const companyBefore = voiceCompany();
   state.roster = e.payload;
   const after = myVoice();
@@ -1643,6 +1648,7 @@ listen("roster", (e) => {
   }
   // Joining or leaving voice swaps the microphone underneath a running mic test.
   if (state.micTesting && before !== myVoice()) stopMicTest();
+  followModerators(before, after, mineBefore);
   const server = activeServer();
   if (server) rememberServerLook(server, state.roster);
   if ($("server-settings").open) {
@@ -2044,9 +2050,10 @@ function renderSidebar() {
     if (owner) {
       draggableChannel(row, ch);
     }
+    acceptVoiceDrop(row, ch);
     const users = r.users.filter((u) => u.voice_channel === ch.id).sort(byName);
     const list = el("ul", "voice-users");
-    list.append(...users.map((u) => userRow(u, "voice-user", "s24")));
+    list.append(...users.map((u) => draggableVoiceUser(userRow(u, "voice-user", "s24"), u)));
     wrap.append(row, list);
     return wrap;
   };
@@ -2113,7 +2120,7 @@ function openChannelMenu(ch, e) {
     [
       ...(ch.kind === "voice"
         ? [
-            inThis ? { label: "Leave voice", icon: "phone-off", action: () => call("leave_voice") } : { label: "Join voice", icon: "volume", action: () => joinVoice(ch.id) },
+            inThis ? { label: "Leave voice", icon: "phone-off", action: () => { state.voiceByMe = true; call("leave_voice"); } } : { label: "Join voice", icon: "volume", action: () => joinVoice(ch.id) },
             ...(voiceChat() ? [{ label: "Open chat", icon: "message", action: () => openTextChannel(ch.id) }] : []),
           ]
         : []),
@@ -2143,10 +2150,19 @@ async function deleteChannel(ch) {
 }
 
 function flagsFor(u) {
-  if (!u.muted && !u.deafened) return null;
+  if (!u.muted && !u.deafened && !u.server_muted && !u.server_deafened) return null;
   const flags = el("span", "flags");
-  if (u.muted) flags.append(icon("mic-off", "xs off"));
-  if (u.deafened) flags.append(icon("headphones-off", "xs off"));
+  const mark = (name, server, tip) => {
+    const i = icon(name, "xs off" + (server ? " server" : ""));
+    const wrap = el("span", "flag");
+    wrap.dataset.tip = tip;
+    wrap.append(i);
+    flags.append(wrap);
+  };
+  if (u.server_muted) mark("mic-off", true, "Muted by a moderator");
+  else if (u.muted) mark("mic-off", false, "Muted");
+  if (u.server_deafened) mark("headphones-off", true, "Deafened by a moderator");
+  else if (u.deafened) mark("headphones-off", false, "Deafened");
   return flags;
 }
 
@@ -3364,6 +3380,8 @@ async function setDeafened(deafened) {
 
 // Unmuting while deafened undeafens too.
 $("mute-btn").addEventListener("click", async () => {
+  const me = connected() ? state.roster.users.find((u) => u.session_id === state.roster.me) : null;
+  if (me?.server_muted || me?.server_deafened) return toast("A moderator muted you here. They can unmute you.", true);
   if (state.deafened) {
     await setDeafened(false);
     if (state.muted) await setMuted(false);
@@ -3371,7 +3389,11 @@ $("mute-btn").addEventListener("click", async () => {
     await setMuted(!state.muted);
   }
 });
-$("deafen-btn").addEventListener("click", () => setDeafened(!state.deafened));
+$("deafen-btn").addEventListener("click", () => {
+  const me = connected() ? state.roster.users.find((u) => u.session_id === state.roster.me) : null;
+  if (me?.server_deafened) return toast("A moderator deafened you here. They can undo it.", true);
+  setDeafened(!state.deafened);
+});
 
 // ---------- user settings ----------
 
@@ -4058,7 +4080,9 @@ function placePopover(pop, x, y) {
 function applyUserVolumes() {
   if (!state.roster) return;
   for (const u of state.roster.users) {
-    const vol = isBlocked(keyOf(u)) ? 0 : userVolume(u);
+    // Someone a moderator muted is silent for everyone; back to your setting when it's lifted.
+    let vol = isBlocked(keyOf(u)) || u.server_muted ? 0 : userVolume(u);
+    if (vol === undefined && state.appliedVolumes.has(u.session_id)) vol = 100;
     if (u.session_id === state.roster.me || vol === undefined) continue;
     if (state.appliedVolumes.get(u.session_id) !== vol) {
       state.appliedVolumes.set(u.session_id, vol);
@@ -7030,7 +7054,10 @@ function handleCallSelf(m) {
 }
 
 async function beginCallVoice(c) {
-  if (myVoice() !== null) await call("leave_voice");
+  if (myVoice() !== null) {
+    state.voiceByMe = true;
+    await call("leave_voice");
+  }
   stopMicTest();
   let me;
   try {
@@ -8935,6 +8962,7 @@ function openUserMenu(u, row, e) {
       setUserVolume(vol === 0 ? 100 : 0);
     } });
     if (can("moderate") && outranks(u)) {
+      items.push(...voiceModItems(u));
       items.push("sep");
       items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
@@ -10151,4 +10179,90 @@ function renderVoiceStage() {
     foot.append(el("span", "voice-stage-hint", "Nobody else is here yet. Invite someone, or wait for a friend to join."));
   }
   stage.replaceChildren(...(here.length ? [tiles] : [el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now.")]), foot);
+}
+
+// ---------- moderating voice ----------
+//
+// Moderators can take someone out of voice, move them to another voice channel (from the
+// menu, or by dragging them onto it), and mute or deafen them for everyone.
+
+function voiceMod() {
+  return !!state.roster?.features?.includes("voice-mod") && can("moderate");
+}
+
+/** The voice part of a moderator's menu on someone in voice. */
+function voiceModItems(u) {
+  if (!voiceMod() || u.voice_channel === null) return [];
+  const others = voiceChannels().filter((c) => c.id !== u.voice_channel);
+  return [
+    "sep",
+    { label: u.server_muted ? "Server unmute" : "Server mute", icon: "mic-off", action: () => call("server_mute", { sessionId: u.session_id, muted: !u.server_muted, deafened: !!u.server_deafened }) },
+    { label: u.server_deafened ? "Server undeafen" : "Server deafen", icon: "headphones-off", action: () => call("server_mute", { sessionId: u.session_id, muted: !!u.server_muted, deafened: !u.server_deafened }) },
+    ...others.map((c) => ({ label: "Move to " + c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) })),
+    { label: "Disconnect from voice", icon: "phone-off", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
+  ];
+}
+
+/** Moderators drag people between voice channels. */
+var voiceDrag = null;
+
+function draggableVoiceUser(row, u) {
+  if (!voiceMod() || !outranks(u)) return row;
+  row.draggable = true;
+  row.addEventListener("dragstart", (e) => {
+    voiceDrag = u;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", u.name);
+    requestAnimationFrame(() => row.classList.add("dragging"));
+  });
+  row.addEventListener("dragend", () => {
+    voiceDrag = null;
+    document.querySelectorAll(".voice-user.dragging, .channel-row.drop-into").forEach((n) => n.classList.remove("dragging", "drop-into"));
+  });
+  return row;
+}
+
+function acceptVoiceDrop(row, ch) {
+  row.addEventListener("dragover", (e) => {
+    if (!voiceDrag || voiceDrag.voice_channel === ch.id) return;
+    e.preventDefault();
+    row.classList.add("drop-into");
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-into"));
+  row.addEventListener("drop", (e) => {
+    if (!voiceDrag || voiceDrag.voice_channel === ch.id) return;
+    e.preventDefault();
+    row.classList.remove("drop-into");
+    call("move_voice", { sessionId: voiceDrag.session_id, channel: ch.id });
+    voiceDrag = null;
+  });
+}
+
+/** What a moderator did to you: say so, and keep your microphone in line with it. */
+function followModerators(before, after, mineBefore) {
+  const me = state.roster?.users.find((u) => u.session_id === state.roster.me);
+  if (!me) return;
+  // Moved or disconnected by someone else (you didn't click anything).
+  if (before !== null && after !== before && !state.voiceByMe) {
+    if (after === null) toast("A moderator disconnected you from voice.");
+    else toast("A moderator moved you to " + channelName(after) + ".");
+  }
+  state.voiceByMe = false;
+  if (me.server_muted && !mineBefore?.server_muted) {
+    state.forcedMute = !state.muted;
+    if (!state.muted) setMuted(true);
+    toast("A moderator muted you.");
+  } else if (!me.server_muted && mineBefore?.server_muted) {
+    if (state.forcedMute) setMuted(false);
+    state.forcedMute = false;
+    toast("A moderator unmuted you.");
+  }
+  if (me.server_deafened && !mineBefore?.server_deafened) {
+    state.forcedDeafen = !state.deafened;
+    if (!state.deafened) setDeafened(true);
+    toast("A moderator deafened you.");
+  } else if (!me.server_deafened && mineBefore?.server_deafened) {
+    if (state.forcedDeafen) setDeafened(false);
+    state.forcedDeafen = false;
+  }
 }

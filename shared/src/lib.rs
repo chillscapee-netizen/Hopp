@@ -70,6 +70,12 @@ pub struct User {
     /// Sharing their screen with their voice channel.
     #[serde(default)]
     pub sharing: bool,
+    /// Muted by a moderator: their voice isn't passed on, and they can't unmute.
+    #[serde(default)]
+    pub server_muted: bool,
+    /// Deafened by a moderator: they hear nobody, and can't undo it.
+    #[serde(default)]
+    pub server_deafened: bool,
 }
 
 /// The most a screen-sharing handshake message may hold (an offer with its codecs fits easily).
@@ -283,6 +289,13 @@ pub enum ClientMsg {
     DeleteMessage { channel: ChannelId, id: u64 },
     /// Sent at most every few seconds while the user is typing.
     Typing { channel: ChannelId },
+    /// Moderators: takes someone out of their voice channel (they stay in the server).
+    /// Only for servers whose welcome lists "voice-mod".
+    DisconnectVoice { session_id: SessionId },
+    /// Moderators: moves someone in voice to another voice channel.
+    MoveVoice { session_id: SessionId, channel: ChannelId },
+    /// Moderators: mutes or deafens someone for everyone (until a moderator undoes it).
+    ServerMute { session_id: SessionId, muted: bool, deafened: bool },
     /// Owner only: disconnects someone.
     Kick { session_id: SessionId },
     /// Owner only: disconnects someone and refuses their Hopp-ID from now on.

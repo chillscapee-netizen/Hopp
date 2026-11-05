@@ -83,6 +83,9 @@ interface User {
   role?: Role;
   /** Sharing their screen with their voice channel. */
   sharing?: boolean;
+  /** Muted or deafened by a moderator. */
+  server_muted?: boolean;
+  server_deafened?: boolean;
 }
 /** Who may do what: the owner names admins, admins name moderators. */
 type Role = "owner" | "admin" | "mod";
@@ -484,6 +487,30 @@ export class StromServer extends DurableObject<Env> {
       .filter(([, s]) => s.stage === "joined" && s.user);
   }
 
+  /**
+   * Puts someone in a voice channel (they joined, or a moderator moved them): their client
+   * gets the channel's key and who to reach. A message instead when the channel is full.
+   */
+  private enterVoice(ws: WebSocket, s: Session, ch: { id: number; name: string }): string | null {
+    const others = this.voiceMembers(ch.id).filter(([other]) => other !== ws);
+    // Everyone sends to everyone directly, so a channel can only hold so many.
+    if (others.length >= MAX_VOICE_PEERS) return `${ch.name} is full (${MAX_VOICE_PEERS} people).`;
+    // A fresh key whenever a channel fills up again, so people who left can't listen in later.
+    let key = this.meta(`voice_key:${ch.id}`);
+    if (!key || others.length === 0) {
+      key = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+      this.setMeta(`voice_key:${ch.id}`, key);
+    }
+    delete s.endpoint;
+    this.updateUser(ws, s, (u) => {
+      u.voice_channel = ch.id;
+      u.sharing = false;
+    });
+    const peers = others.filter(([, o]) => o.endpoint).map(([, o]) => ({ session_id: o.user!.session_id, ...o.endpoint }));
+    this.send(ws, { type: "voice_session", channel: ch.id, key, peers });
+    return null;
+  }
+
   private voiceMembers(channel: number): [WebSocket, Session][] {
     return this.members().filter(([, s]) => s.user!.voice_channel === channel);
   }
@@ -648,7 +675,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat"],
+      features: ["search", "screen", "voice-chat", "voice-mod"],
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
@@ -675,24 +702,39 @@ export class StromServer extends DurableObject<Env> {
       case "join_voice": {
         const ch = this.channel(Number(msg.channel));
         if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
-        const others = this.voiceMembers(ch.id).filter(([other]) => other !== ws);
-        // Everyone sends to everyone directly, so a channel can only hold so many.
-        if (others.length >= MAX_VOICE_PEERS) return this.error(ws, `${ch.name} is full (${MAX_VOICE_PEERS} people). Try another voice channel.`);
-        // A fresh key whenever a channel fills up again, so people who left can't listen in later.
-        let key = this.meta(`voice_key:${ch.id}`);
-        if (!key || others.length === 0) {
-          key = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
-          this.setMeta(`voice_key:${ch.id}`, key);
+        const full = this.enterVoice(ws, s, ch);
+        if (full) return this.error(ws, full + " Try another voice channel.");
+        return;
+      }
+      case "disconnect_voice":
+      case "move_voice":
+      case "server_mute": {
+        if (!allowed("mod")) return;
+        const target = Number(msg.session_id);
+        const found = this.members().find(([, m]) => m.user!.session_id === target);
+        if (!found) return this.error(ws, "That person isn't connected anymore.");
+        const [tws, ts] = found;
+        if (target !== user.session_id && rank(this.roleOf(ts.key!)) >= myRank) return this.error(ws, "You can't do that to someone with the same role as you or higher.");
+        if (msg.type === "server_mute") {
+          return this.updateUser(tws, ts, (u) => {
+            u.server_muted = !!msg.muted;
+            u.server_deafened = !!msg.deafened;
+          });
         }
-        delete s.endpoint;
-        this.updateUser(ws, s, (u) => {
-          u.voice_channel = ch.id;
-          u.sharing = false;
-        });
-        const peers = others
-          .filter(([, o]) => o.endpoint)
-          .map(([, o]) => ({ session_id: o.user!.session_id, ...o.endpoint }));
-        return this.send(ws, { type: "voice_session", channel: ch.id, key, peers });
+        if (ts.user!.voice_channel === null) return this.error(ws, `${ts.user!.name} isn't in a voice channel.`);
+        if (msg.type === "disconnect_voice") {
+          delete ts.endpoint;
+          return this.updateUser(tws, ts, (u) => {
+            u.voice_channel = null;
+            u.sharing = false;
+          });
+        }
+        const ch = this.channel(Number(msg.channel));
+        if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
+        if (ch.id === ts.user!.voice_channel) return;
+        const full = this.enterVoice(tws, ts, ch);
+        if (full) return this.error(ws, full);
+        return;
       }
       case "leave_voice":
         delete s.endpoint;

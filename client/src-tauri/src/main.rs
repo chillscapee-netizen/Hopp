@@ -779,6 +779,24 @@ fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetPins { channel }))
 }
 
+/// Moderators: takes someone out of voice.
+#[tauri::command]
+fn disconnect_voice(state: State<'_, AppState>, session_id: SessionId) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::DisconnectVoice { session_id }))
+}
+
+/// Moderators: moves someone to another voice channel.
+#[tauri::command]
+fn move_voice(state: State<'_, AppState>, session_id: SessionId, channel: ChannelId) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::MoveVoice { session_id, channel }))
+}
+
+/// Moderators: mutes or deafens someone for everyone.
+#[tauri::command]
+fn server_mute(state: State<'_, AppState>, session_id: SessionId, muted: bool, deafened: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::ServerMute { session_id, muted, deafened }))
+}
+
 #[tauri::command]
 fn set_sharing(state: State<'_, AppState>, on: bool) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::SetSharing { on }))
@@ -1409,6 +1427,9 @@ fn main() {
             search_messages,
             link_preview,
             set_sharing,
+            disconnect_voice,
+            move_voice,
+            server_mute,
             screen_signal,
             pin_message,
             get_pins,

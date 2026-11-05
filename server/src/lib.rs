@@ -263,14 +263,14 @@ async fn relay_voice(udp: UdpSocket, state: Shared) {
                         continue;
                     }
                     let Some(channel) = sender.user.voice_channel else { continue };
-                    if sender.user.muted || sender.user.deafened {
+                    if sender.user.muted || sender.user.deafened || sender.user.server_muted || sender.user.server_deafened {
                         continue;
                     }
                     ServerVoice { sender: session_id, seq, opus }.write(&mut out);
                     targets.extend(st.clients.values().filter_map(|c| {
                         let is_sender = c.user.session_id == session_id;
                         let listening =
-                            (!is_sender || c.loopback) && c.user.voice_channel == Some(channel) && !c.user.deafened;
+                            (!is_sender || c.loopback) && c.user.voice_channel == Some(channel) && !c.user.deafened && !c.user.server_deafened;
                         if listening { c.udp_addr } else { None }
                     }));
                 }
@@ -398,7 +398,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             let session_id = st.next_id;
             st.next_id += 1;
             let owner = st.config.owner.as_deref() == Some(public_key.as_str());
-            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None, sharing: false };
+            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None, sharing: false, server_muted: false, server_deafened: false };
             st.broadcast(&ServerMsg::UserJoined { user: user.clone() });
             let token = rand::random();
             let client = Client {
@@ -417,7 +417,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
-                features: vec!["search".into(), "screen".into(), "voice-chat".into()],
+                features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into()],
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -707,6 +707,35 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                             st.update_user(id, |u| u.voice_channel = None);
                         }
                         st.channels_changed();
+                    }
+                }
+                ClientMsg::DisconnectVoice { session_id: target } | ClientMsg::MoveVoice { session_id: target, .. } | ClientMsg::ServerMute { session_id: target, .. } => {
+                    // Self-hosted servers have one moderator: the owner.
+                    let in_voice = st.clients.get(&target).map(|c| c.user.voice_channel.is_some());
+                    if !is_owner {
+                        error("Only the server owner can do that.");
+                    } else if in_voice.is_none() {
+                        error("That person isn't connected anymore.");
+                    } else {
+                        match msg {
+                            ClientMsg::ServerMute { muted, deafened, .. } => st.update_user(target, |u| {
+                                u.server_muted = muted;
+                                u.server_deafened = deafened;
+                            }),
+                            _ if in_voice != Some(true) => error("They aren't in a voice channel."),
+                            ClientMsg::DisconnectVoice { .. } => st.update_user(target, |u| {
+                                u.voice_channel = None;
+                                u.sharing = false;
+                            }),
+                            ClientMsg::MoveVoice { channel, .. } => match st.channel(channel) {
+                                Some(c) if c.kind == ChannelKind::Voice => st.update_user(target, |u| {
+                                    u.voice_channel = Some(channel);
+                                    u.sharing = false;
+                                }),
+                                _ => error("That voice channel doesn't exist."),
+                            },
+                            _ => {}
+                        }
                     }
                 }
                 ClientMsg::Kick { session_id: target } | ClientMsg::Ban { session_id: target } => {
