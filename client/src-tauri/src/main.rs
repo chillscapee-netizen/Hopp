@@ -1035,6 +1035,22 @@ async fn upload_dm_image(state: State<'_, AppState>, cloud: String, data: Vec<u8
     body["id"].as_str().map(str::to_string).ok_or_else(|| "Couldn't send the picture.".into())
 }
 
+/// A YouTube video's title and channel, for the card under a link (YouTube's public oEmbed, no key).
+#[tauri::command]
+async fn youtube_info(id: String) -> CmdResult<serde_json::Value> {
+    if id.len() != 11 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("Not a YouTube video.".into());
+    }
+    let mut url = reqwest::Url::parse("https://www.youtube.com/oembed").map_err(|e| e.to_string())?;
+    url.query_pairs_mut().append_pair("url", &format!("https://www.youtube.com/watch?v={id}")).append_pair("format", "json");
+    let response = reqwest::Client::new().get(url).timeout(Duration::from_secs(8)).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err("That video isn't available.".into());
+    }
+    let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "title": body["title"], "author": body["author_name"] }))
+}
+
 /// Someone's public profile (name and picture) by Hopp ID, for people in servers and chat.
 #[tauri::command]
 async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Value> {
@@ -1354,6 +1370,7 @@ fn main() {
             transfer_ownership,
             get_members,
             upload_image,
+            youtube_info,
             upload_dm_image,
             app_version,
             set_autostart,

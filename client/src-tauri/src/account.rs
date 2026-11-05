@@ -35,6 +35,8 @@ const ALLOWED: &[&str] = &[
     "group_update",
     "group_leave",
     "group_send",
+    "dm_edit",
+    "dm_delete",
 ];
 
 #[derive(Default)]

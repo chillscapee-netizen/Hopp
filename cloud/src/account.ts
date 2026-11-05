@@ -190,6 +190,8 @@ export class StromAccount extends DurableObject<Env> {
         server TEXT NOT NULL, channel INTEGER NOT NULL, read_id INTEGER NOT NULL DEFAULT 0, last_id INTEGER NOT NULL DEFAULT 0,
         last_at INTEGER NOT NULL DEFAULT 0, mentions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel));
     `);
+    const dmColumns = new Set(this.sql.exec("PRAGMA table_info(dms)").toArray().map((c) => String(c.name)));
+    if (!dmColumns.has("edited_at")) this.sql.exec("ALTER TABLE dms ADD COLUMN edited_at INTEGER");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
 
@@ -556,11 +558,14 @@ export class StromAccount extends DurableObject<Env> {
       }
       case "group_send":
         return this.sendGroupDm(ws, msg);
+      case "dm_edit":
+      case "dm_delete":
+        return this.changeDm(ws, msg);
       case "dm_history": {
         const peer = String(msg.with ?? "");
         const before = Number(msg.before ?? Number.MAX_SAFE_INTEGER);
         const rows = this.sql
-          .exec("SELECT id, from_key, sealed, sent_at FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
+          .exec("SELECT id, from_key, sealed, sent_at, edited_at FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
           .toArray()
           .reverse();
         return this.send(ws, { type: "dm_history", with: peer, messages: rows, complete: rows.length < DM_HISTORY });
@@ -719,6 +724,52 @@ export class StromAccount extends DurableObject<Env> {
     const mine = { id, from_key: myKey, sealed: String(sealed[myKey]), sent_at: now };
     this.storeDm(group.id, mine);
     this.toDevices({ type: "dm", with: group.id, message: mine, nonce: msg.nonce });
+  }
+
+  /**
+   * Editing or deleting one of your own DMs (or group messages). An edit carries a new
+   * sealed text for each person (one string for a DM, a map by key for a group).
+   */
+  private async changeDm(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: msg.type });
+    const peer = String(msg.with ?? "");
+    const id = String(msg.id ?? "");
+    const row = this.sql.exec("SELECT from_key FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
+    if (!row) return error("That message is gone.");
+    if (row.from_key !== myKey) return error("You can only change your own messages.");
+    const group = this.group(peer);
+    const others = group ? group.members.filter((k) => k !== myKey) : [peer];
+    if (msg.type === "dm_delete") {
+      this.sql.exec("DELETE FROM dms WHERE peer = ? AND id = ?", peer, id);
+      await Promise.all(others.map((k) => accountOf(this.env, k).dmChanged(myKey, peer, id, null, 0).catch(() => false)));
+      return this.toDevices({ type: "dm_deleted", with: peer, id });
+    }
+    const sealedFor = (k: string) => (group ? (msg.sealed as Record<string, unknown> | undefined)?.[k] : k === myKey ? msg.sealed_self ?? msg.sealed : msg.sealed);
+    for (const k of [myKey, ...others]) {
+      const one = sealedFor(k);
+      if (typeof one !== "string" || !/^[0-9a-f]+$/.test(one) || one.length > MAX_SEALED) return error("That message can't be saved.");
+    }
+    const at = Date.now();
+    this.sql.exec("UPDATE dms SET sealed = ?, edited_at = ? WHERE peer = ? AND id = ?", String(sealedFor(myKey)), at, peer, id);
+    await Promise.all(others.map((k) => accountOf(this.env, k).dmChanged(myKey, peer, id, String(sealedFor(k)), at).catch(() => false)));
+    this.toDevices({ type: "dm_edited", with: peer, id, sealed: String(sealedFor(myKey)), edited_at: at });
+  }
+
+  /** Someone edited (sealed) or deleted (null) a message they sent us. */
+  async dmChanged(fromKey: string, conversation: string, id: string, sealed: string | null, at: number): Promise<boolean> {
+    // A DM is stored under the sender's key here; a group message under the group.
+    const peer = this.group(conversation) ? conversation : fromKey;
+    const row = this.sql.exec("SELECT from_key FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
+    if (!row || row.from_key !== fromKey) return false;
+    if (sealed === null) {
+      this.sql.exec("DELETE FROM dms WHERE peer = ? AND id = ?", peer, id);
+      this.toDevices({ type: "dm_deleted", with: peer, id });
+    } else {
+      this.sql.exec("UPDATE dms SET sealed = ?, edited_at = ? WHERE peer = ? AND id = ?", sealed, at, peer, id);
+      this.toDevices({ type: "dm_edited", with: peer, id, sealed, edited_at: at });
+    }
+    return true;
   }
 
   private snapshot(): PublicProfile {

@@ -494,3 +494,33 @@ test("DM pictures: only the account's owner stores them, and they come back as s
   assert.equal((await fetch(`${HTTP}/accounts/${me.pub}/images/${"0".repeat(32)}`)).status, 404);
   device.close();
 });
+
+test("editing and deleting your own DMs reaches your friend; others' can't be touched", async () => {
+  const a = await userWithName("editor");
+  const b = await userWithName("reader");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+
+  a.d.send({ type: "dm_send", to: b.key.pub, sealed: "aa", nonce: "n1" });
+  const sent = (await b.d.waitFor((m) => m.type === "dm")).message;
+  a.d.send({ type: "dm_edit", with: b.key.pub, id: sent.id, sealed: "bb" });
+  const edited = await b.d.waitFor((m) => m.type === "dm_edited");
+  assert.equal(edited.sealed, "bb");
+  assert.equal(edited.with, a.key.pub);
+  b.d.send({ type: "dm_edit", with: a.key.pub, id: sent.id, sealed: "cc" });
+  assert.match((await b.d.waitFor((m) => m.type === "error")).message, /own messages/);
+  b.d.send({ type: "dm_history", with: a.key.pub });
+  const history = await b.d.waitFor((m) => m.type === "dm_history");
+  assert.equal(history.messages.find((m) => m.id === sent.id).sealed, "bb");
+  assert.ok(history.messages.find((m) => m.id === sent.id).edited_at > 0);
+
+  a.d.send({ type: "dm_delete", with: b.key.pub, id: sent.id });
+  await b.d.waitFor((m) => m.type === "dm_deleted" && m.id === sent.id);
+  b.d.send({ type: "dm_history", with: a.key.pub });
+  const after = await b.d.waitFor((m) => m.type === "dm_history");
+  assert.ok(!after.messages.some((m) => m.id === sent.id));
+  a.d.close();
+  b.d.close();
+});

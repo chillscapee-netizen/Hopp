@@ -2468,6 +2468,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) {
       li.append(inviteEmbed(link));
     }
+    li.append(...youtubeEmbeds(m.text));
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
     li.addEventListener("contextmenu", (e) => openMessageMenu(m, e));
@@ -2636,12 +2637,36 @@ function showStep(step) {
   }
 }
 
+/** The picture chosen while creating a server (a small data: URL), saved once it exists. */
+let createIcon = null;
+
 function updateServerIconPreview() {
   const name = $("create-server-name").value.trim() || "?";
   const icon = $("create-server-icon");
-  icon.textContent = initials(name);
+  $("create-server-letters").textContent = createIcon ? "" : initials(name);
   icon.style.setProperty("--hue", hue(name));
+  icon.style.backgroundImage = createIcon ? `url("${createIcon}")` : "";
+  icon.classList.toggle("has-picture", !!createIcon);
+  $("create-server-icon-remove").hidden = !createIcon;
 }
+$("create-server-icon").addEventListener("click", () => $("create-server-file").click());
+$("create-server-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    createIcon = await shrinkPicture(file);
+    $("create-server-error").hidden = true;
+  } catch (err) {
+    $("create-server-error").textContent = err.message;
+    $("create-server-error").hidden = false;
+  }
+  updateServerIconPreview();
+});
+$("create-server-icon-remove").addEventListener("click", () => {
+  createIcon = null;
+  updateServerIconPreview();
+});
 $("create-server-name").addEventListener("input", updateServerIconPreview);
 
 $("create-server-form").addEventListener("submit", async (e) => {
@@ -2658,8 +2683,12 @@ $("create-server-form").addEventListener("submit", async (e) => {
   const ok = await connectTo(server, name);
   setBusy(btn, false, "Create");
   if (ok) {
+    // The picture goes on as soon as the server exists.
+    if (createIcon) invoke("update_server", { name, icon: createIcon, picturesOff: null }).catch((err) => toast(friendlyError(err), true));
+    createIcon = null;
     $("add-dialog").close();
     $("create-server-name").value = "";
+    updateServerIconPreview();
     return;
   }
   // Nothing was created; don't leave a dead entry behind.
@@ -2875,8 +2904,11 @@ async function openInvite() {
   $("invite-member").hidden = owner;
   $("invite-options").hidden = true;
   $("invite-edit").hidden = false;
+  invitedFriends.clear();
+  $("invite-friend-search").value = "";
   openModal($("invite-dialog"));
   if (!owner) return;
+  renderInviteFriends();
   const { local, port } = await shareableAddress();
   const note = $("invite-note");
   note.textContent = local
@@ -4685,7 +4717,7 @@ async function addDmMessages(peer, raw, prepend) {
   const fresh = [];
   for (const m of raw) {
     if (known.has(m.id)) continue;
-    fresh.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, text: await decrypt(peer, m) });
+    fresh.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, edited_at: m.edited_at ?? null, text: await decrypt(peer, m) });
   }
   const merged = prepend ? [...fresh, ...list] : [...list, ...fresh];
   merged.sort((a, b) => a.sent_at - b.sent_at);
@@ -4713,6 +4745,22 @@ function onDmEvent(m) {
       }
       renderDmAreas(peer);
     });
+    return true;
+  }
+  if (m.type === "dm_edited") {
+    const msg = state.dmMessages.get(m.with)?.find((x) => x.id === m.id);
+    if (!msg) return true;
+    decrypt(m.with, { from_key: msg.from_key, sealed: m.sealed }).then((text) => {
+      msg.text = text;
+      msg.edited_at = m.edited_at;
+      renderDmAreas(m.with);
+    });
+    return true;
+  }
+  if (m.type === "dm_deleted") {
+    const list = state.dmMessages.get(m.with);
+    if (list) state.dmMessages.set(m.with, list.filter((x) => x.id !== m.id));
+    renderDmAreas(m.with);
     return true;
   }
   if (m.type === "dm_history") {
@@ -4927,6 +4975,12 @@ function renderDmView(keepScroll) {
         e.preventDefault();
         if (state.dmAttachment?.peer === peer) sendDmPicture(peer, input);
         else sendDm(peer, input);
+      } else if (e.key === "ArrowUp" && !input.value) {
+        const mine = (state.dmMessages.get(peer) ?? []).findLast((x) => x.from_key === state.me?.key && !x.pending && dmEditable(x));
+        if (mine) {
+          e.preventDefault();
+          startDmEdit(peer, mine);
+        }
       }
     });
     input.addEventListener("paste", (e) => {
@@ -5024,7 +5078,9 @@ function renderDmView(keepScroll) {
       headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
-    if (m.text !== null && DM_PICTURE.test(m.text)) {
+    if (state.dmEditing === m.id) {
+      li.append(dmEditor(peer, m));
+    } else if (m.text !== null && DM_PICTURE.test(m.text)) {
       const [whole, owner, id, key, w, h] = m.text.match(DM_PICTURE);
       const caption = m.text.slice(whole.length).trim();
       if (caption) li.append(messageText(caption));
@@ -5042,8 +5098,28 @@ function renderDmView(keepScroll) {
     }
     if (m.text) {
       for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) li.append(inviteEmbed(link));
+      li.append(...youtubeEmbeds(m.text));
+    }
+    if (m.edited_at && state.dmEditing !== m.id) {
+      const tag = el("span", "msg-edited", "(edited)");
+      tag.dataset.tip = `Edited ${dayLabel(m.edited_at).toLowerCase()} at ${clock(m.edited_at)}`;
+      (li.querySelector(".msg-text") ?? li).append(tag);
     }
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
+    if (m.from_key === state.me?.key && !m.pending && !m.failed && m.text !== null) {
+      li.append(dmActions(peer, m));
+      li.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openMenu(
+          [
+            ...(dmEditable(m) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, m) }] : []),
+            { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, m) },
+          ],
+          e.clientX,
+          e.clientY,
+        );
+      });
+    }
     items.push(li);
     prev = m;
   }
@@ -7631,4 +7707,283 @@ function dmPictureView(owner, id, key, width, height) {
     $("lightbox").showModal();
   });
   return box;
+}
+
+// ---------- inviting friends straight from the server ----------
+//
+// The invite dialog lists your friends: Invite sends them the server's invite link in
+// your DM, where it shows as a card they join with one click.
+
+const invitedFriends = new Set();
+
+function renderInviteFriends() {
+  const list = $("invite-friend-list");
+  const q = $("invite-friend-search").value.trim().toLowerCase();
+  const here = new Set((state.roster?.users ?? []).map((u) => u.public_key));
+  const friends = [...(state.friends?.values() ?? [])]
+    .filter((f) => f.state === "friend")
+    .filter((f) => !q || f.display_name.toLowerCase().includes(q) || (f.username ?? "").toLowerCase().includes(q))
+    .sort((a, b) => (a.status === "offline") - (b.status === "offline") || a.display_name.localeCompare(b.display_name));
+  $("invite-friends").hidden = !state.friends?.size;
+  if (!friends.length) {
+    list.replaceChildren(el("li", "invite-friend-empty", q ? "No friends by that name." : "Add friends to invite them here."));
+    return;
+  }
+  list.replaceChildren(
+    ...friends.map((f) => {
+      const li = el("li", "invite-friend");
+      const who = el("span", "invite-friend-who");
+      const names = el("span", "invite-friend-names");
+      names.append(el("strong", "ellipsis", f.display_name));
+      if (f.username) names.append(el("span", "ellipsis", f.username));
+      who.append(personAvatar(f, "s40", true), names);
+      const btn = el("button", "btn sm");
+      btn.type = "button";
+      if (here.has(f.key)) {
+        btn.textContent = "Joined";
+        btn.disabled = true;
+      } else if (invitedFriends.has(f.key)) {
+        btn.textContent = "Sent";
+        btn.disabled = true;
+      } else {
+        btn.textContent = "Invite";
+        btn.classList.add("invite-friend-btn");
+        btn.addEventListener("click", () => inviteFriend(f, btn));
+      }
+      li.append(who, btn);
+      return li;
+    }),
+  );
+}
+
+async function inviteFriend(friend, btn) {
+  const link = $("invite-link").value;
+  if (!link) return toast("The invite link isn't ready yet. Try again in a moment.", true);
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+  try {
+    const sealed = await invoke("dm_seal", { peer: friend.key, text: link });
+    await invoke("account_send", { msg: { type: "dm_send", to: friend.key, sealed, nonce: Math.random().toString(36).slice(2) } });
+    invitedFriends.add(friend.key);
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+  renderInviteFriends();
+}
+$("invite-friend-search").addEventListener("input", renderInviteFriends);
+
+// ---------- YouTube links ----------
+//
+// A YouTube link gets a card: thumbnail, title and channel. Clicking plays it right
+// there (youtube-nocookie.com, which doesn't set tracking cookies until you play).
+
+const youtubeInfo = new Map(); // video id -> Promise of { title, author }
+const playingVideos = new Set(); // "message key|video id" playing inline, kept across re-renders
+
+/** The video id in a YouTube link (watch, youtu.be, shorts, embed, live), or null. */
+function youtubeId(link) {
+  let url;
+  try {
+    url = new URL(link);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^(www\.|m\.|music\.)/, "");
+  let id = null;
+  if (host === "youtu.be") id = url.pathname.slice(1).split("/")[0];
+  else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    if (url.pathname === "/watch") id = url.searchParams.get("v");
+    else id = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?#]+)/)?.[1] ?? null;
+  }
+  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+}
+
+/** Where to start: "t=90", "t=1m30s" or "start=90". */
+function youtubeStart(link) {
+  try {
+    const url = new URL(link);
+    const t = url.searchParams.get("t") ?? url.searchParams.get("start");
+    if (!t) return 0;
+    if (/^\d+$/.test(t)) return Number(t);
+    const m = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    return m ? Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function youtubeEmbeds(text) {
+  if (!text) return [];
+  const seen = new Set();
+  const cards = [];
+  for (const [link] of text.matchAll(URL_PATTERN)) {
+    const id = youtubeId(link);
+    if (!id || seen.has(id) || cards.length >= 2) continue;
+    seen.add(id);
+    cards.push(youtubeCard(id, youtubeStart(link), link));
+  }
+  return cards;
+}
+
+function youtubeCard(id, start, link) {
+  const card = el("div", "yt-card");
+  const head = el("div", "yt-head");
+  const site = el("span", "yt-site", "YouTube");
+  const title = el("a", "yt-title", "YouTube video");
+  title.href = link;
+  title.addEventListener("click", (e) => {
+    e.preventDefault();
+    openExternal(link);
+  });
+  const author = el("span", "yt-author");
+  head.append(site, title, author);
+  const frame = el("div", "yt-frame");
+  const key = id + "|" + start;
+  const play = () => {
+    playingVideos.add(key);
+    const player = el("iframe");
+    player.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0${start ? "&start=" + start : ""}`;
+    player.title = title.textContent;
+    player.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    player.allowFullscreen = true;
+    player.referrerPolicy = "strict-origin-when-cross-origin";
+    frame.replaceChildren(player);
+  };
+  if (playingVideos.has(key)) play();
+  else {
+    const thumb = el("img");
+    thumb.src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    thumb.alt = "";
+    thumb.loading = "lazy";
+    const button = el("button", "yt-play");
+    button.type = "button";
+    button.setAttribute("aria-label", "Play video");
+    button.append(el("span", "yt-play-icon"));
+    button.addEventListener("click", play);
+    frame.append(thumb, button);
+  }
+  card.append(head, frame);
+  if (!youtubeInfo.has(id)) youtubeInfo.set(id, invoke("youtube_info", { id }).catch(() => null));
+  youtubeInfo.get(id).then((info) => {
+    if (!info) return;
+    title.textContent = info.title ?? "YouTube video";
+    author.textContent = info.author ?? "";
+  });
+  return card;
+}
+
+// ---------- editing and deleting DMs ----------
+//
+// An edit is sealed again, once for a friend or once per person in a group, and
+// replaces the text on everyone's devices. Pictures and GIFs aren't edited.
+
+state.dmEditing = null;
+
+function dmEditable(m) {
+  return m.text !== null && !DM_PICTURE.test(m.text) && !GIF_URL.test(m.text.trim());
+}
+
+function dmActions(peer, m) {
+  const actions = el("div", "msg-actions");
+  const button = (iconName, tip, onClick, extra = "") => {
+    const b = el("button", "icon-btn sm " + extra);
+    b.type = "button";
+    b.dataset.tip = tip;
+    b.append(icon(iconName, "sm"));
+    b.addEventListener("click", onClick);
+    actions.append(b);
+  };
+  if (dmEditable(m)) button("edit", "Edit", () => startDmEdit(peer, m));
+  button("trash", "Delete message", (e) => deleteDm(peer, m, e.shiftKey), "danger-hover");
+  return actions;
+}
+
+function startDmEdit(peer, m) {
+  state.dmEditing = m.id;
+  renderDmView(true);
+  requestAnimationFrame(() => {
+    const box = document.querySelector(".dm-messages .msg-editor textarea");
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  });
+}
+
+function stopDmEdit() {
+  state.dmEditing = null;
+  renderDmView(true);
+  $("dm-input")?.focus();
+}
+
+function dmEditor(peer, m) {
+  const wrap = el("div", "msg-editor");
+  const box = el("textarea");
+  box.value = m.text;
+  box.rows = 1;
+  box.maxLength = 2000;
+  const fit = () => {
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight}px`;
+  };
+  setTimeout(fit, 0);
+  box.addEventListener("input", fit);
+  const save = () => {
+    const text = box.value.trim();
+    stopDmEdit();
+    if (!text) return deleteDm(peer, m);
+    if (text !== m.text) saveDmEdit(peer, m, text);
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      stopDmEdit();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      save();
+    }
+  });
+  const hint = el("div", "msg-editor-hint");
+  const cancel = el("button", "link", "cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", stopDmEdit);
+  const ok = el("button", "link", "save");
+  ok.type = "button";
+  ok.addEventListener("click", save);
+  hint.append("Escape to ", cancel, " · Enter to ", ok);
+  wrap.append(box, hint);
+  return wrap;
+}
+
+async function saveDmEdit(peer, m, text) {
+  const before = { text: m.text, edited_at: m.edited_at };
+  m.text = text;
+  m.edited_at = Date.now();
+  renderDmView(true);
+  try {
+    let sealed;
+    if (isGroup(peer)) {
+      sealed = {};
+      for (const k of state.groups.get(peer)?.members ?? []) sealed[k] = await invoke("dm_seal", { peer: k, text });
+    } else {
+      sealed = await invoke("dm_seal", { peer, text });
+    }
+    await invoke("account_send", { msg: { type: "dm_edit", with: peer, id: m.id, sealed } });
+  } catch (err) {
+    Object.assign(m, before);
+    renderDmView(true);
+    toast(friendlyError(err), true);
+  }
+}
+
+async function deleteDm(peer, m, skipConfirm) {
+  if (!skipConfirm) {
+    const ok = await confirmDialog({
+      title: "Delete message",
+      text: "It's deleted for everyone in this conversation. Tip: hold Shift when clicking delete to skip this.",
+      ok: "Delete",
+    });
+    if (!ok) return;
+  }
+  invoke("account_send", { msg: { type: "dm_delete", with: peer, id: m.id } }).catch((err) => toast(friendlyError(err), true));
 }

@@ -313,8 +313,13 @@
       <div class="modal-body center">
         <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
         <h2>Customise your server</h2>
-        <p class="modal-sub">Give it a name. You can invite people as soon as it's created.</p>
-        <div id="create-server-icon" class="server-icon-preview"></div>
+        <p class="modal-sub">Give it a name and a picture. You can invite people as soon as it's created.</p>
+        <button id="create-server-icon" type="button" class="server-icon-preview pickable" aria-label="Choose a server picture">
+          <span id="create-server-letters"></span>
+          <span class="pick-badge"><svg class="i xs"><use href="#i-camera"/></svg></span>
+        </button>
+        <input id="create-server-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <button id="create-server-icon-remove" type="button" class="btn-link sm create-icon-remove" hidden>Remove picture</button>
         <label class="field">
           <span class="field-label">Server name</span>
           <input id="create-server-name" maxlength="40" required autocomplete="off">
@@ -462,7 +467,11 @@
         </span>
       </div>
       <div id="invite-owner">
-        <span class="field-label">Send a server invite link to a friend</span>
+        <div id="invite-friends" class="invite-friends">
+          <input id="invite-friend-search" type="text" placeholder="Search for friends" autocomplete="off">
+          <ul id="invite-friend-list" class="invite-friend-list"></ul>
+        </div>
+        <span class="field-label">Or send a server invite link to a friend</span>
         <div class="link-box">
           <input id="invite-link" readonly placeholder="Generating…" spellcheck="false">
           <button id="invite-copy" type="button" class="btn primary sm">Copy</button>

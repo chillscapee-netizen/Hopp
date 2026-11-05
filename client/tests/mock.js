@@ -108,6 +108,8 @@ const commands = {
   account_send: ({ msg: m }) => {
     sent.push(m);
     if (m.type === "dm_history") setTimeout(() => emit("account", { type: "dm_history", with: m.with, messages: dmHistory[m.with] ?? [], complete: true }), 10);
+    if (m.type === "dm_edit") setTimeout(() => emit("account", { type: "dm_edited", with: m.with, id: m.id, sealed: typeof m.sealed === "string" ? m.sealed : m.sealed[ME], edited_at: Date.now() }), 10);
+    if (m.type === "dm_delete") setTimeout(() => emit("account", { type: "dm_deleted", with: m.with, id: m.id }), 10);
     if (m.type === "dm_send") setTimeout(() => emit("account", { type: "dm", with: m.to, nonce: m.nonce, message: { id: "d" + nextId++, from_key: ME, sealed: m.sealed, sent_at: Date.now() } }), 10);
   },
   dm_seal: ({ text }) => "plain:" + text,
