@@ -139,6 +139,7 @@ const commands = {
   set_relay: ({ login }) => { sent.push({ type: "set_relay", login }); },
   react: (a) => { sent.push({ type: "react", ...a }); },
   gif_search: () => ({ gifs: [], next: null }),
+  link_preview: ({ url }) => { sent.push({ type: "link_preview", url }); return url.includes("example.com/patch") ? { url, site: "example.com", title: "Patch 4.2 notes", description: "Balance changes, new maps and a lot of fixes.", image: null } : null; },
   // Screen-sharing handshakes come straight back, as if from whoever they were for: this page plays both sides.
   screen_signal: ({ to, data }) => { sent.push({ type: "screen_signal", to, data }); setTimeout(() => emit("screen-signal", { from: to, data }), 5); },
   set_sharing: ({ on }) => { sent.push({ type: "set_sharing", on }); setTimeout(() => { const r = structuredClone(state.roster); r.users.find((u) => u.session_id === r.me).sharing = on; emit("roster", r); }, 5); },

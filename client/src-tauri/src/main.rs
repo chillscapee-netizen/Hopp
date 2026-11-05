@@ -11,6 +11,7 @@ use serde::Serialize;
 mod account;
 mod downloads;
 mod hello;
+mod preview;
 mod ptt;
 mod shell;
 
@@ -788,6 +789,12 @@ fn screen_signal(state: State<'_, AppState>, to: SessionId, data: String) -> Cmd
     with_conn(&state, |c| c.control.send(ClientMsg::ScreenSignal { to, data }))
 }
 
+/// A link's preview (title, description, picture), fetched only from the public internet.
+#[tauri::command]
+async fn link_preview(url: String) -> CmdResult<Option<preview::Preview>> {
+    preview::fetch(&url).await
+}
+
 #[tauri::command]
 fn search_messages(state: State<'_, AppState>, query: String) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::Search { query }))
@@ -1400,6 +1407,7 @@ fn main() {
             react,
             load_older,
             search_messages,
+            link_preview,
             set_sharing,
             screen_signal,
             pin_message,

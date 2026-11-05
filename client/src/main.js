@@ -2559,14 +2559,14 @@ function renderMessages(keepScrollUnlessAtBottom) {
     for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) {
       li.append(inviteEmbed(link));
     }
-    li.append(...youtubeEmbeds(m.text));
+    li.append(...youtubeEmbeds(m.text), ...linkPreviews(m.text));
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
     li.msg = m;
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id)]);
+    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews]);
     items.push(li);
     prev = m;
   }
@@ -5296,7 +5296,7 @@ function renderDmView(keepScroll) {
     if (m.text) {
       if (looksLikeBait(m.text, m.from_key === state.me?.key)) li.append(baitWarning());
       for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) li.append(inviteEmbed(link));
-      li.append(...youtubeEmbeds(m.text));
+      li.append(...youtubeEmbeds(m.text), ...linkPreviews(m.text));
     }
     if (m.edited_at && state.dmEditing !== m.id) {
       const tag = el("span", "msg-edited", "(edited)");
@@ -5321,7 +5321,7 @@ function renderDmView(keepScroll) {
       });
     }
     li.dataset.key = `${peer}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name]);
+    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews]);
     items.push(li);
     prev = m;
   }
@@ -9794,3 +9794,65 @@ function setSidebarWidth(w, keep = true) {
   });
   grip.addEventListener("dblclick", () => setSidebarWidth(SIDEBAR_DEFAULT));
 })();
+
+// ---------- link previews ----------
+//
+// A card with the page's title, description and picture under an ordinary link. Hopp fetches
+// it (only from the public internet; see preview.rs), once per link, and the card stays put
+// while the message around it is redrawn.
+
+/** Each link's preview, once asked: a promise of the preview or null. */
+var previewCache = new Map();
+
+prefs.linkPreviews = load("linkPreviews", "1") === "1";
+$("link-previews").checked = prefs.linkPreviews;
+$("link-previews").addEventListener("change", (e) => {
+  prefs.linkPreviews = e.target.checked;
+  save("linkPreviews", e.target.checked ? "1" : "0");
+  if (online()) renderMessages(true);
+  else if (state.openDm) renderDmView(true);
+});
+
+/** Links that get a card of their own elsewhere, or none: videos, invites, GIFs, pictures. */
+function previewable(link) {
+  return !youtubeId(link) && !inviteTarget(link) && !GIF_URL.test(link) && !/\.(png|jpe?g|gif|webp|mp4|mov|zip|exe)(\?|$)/i.test(link);
+}
+
+function linkPreviews(text) {
+  if (!text || !prefs.linkPreviews) return [];
+  const link = [...text.matchAll(URL_PATTERN)].map((x) => x[0]).find(previewable);
+  if (!link) return [];
+  // An empty slot now; filled when the preview comes (and kept across redraws).
+  const slot = el("div", "link-preview-slot");
+  slot.dataset.keep = "lp|" + link;
+  if (!previewCache.has(link)) previewCache.set(link, invoke("link_preview", { url: link }).catch(() => null));
+  previewCache.get(link).then((p) => {
+    if (p && !slot.childElementCount) slot.append(linkCard(p, link));
+  });
+  return [slot];
+}
+
+function linkCard(p, link) {
+  const card = el("div", "link-card");
+  const text = el("div", "link-card-text");
+  if (p.site) text.append(el("span", "link-card-site", p.site));
+  if (p.title) {
+    const title = el("a", "link-card-title", p.title);
+    title.href = link;
+    title.addEventListener("click", (e) => {
+      e.preventDefault();
+      openExternal(link);
+    });
+    text.append(title);
+  }
+  if (p.description) text.append(el("p", "link-card-desc", p.description));
+  card.append(text);
+  if (p.image) {
+    const img = el("img", "link-card-img");
+    img.src = p.image;
+    img.alt = "";
+    img.loading = "lazy";
+    card.append(img);
+  }
+  return card;
+}

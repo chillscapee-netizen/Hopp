@@ -3049,3 +3049,12 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .sidebar-grip { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 5; width: 6px; cursor: col-resize; }
 .sidebar-grip:hover, body.resizing .sidebar-grip { background: color-mix(in srgb, var(--text) 12%, transparent); }
 body.resizing { cursor: col-resize; user-select: none; }
+
+/* Link previews: a quiet card, the picture on the right. */
+.link-card { display: flex; gap: 14px; width: min(460px, 100%); margin: 6px 0 2px; padding: 12px 14px; background: var(--side-2); border-radius: 10px; }
+.link-card-text { display: grid; align-content: start; gap: 4px; min-width: 0; flex: 1; }
+.link-card-site { color: var(--faint); font-size: 12px; }
+.link-card-title { color: var(--link); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.link-card-title:hover { text-decoration: underline; }
+.link-card-desc { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.link-card-img { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 8px; align-self: start; }
