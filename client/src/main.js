@@ -1675,6 +1675,7 @@ listen("roster", (e) => {
   if (draftKey() !== state.draftAt) restoreDraft();
   applyUserVolumes();
   syncScreen();
+  syncMedia();
   renderAll();
 });
 
@@ -2245,6 +2246,10 @@ function renderVoicePanel() {
   const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
   $("voice-where").textContent = latency ? `${where} · ${latency}` : where;
   $("share-btn").hidden = !canShare();
+  $("cam-btn").hidden = !canShare();
+  $("cam-btn").classList.toggle("on", !!media.out.cam);
+  $("cam-btn").setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
+  $("cam-btn").querySelector("use").setAttribute("href", media.out.cam ? "#i-video" : "#i-video-off");
   $("share-btn").classList.toggle("on", !!screenShare.stream);
   $("share-btn").setAttribute("aria-label", screenShare.stream ? "Stop sharing your screen" : "Share your screen");
 }
@@ -6942,6 +6947,7 @@ async function handleGroupCallSignal(m) {
     if (!known.inCall.size && !c) state.groupCalls.delete(m.group);
   }
   if (!c) return renderCall();
+  if (m.kind === "media") return mediaSignal(m);
   if (m.kind === "join") {
     c.inCall.add(m.from);
     if (c.status !== "ringing" || c.role === "caller") {
@@ -7015,6 +7021,7 @@ async function handleCallSignal(m) {
     return;
   }
   if (!c || c.id !== m.call_id || c.peer !== m.from) return;
+  if (m.kind === "media") return mediaSignal(m);
   if (m.kind === "answer" && c.role === "caller") {
     stopRinging();
     clearTimeout(c.timeout);
@@ -7074,6 +7081,8 @@ async function beginCallVoice(c) {
   } else if (c.peerEndpoint) invoke("call_peer", { callId: c.id, peer: c.peerEndpoint });
   callSend(c, "endpoint", c.myEndpoint);
   playSound("join");
+  // Voice is ready: the camera and screen buttons can show.
+  renderCall();
 }
 
 async function answerCall() {
@@ -7104,6 +7113,7 @@ async function endCall(reason) {
   const c = state.call;
   if (!c) return;
   state.call = null;
+  stopAllMedia();
   clearTimeout(c.timeout);
   stopRinging();
   if (c.group) {
@@ -7155,6 +7165,8 @@ function callStatusText(c) {
 
 function renderCall() {
   const c = state.call;
+  // Someone joined or left the call: video follows.
+  if (c?.engineReady) syncMedia();
   const ringingHere = c && c.role === "callee" && c.status === "ringing";
   // Incoming call card.
   $("incoming-call").hidden = !ringingHere;
@@ -7204,18 +7216,44 @@ function renderCall() {
     const me = state.me ?? {};
     const people = el("div", "call-people");
     people.classList.toggle("many", !!c.group && c.inCall.size > 2);
-    people.append(who({ display_name: state.account?.name, avatar: me.avatar }, c.me));
-    if (c.group) for (const k of c.inCall) people.append(who(personFor(k), callSession(k)));
-    else people.append(who(personFor(c.peer), c.other));
+    const withVideo = (tile, id) => {
+      const cam = mediaStream("cam", id);
+      if (cam) tile.replaceChildren(videoEl("cam|" + id, cam, id === "me"));
+      tile.classList.toggle("video", !!cam);
+      return tile;
+    };
+    people.append(withVideo(who({ display_name: state.account?.name, avatar: me.avatar }, c.me), "me"));
+    if (c.group) for (const k of c.inCall) people.append(withVideo(who(personFor(k), callSession(k)), k));
+    else people.append(withVideo(who(personFor(c.peer), c.other), c.peer));
+    // A shared screen: big, above everyone.
+    const screens = [...mediaIn.entries()].filter(([k]) => k.startsWith("screen|")).map(([k, v]) => [k, v.stream]);
+    if (media.out.screen) screens.unshift(["screen|me", media.out.screen.stream]);
+    const shown = screens.slice(0, 1).map(([k, s]) => {
+      const frame = el("div", "call-screen");
+      frame.append(videoEl(k, s, false));
+      return frame;
+    });
+    people.classList.toggle("videos", people.querySelector(".video") !== null);
     const status = el("div", "call-stage-status", callStatusText(c));
     const actions = el("div", "call-stage-actions");
+    const camBtn = el("button", "call-btn media" + (media.out.cam ? " on" : ""));
+    camBtn.type = "button";
+    camBtn.setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
+    camBtn.append(icon(media.out.cam ? "video" : "video-off"));
+    camBtn.addEventListener("click", () => (media.out.cam ? stopOut("cam") : startCamera()));
+    const shareBtn = el("button", "call-btn media" + (media.out.screen ? " on" : ""));
+    shareBtn.type = "button";
+    shareBtn.setAttribute("aria-label", media.out.screen ? "Stop sharing your screen" : "Share your screen");
+    shareBtn.append(icon("monitor"));
+    shareBtn.addEventListener("click", () => (media.out.screen ? stopOut("screen") : startCallScreen()));
+    if (c.engineReady) actions.append(camBtn, shareBtn);
     const hang = el("button", "call-btn decline");
     hang.type = "button";
     hang.dataset.tip = "Hang up";
     hang.append(icon("phone-off"));
     hang.addEventListener("click", () => endCall());
     actions.append(hang);
-    stage.replaceChildren(people, status, actions);
+    stage.replaceChildren(...shown, people, status, actions);
   }
 }
 
@@ -9799,6 +9837,7 @@ listen("screen-signal", async (e) => {
   } catch {
     return;
   }
+  if (m.v === "m") return handleMedia(from, m, voiceRoom);
   if (m.s === "sharer") {
     // To us, as the one sharing.
     if (!screenShare.stream) return;
@@ -10154,11 +10193,17 @@ function renderVoiceStage() {
   const here = state.roster.users.filter((u) => u.voice_channel === view).sort(byName);
   const mine = myVoice() === view;
   const tiles = el("div", "voice-tiles");
+  tiles.classList.toggle("focused", focusTile !== null && here.some((u) => u.session_id === focusTile));
   for (const u of here) {
     const tile = el("button", "voice-tile" + (state.speaking.has(u.session_id) ? " speaking" : ""));
     tile.type = "button";
     tile.dataset.user = u.session_id;
-    tile.append(avatar(u.name, "s64", undefined, pictureFor(keyOf(u))));
+    const isMe = u.session_id === state.roster.me;
+    const cam = mediaStream("cam", isMe ? "me" : u.session_id);
+    tile.classList.toggle("video", !!cam);
+    tile.classList.toggle("focus", focusTile === u.session_id);
+    if (cam) tile.append(videoEl("cam|" + (isMe ? "me" : u.session_id), cam, isMe));
+    else tile.append(avatar(u.name, "s64", undefined, pictureFor(keyOf(u))));
     const name = el("span", "voice-tile-name ellipsis", u.name);
     tile.append(name);
     const marks = el("span", "voice-tile-marks");
@@ -10166,7 +10211,16 @@ function renderVoiceStage() {
     if (u.deafened) marks.append(icon("headphones-off", "xs"));
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
     tile.append(marks);
-    tile.addEventListener("click", () => (u.sharing ? watchScreen(u.session_id) : u.session_id !== state.roster.me && openUserCard(u, tile)));
+    tile.addEventListener("click", (e) => {
+      if (e.target.closest(".live-pill")) return watchScreen(u.session_id);
+      // A camera: focus on it (click again for everyone).
+      if (cam) {
+        focusTile = focusTile === u.session_id ? null : u.session_id;
+        return renderVoiceStage();
+      }
+      if (u.sharing) return watchScreen(u.session_id);
+      if (u.session_id !== state.roster.me) openUserCard(u, tile);
+    });
     tiles.append(tile);
   }
   const foot = el("div", "voice-stage-foot");
@@ -10266,3 +10320,289 @@ function followModerators(before, after, mineBefore) {
     state.forcedDeafen = false;
   }
 }
+
+// ---------- camera video, and screens in calls ----------
+//
+// Turn your camera on and it goes straight to everyone in your voice channel or call (WebRTC,
+// encrypted on the way, through the relay when blocked); theirs come to you the same way and
+// show in their tiles. In calls, a shared screen goes to everyone too. Handshakes travel with
+// the voice channel (the server passes them on) or the call (your account passes them on).
+
+/** What we send ("cam", "screen" in calls): the stream and a connection per person. */
+var media = { out: {} };
+/** What we receive, by "kind|person": its connection and stream. */
+var mediaIn = new Map();
+/** The tile shown big in a voice channel. */
+var focusTile = null;
+/** Video elements kept across redraws, so a stream never flickers. */
+var videoEls = new Map();
+
+/** Where video goes now: the call, or the voice channel. */
+var voiceRoom = {
+  kind: "voice",
+  peers: () => (canShare() ? state.roster.users.filter((u) => u.voice_channel === myVoice() && u.session_id !== state.roster.me).map((u) => u.session_id) : []),
+  send: (peer, msg) => screenSend(peer, msg),
+};
+var callRoom = {
+  kind: "call",
+  peers: () => {
+    const c = state.call;
+    if (!c?.engineReady) return [];
+    return c.group ? [...c.inCall] : [c.peer];
+  },
+  send: (peer, msg) => state.call && callSend(state.call, "media", { data: JSON.stringify(msg) }, state.call.group ? [peer] : undefined),
+};
+function mediaRoom() {
+  if (state.call?.engineReady) return callRoom;
+  if (canShare()) return voiceRoom;
+  return null;
+}
+
+function mediaStream(kind, id) {
+  if (id === "me") return media.out[kind]?.stream ?? null;
+  return mediaIn.get(kind + "|" + id)?.stream ?? null;
+}
+
+/** One video element per stream, reused wherever it's shown. */
+function videoEl(key, stream, mirror) {
+  let v = videoEls.get(key);
+  if (!v) {
+    v = document.createElement("video");
+    v.autoplay = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.className = "tile-video";
+    videoEls.set(key, v);
+  }
+  if (v.srcObject !== stream) v.srcObject = stream;
+  v.classList.toggle("mirror", !!mirror);
+  return v;
+}
+
+async function startCamera() {
+  const room = mediaRoom();
+  if (!room || media.out.cam) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: false });
+  } catch (err) {
+    if (err?.name === "NotAllowedError") return toast("Hopp wasn't allowed to use your camera.", true);
+    return toast(err?.name === "NotFoundError" ? "No camera found." : "Couldn't start your camera. " + (err?.message ?? ""), true);
+  }
+  startOut("cam", stream, room);
+}
+
+/** In a call, your screen goes to everyone in it. */
+async function startCallScreen() {
+  const room = mediaRoom();
+  if (room?.kind !== "call" || media.out.screen) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (err) {
+    if (err?.name !== "NotAllowedError" && err?.name !== "AbortError") toast("Couldn't share your screen. " + (err?.message ?? ""), true);
+    return;
+  }
+  stream.getVideoTracks()[0].contentHint = "detail";
+  startOut("screen", stream, room);
+}
+
+function startOut(kind, stream, room) {
+  media.out[kind] = { stream, room, peers: new Map() };
+  stream.getVideoTracks()[0]?.addEventListener("ended", () => stopOut(kind));
+  for (const peer of room.peers()) offerMedia(kind, peer);
+  renderMediaViews();
+}
+
+function stopOut(kind, quiet = false) {
+  const out = media.out[kind];
+  if (!out) return;
+  delete media.out[kind];
+  for (const [peer, pc] of out.peers) {
+    if (!quiet) out.room.send(peer, { v: "m", t: kind, d: "r", k: "stop" });
+    pc.close();
+  }
+  out.stream.getTracks().forEach((t) => t.stop());
+  videoEls.delete(kind + "|me");
+  renderMediaViews();
+}
+
+function stopAllMedia() {
+  for (const kind of Object.keys(media.out)) stopOut(kind, true);
+  for (const [key, m] of mediaIn) {
+    m.pc?.close();
+    videoEls.delete(key);
+  }
+  mediaIn.clear();
+  focusTile = null;
+}
+
+/** Sends one of our streams to one person. */
+async function offerMedia(kind, peer) {
+  const out = media.out[kind];
+  if (!out) return;
+  out.peers.get(peer)?.close();
+  // Held at once, so a redraw meanwhile doesn't start a second one.
+  out.peers.set(peer, { close() {}, pending: true });
+  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  if (media.out[kind] !== out || !out.peers.has(peer)) return pc.close();
+  pc.pendingIce = [];
+  out.peers.set(peer, pc);
+  pc.onicecandidate = (e) => e.candidate && out.room.send(peer, { v: "m", t: kind, d: "r", k: "ice", c: e.candidate.toJSON() });
+  pc.addTrack(out.stream.getVideoTracks()[0], out.stream);
+  await pc.setLocalDescription(await pc.createOffer());
+  out.room.send(peer, { v: "m", t: kind, d: "r", k: "offer", sdp: pc.localDescription.sdp });
+}
+
+function tuneSender(pc, kind) {
+  for (const sender of pc.getSenders()) {
+    const p = sender.getParameters();
+    if (!p.encodings?.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = kind === "screen" ? 6_000_000 : 2_500_000;
+    p.degradationPreference = kind === "screen" ? "maintain-resolution" : "balanced";
+    sender.setParameters(p).catch(() => {});
+  }
+}
+
+/** A call's media handshake (people in a call are known by their Hopp ID). */
+function mediaSignal(m) {
+  let data;
+  try {
+    data = JSON.parse(m.data);
+  } catch {
+    return;
+  }
+  if (data.v === "m") handleMedia(m.from, data, callRoom);
+}
+
+async function handleMedia(from, m, room) {
+  const kind = m.t === "screen" ? "screen" : "cam";
+  if (m.d === "s") {
+    // To us as the one sending: their answer, their network addresses, or "stop sending".
+    const pc = media.out[kind]?.peers.get(from);
+    if (!pc || pc.pending) return;
+    if (m.k === "answer") {
+      await pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
+      for (const c of pc.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      tuneSender(pc, kind);
+    } else if (m.k === "ice") {
+      if (pc.remoteDescription) await pc.addIceCandidate(m.c).catch(() => {});
+      else pc.pendingIce.push(m.c);
+    }
+    return;
+  }
+  // To us as the one receiving.
+  const key = kind + "|" + from;
+  if (m.k === "offer") {
+    mediaIn.get(key)?.pc?.close();
+    const entry = { pc: null, stream: null, pending: [] };
+    mediaIn.set(key, entry);
+    const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+    if (mediaIn.get(key) !== entry) return pc.close();
+    entry.pc = pc;
+    pc.ontrack = (ev) => {
+      entry.stream = ev.streams[0] ?? new MediaStream([ev.track]);
+      renderMediaViews();
+    };
+    pc.onicecandidate = (ev) => ev.candidate && room.send(from, { v: "m", t: kind, d: "s", k: "ice", c: ev.candidate.toJSON() });
+    await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
+    for (const c of entry.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+    await pc.setLocalDescription(await pc.createAnswer());
+    room.send(from, { v: "m", t: kind, d: "s", k: "answer", sdp: pc.localDescription.sdp });
+  } else if (m.k === "ice") {
+    const entry = mediaIn.get(key);
+    if (entry?.pc?.remoteDescription) await entry.pc.addIceCandidate(m.c).catch(() => {});
+    else entry?.pending.push(m.c);
+  } else if (m.k === "stop") {
+    mediaIn.get(key)?.pc?.close();
+    mediaIn.delete(key);
+    videoEls.delete(key);
+    if (focusTile === from) focusTile = null;
+    renderMediaViews();
+  }
+}
+
+/** After every change in who's around: video only for the people still with us. */
+function syncMedia() {
+  const room = mediaRoom();
+  if (!room) {
+    if (Object.keys(media.out).length || mediaIn.size) stopAllMedia();
+    return;
+  }
+  const peers = new Set(room.peers().map(String));
+  for (const [kind, out] of Object.entries(media.out)) {
+    if (out.room !== room) {
+      stopOut(kind, true);
+      continue;
+    }
+    // Newcomers get our camera; people who left are let go.
+    for (const p of room.peers()) if (!out.peers.has(p)) offerMedia(kind, p);
+    for (const [p, pc] of out.peers) {
+      if (!peers.has(String(p))) {
+        pc.close();
+        out.peers.delete(p);
+      }
+    }
+  }
+  for (const [key, m] of mediaIn) {
+    if (!peers.has(key.split("|")[1])) {
+      m.pc?.close();
+      mediaIn.delete(key);
+      videoEls.delete(key);
+    }
+  }
+}
+
+function renderMediaViews() {
+  renderVoiceStage();
+  renderVoicePanel();
+  if (state.call) renderCall();
+}
+
+$("cam-btn").addEventListener("click", () => (media.out.cam ? stopOut("cam") : startCamera()));
+$("screen-pip").addEventListener("click", () => {
+  const v = $("screen-video");
+  if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+  else v.requestPictureInPicture?.().catch(() => toast("This stream can't pop out right now.", true));
+});
+
+// Zoom into a shared screen with the wheel, and drag to look around; double-click resets.
+(() => {
+  const frame = $("screen-video").parentElement;
+  const video = $("screen-video");
+  let zoom = 1;
+  let x = 0;
+  let y = 0;
+  const apply = () => {
+    video.style.transform = zoom === 1 ? "" : "translate(" + x + "px, " + y + "px) scale(" + zoom + ")";
+    frame.classList.toggle("zoomed", zoom > 1);
+  };
+  frame.addEventListener("wheel", (e) => {
+    if (!watching) return;
+    e.preventDefault();
+    zoom = Math.min(4, Math.max(1, zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    if (zoom === 1) x = y = 0;
+    apply();
+  }, { passive: false });
+  frame.addEventListener("pointerdown", (e) => {
+    if (zoom === 1) return;
+    frame.setPointerCapture(e.pointerId);
+    const start = { px: e.clientX, py: e.clientY, x, y };
+    const move = (ev) => {
+      x = start.x + ev.clientX - start.px;
+      y = start.y + ev.clientY - start.py;
+      apply();
+    };
+    const up = () => {
+      frame.removeEventListener("pointermove", move);
+      frame.removeEventListener("pointerup", up);
+    };
+    frame.addEventListener("pointermove", move);
+    frame.addEventListener("pointerup", up);
+  });
+  video.addEventListener("dblclick", () => {
+    zoom = 1;
+    x = y = 0;
+    apply();
+  });
+})();

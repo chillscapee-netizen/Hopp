@@ -43,7 +43,8 @@ const GROUP_NAME_MAX = 40;
 export interface Group { id: string; name: string; members: string[]; created_at: number }
 /** Calls: what each kind of signal may carry. The key is sealed for the callee, like a direct message. */
 // "join" and "leave" are for group calls, where people come and go while it runs.
-const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint", "join", "leave"]);
+// "media" carries a video handshake (camera or screen) between people in a call.
+const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoint", "join", "leave", "media"]);
 // "ip:port" for IPv4, "[ip]:port" for IPv6.
 const CALL_ENDPOINT = /^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$/;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
@@ -671,6 +672,11 @@ export class StromAccount extends DurableObject<Env> {
           const sealed = String(msg.sealed ?? "");
           if (!/^[0-9a-f]{40,400}$/.test(sealed)) return error("Bad call signal.");
           signal.sealed = sealed;
+        }
+        if (kind === "media") {
+          const data = typeof msg.data === "string" ? msg.data : "";
+          if (!data || data.length > 65_536) return error("Bad call signal.");
+          signal.data = data;
         }
         if (kind === "endpoint") {
           signal.public = typeof msg.public === "string" && CALL_ENDPOINT.test(msg.public) ? msg.public : null;

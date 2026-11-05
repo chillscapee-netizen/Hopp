@@ -288,7 +288,7 @@ test("chat reaches everyone, survives reconnects and keeps increasing ids", asyn
 test("bad chat is rejected and floods are throttled", async () => {
   const { owner } = await newServer();
   const general = channelId(owner, "general");
-  owner.send({ type: "send_chat", channel: channelId(owner, "Lobby"), text: "voice has no chat" });
+  owner.send({ type: "send_chat", channel: 999, text: "no such channel" });
   assert.match(await errorOf(owner), /doesn't exist/);
   for (let i = 0; i < 10; i++) owner.send({ type: "send_chat", channel: general, text: `spam ${i}` });
   assert.match(await errorOf(owner), /too fast/);

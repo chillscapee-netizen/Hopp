@@ -3106,3 +3106,27 @@ body { background: var(--frame-bg, var(--frame)); }
 .voice-user[draggable="true"] { cursor: grab; }
 .voice-user.dragging { opacity: 0.5; }
 .channel-row.drop-into { background: color-mix(in srgb, var(--green) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 50%, transparent); }
+
+/* ---------- camera video ---------- */
+.share-btn.on { color: var(--green); }
+.tile-video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; border-radius: 10px; }
+.tile-video.mirror { transform: scaleX(-1); }
+.voice-tile.video { width: 240px; padding: 6px 6px 10px; }
+.voice-tile.video .tile-video { aspect-ratio: 16 / 9; height: auto; }
+.voice-tile.video.speaking .tile-video { box-shadow: 0 0 0 3px var(--green); }
+/* Focus: one big, the rest small underneath. */
+.voice-tiles.focused { max-width: 980px; }
+.voice-tiles.focused .voice-tile.focus { width: min(860px, 100%); order: -1; flex-basis: 100%; }
+.voice-tiles.focused .voice-tile.focus .tile-video { object-fit: contain; }
+.voice-tiles.focused .voice-tile:not(.focus) { width: 150px; }
+.voice-tiles.focused .voice-tile:not(.focus) .avatar.s64 { width: 40px; height: 40px; font-size: 15px; }
+/* Calls: cameras in the people row, a shared screen above it. */
+.call-people.videos .call-person.video { width: 280px; }
+.call-person.video .tile-video { aspect-ratio: 16 / 9; height: auto; }
+.call-screen { width: min(900px, 96%); aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden; }
+.call-screen .tile-video { object-fit: contain; border-radius: 0; }
+.call-btn.media { background: var(--elev-2); color: var(--text); }
+.call-btn.media.on { background: var(--text); color: var(--frame); }
+/* Zooming into a shared screen. */
+.screen-frame video { transform-origin: center; transition: transform 60ms linear; }
+.screen-frame.zoomed { cursor: grab; }

@@ -597,3 +597,17 @@ test("a relay login says plainly when the relay isn't set up", async () => {
   assert.match(answer.message, /isn't set up/);
   u.d.close();
 });
+
+test("video handshakes pass between friends in a call, size-capped", async () => {
+  const a = await userWithName("va");
+  const b = await userWithName("vb");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+  a.d.send({ type: "call", to: b.key.pub, call_id: "abcd1234-0001", kind: "media", data: '{"v":"m","k":"offer"}' });
+  assert.equal((await b.d.waitFor((m) => m.type === "call" && m.kind === "media")).data, '{"v":"m","k":"offer"}');
+  a.d.send({ type: "call", to: b.key.pub, call_id: "abcd1234-0001", kind: "media", data: "x".repeat(70_000) });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /Bad call signal/);
+  for (const x of [a, b]) x.d.close();
+});

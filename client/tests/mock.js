@@ -112,6 +112,8 @@ const commands = {
     if (m.type === "dm_history") setTimeout(() => emit("account", { type: "dm_history", with: m.with, messages: dmHistory[m.with] ?? [], complete: true }), 10);
     // File handshakes come straight back, as if from the friend: this page plays both sides.
     if (m.type === "file_signal") setTimeout(() => emit("account", { type: "file_signal", from: m.to, transfer: m.transfer, sealed: m.sealed }), 5);
+    // A call's video handshakes come straight back, as if from the other person.
+    if (m.type === "call" && m.kind === "media") setTimeout(() => emit("account", { type: "call", from: m.to, kind: "media", call_id: m.call_id, group: m.group, data: m.data }), 5);
     if (m.type === "turn_login") setTimeout(() => emit("account", { type: "turn_login", login: { server: "turn.example:3478", username: "u", credential: "c" } }), 5);
     if (m.type === "dm_edit") setTimeout(() => emit("account", { type: "dm_edited", with: m.with, id: m.id, sealed: typeof m.sealed === "string" ? m.sealed : m.sealed[ME], edited_at: Date.now() }), 10);
     if (m.type === "dm_delete") setTimeout(() => emit("account", { type: "dm_deleted", with: m.with, id: m.id }), 10);
