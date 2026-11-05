@@ -417,7 +417,6 @@ function byName(a, b) {
 
 const AUTH_PANES = { login: "login-form", create: "create-form", recover: "recover-form" };
 const AUTH_FOCUS = { login: "login-password", create: "create-name", recover: "recover-phrase" };
-let authMode = null;
 let authReturn = "login";
 let accountExists = false;
 
@@ -425,7 +424,6 @@ function showAuth(mode) {
   $("shell").classList.add("locked");
   $("splash").hidden = true;
   if (mode !== "recover") authReturn = mode;
-  authMode = mode;
   for (const [m, id] of Object.entries(AUTH_PANES)) $(id).hidden = m !== mode;
   $("topbar-title").textContent = "Hopp";
   const focus = AUTH_FOCUS[mode];
@@ -4008,10 +4006,6 @@ document.addEventListener("mousedown", () => (tip.hidden = true));
 
 // ---------- keyboard ----------
 
-function typing(e) {
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
-}
-
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k" && state.account) {
     e.preventDefault();
@@ -5490,7 +5484,7 @@ function mentionCandidates(query) {
 
 function updateMentionPicker() {
   const before = chatInput.value.slice(0, chatInput.selectionStart);
-  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.\-]{0,32})$/u);
+  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_.-]{0,32})$/u);
   const items = match && online() ? mentionCandidates(match[1]) : [];
   let pop = $("mention-picker");
   if (!items.length) {

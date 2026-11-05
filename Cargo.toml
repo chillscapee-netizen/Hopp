@@ -16,3 +16,11 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 # Audio DSP and password hashing are far too slow unoptimized; our own code stays debuggable.
 [profile.dev.package."*"]
 opt-level = 2
+
+# What people install: the whole program optimized as one (smaller and faster), with the
+# debugging symbols nobody needs left out. Panics still unwind, so a failing command can't
+# take the app down.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

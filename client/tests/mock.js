@@ -49,7 +49,7 @@ let nextId = 100;
 const msg = (session, name, key, text, minutes, channel = 0, extra = {}) => ({
   id: nextId++, channel, sender: session, sender_name: name, author_key: key, text, sent_at: ago(minutes), ...extra,
 });
-const history = [
+const chatHistory = [
   msg(2, "Elin", KEYS.elin, "Anyone up for a round tonight?", 120),
   msg(3, "Jonas", KEYS.jonas, "I'm in after 8", 110),
   msg(1, "Marcus", ME, "Servers are **invite-only** now", 30),
@@ -87,7 +87,7 @@ const commands = {
   check_update: () => null,
   connect: () => {
     setTimeout(() => {
-      emit("chat-history", { channel: 0, messages: history });
+      emit("chat-history", { channel: 0, messages: chatHistory });
       emit("chat-history", { channel: 3, messages: [] });
       emit("chat-history", { channel: 4, messages: [msg(4, "Sara", KEYS.sara, "lfg ranked?", 3, 4)] });
     }, 30);

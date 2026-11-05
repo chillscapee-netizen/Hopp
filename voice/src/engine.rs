@@ -8,6 +8,7 @@
 //! - audio: owns the cpal streams (they are not `Send`) until shutdown
 //! - encoder: processes (see [`crate::capture`]), gates and encodes captured audio
 //! - receiver: reads voice packets into per-speaker jitter buffers
+//!
 //! The output callback itself pulls decoded frames from the mixer, and hands
 //! them to the echo canceller as the far-end reference.
 

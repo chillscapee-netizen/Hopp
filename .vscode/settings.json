@@ -1,0 +1,7 @@
+{
+  // Rust: Clippy's advice while you type, not only plain errors.
+  "rust-analyzer.check.command": "clippy",
+  // The app's page code is checked from client/, where its ESLint setup lives.
+  "eslint.workingDirectories": ["client"],
+  "files.associations": { "wrangler.jsonc": "jsonc" }
+}

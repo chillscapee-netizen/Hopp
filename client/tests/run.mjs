@@ -38,6 +38,14 @@ if (twice.length) {
   process.exit(1);
 }
 
+// The lint runs first: names used but never defined, defined twice, dead code.
+try {
+  execFileSync(process.execPath, [join(here, "..", "node_modules", "eslint", "bin", "eslint.js"), "--max-warnings", "0", "."], { cwd: join(here, ".."), stdio: "pipe" });
+} catch (e) {
+  console.log("FAIL lint (npm run lint in client/):\n" + String(e.stdout ?? e));
+  process.exit(1);
+}
+
 const filter = process.argv[2] ?? "";
 const tests = readdirSync(here).filter((f) => f.endsWith(".test.js") && f.includes(filter));
 let failed = 0;

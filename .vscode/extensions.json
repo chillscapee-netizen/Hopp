@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "tauri-apps.tauri-vscode",
+    "dbaeumer.vscode-eslint",
+    "tamasfe.even-better-toml",
+    "usernamehw.errorlens"
+  ]
+}

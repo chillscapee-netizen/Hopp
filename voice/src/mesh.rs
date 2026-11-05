@@ -320,7 +320,7 @@ mod tests {
         resp.extend_from_slice(&txid);
         // XOR-MAPPED-ADDRESS for 203.0.113.5:40000.
         let port = 40000u16 ^ 0x2112;
-        let ip = [203 ^ 0x21, 0 ^ 0x12, 113 ^ 0xA4, 5 ^ 0x42];
+        let ip = [203 ^ 0x21, 0x12 /* 0 ^ 0x12 */, 113 ^ 0xA4, 5 ^ 0x42];
         resp.extend_from_slice(&[0x00, 0x20, 0x00, 0x08, 0x00, 0x01]);
         resp.extend_from_slice(&port.to_be_bytes());
         resp.extend_from_slice(&ip);

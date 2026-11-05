@@ -51,6 +51,8 @@ impl ServerConfig {
 }
 
 /// One line of a channel's chat file.
+// One per line of the chat log, read and written one at a time: size doesn't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum ChatLine {

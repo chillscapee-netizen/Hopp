@@ -282,7 +282,7 @@ impl Processor {
         self.peak_db = self.peak_db.max(db);
         self.peak_voice |= send;
         self.frames += 1;
-        let report = (self.frames % REPORT_EVERY == 0).then(|| {
+        let report = self.frames.is_multiple_of(REPORT_EVERY).then(|| {
             let r = (self.peak_db, self.peak_voice);
             self.peak_db = -100.0;
             self.peak_voice = false;
@@ -430,8 +430,10 @@ mod gate_bench {
             let len = u32::from_le_bytes(bytes[i + 4..i + 8].try_into().unwrap()) as usize;
             if id == b"data" {
                 return bytes[i + 8..(i + 8 + len).min(bytes.len())]
-                    .chunks_exact(2)
-                    .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)
                     .collect();
             }
             i += 8 + len + (len & 1);
