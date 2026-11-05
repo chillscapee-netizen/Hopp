@@ -37,7 +37,7 @@ const DM_PER_SECOND = 2;
 /** Unread marks for server channels are forgotten after this long without activity. */
 const CHANNEL_READS_DAYS = 90;
 /** Group conversations: you and up to nine others. */
-const GROUP_MAX = 10;
+const GROUP_MAX = 25;
 const GROUP_NAME_MAX = 40;
 
 export interface Group { id: string; name: string; members: string[]; created_at: number }
@@ -410,7 +410,8 @@ export class StromAccount extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
-    if (typeof data !== "string" || data.length > MAX_SYNC + 4096) return this.reject(ws, "Message too large.");
+    // Big enough for account data, or a group message sealed once for each of its members.
+    if (typeof data !== "string" || data.length > Math.max(MAX_SYNC + 4096, GROUP_MAX * MAX_SEALED + 8192)) return this.reject(ws, "Message too large.");
     let msg: Msg;
     try {
       msg = JSON.parse(data);

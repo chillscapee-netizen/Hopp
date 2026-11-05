@@ -4492,6 +4492,9 @@ function friendRow(f) {
       const r = e.currentTarget.getBoundingClientRect();
       openMenu(
         [
+          { label: friendGroup(f.key) ? "Change friend group…" : "Add to a friend group…", icon: "users", action: () => pickFriendGroup(f) },
+          ...(friendGroup(f.key) ? [{ label: "Remove from " + friendGroup(f.key), icon: "x", action: () => setFriendGroup(f.key, "") }] : []),
+          "sep",
           { label: "Remove friend", icon: "x", action: () => removeFriend(f) },
           { label: "Block", icon: "ban", danger: true, action: () => blockPerson(f) },
         ],
@@ -4638,9 +4641,17 @@ function friendsPanel() {
     wrap.append(empty);
     return wrap;
   }
-  const list = el("ul", "friend-list");
-  list.append(...rows.map(friendRow));
-  wrap.append(list);
+  // Your own friend groups, each under its name; everyone else after them.
+  const grouped = state.friendTab === "online" || state.friendTab === "all" ? groupFriends(rows) : [["", rows]];
+  // With groups, their headings say it all.
+  if (grouped.length > 1) wrap.querySelector(".friends-count")?.remove();
+  for (const [name, members] of grouped) {
+    if (!members.length) continue;
+    if (grouped.length > 1) wrap.append(el("h4", "friend-group-head", (name || "Other friends") + " — " + members.length));
+    const list = el("ul", "friend-list");
+    list.append(...members.map(friendRow));
+    wrap.append(list);
+  }
   return wrap;
 }
 
@@ -4764,7 +4775,13 @@ function mergeSync(remote) {
   prefs.rail = rail;
   prefs.removedServers = removed;
   if (remote.notify) {
-    prefs.notify = { servers: { ...remote.notify.servers }, channels: { ...remote.notify.channels }, dms: { ...remote.notify.dms } };
+    prefs.notify = {
+      servers: { ...remote.notify.servers },
+      channels: { ...remote.notify.channels },
+      dms: { ...remote.notify.dms },
+      pinned: { ...remote.notify.pinned },
+      friendGroups: { ...remote.notify.friendGroups },
+    };
     save("notify", JSON.stringify(prefs.notify));
   }
   save("servers", JSON.stringify(prefs.servers));
@@ -5051,10 +5068,11 @@ function closeDm() {
 function dmSidebarRows() {
   const rows = [...state.conversations.entries()]
     .filter(([peer]) => state.friends.has(peer) || state.groups?.has(peer))
-    .sort((a, b) => b[1].last_at - a[1].last_at)
+    .sort((a, b) => dmPinned(b[0]) - dmPinned(a[0]) || b[1].last_at - a[1].last_at)
     .map(([peer, conv]) => {
       const p = personFor(peer);
-      const b = el("button", "server-row dm-row");
+      const pinned = dmPinned(peer);
+      const b = el("button", "server-row dm-row" + (pinned ? " pinned" : ""));
       b.classList.toggle("active", state.openDm === peer);
       const muted = dmMuted(peer);
       b.classList.toggle("unread", conv.last_at > conv.last_read && !muted);
@@ -5065,11 +5083,13 @@ function dmSidebarRows() {
       else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
       b.append(personAvatar(p, "", p.state === "friend"), text);
       if (conv.last_at > conv.last_read && !muted) b.append(el("span", "count-badge", "1"));
+      else if (pinned) b.append(icon("pin", "xs pin-mark"));
       b.addEventListener("click", () => openDm(peer));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         openMenu(
           [
+            { label: pinned ? "Unpin conversation" : "Pin conversation", icon: "pin", action: () => setDmPinned(peer, !pinned) },
             { label: muted ? "Unmute conversation" : "Mute conversation", icon: "bell", action: () => setDmMuted(peer, !muted) },
             ...(p.group
               ? [
@@ -6787,6 +6807,7 @@ async function joinGroupCall(groupId) {
   const g = state.groupCalls.get(groupId);
   if (!g) return;
   if (state.call) return toast("You're already in a call.", true);
+  if (g.inCall.size >= GROUP_CALL_MAX - 1) return toast(`The call is full (${GROUP_CALL_MAX} people).`, true);
   const c = { id: g.id, group: groupId, peer: groupId, role: "callee", status: "connecting", key: g.key, me: callSession(state.me.key), inCall: new Set(g.inCall), endpoints: new Map(), startedAt: null, engineReady: false };
   state.call = c;
   callSend(c, "join");
@@ -6957,6 +6978,10 @@ async function beginCallVoice(c) {
 async function answerCall() {
   const c = state.call;
   if (!c || c.role !== "callee" || c.status !== "ringing") return;
+  if (c.group && c.inCall.size >= GROUP_CALL_MAX - 1) {
+    toast(`The call is full (${GROUP_CALL_MAX} people).`, true);
+    return endCall("declined");
+  }
   clearTimeout(c.timeout);
   stopRinging();
   c.status = "connecting";
@@ -7178,6 +7203,11 @@ function openGroupDialog(group) {
   openModal($("group-dialog"));
 }
 
+/** People in a group conversation, you included. */
+var GROUP_MAX = 25;
+/** People in a group call at once: everyone sends their voice to everyone. */
+var GROUP_CALL_MAX = 10;
+
 function pickedGroupFriends() {
   return [...document.querySelectorAll("#group-friends input:checked:not(:disabled)")].map((b) => b.value);
 }
@@ -7185,9 +7215,9 @@ function pickedGroupFriends() {
 function updateGroupSave() {
   const picked = pickedGroupFriends().length;
   const total = (editingGroup?.members.length ?? 1) + picked;
-  const full = total >= 10;
+  const full = total >= GROUP_MAX;
   document.querySelectorAll("#group-friends input:not(:checked)").forEach((b) => (b.disabled = full));
-  $("group-sub").textContent = full ? "A group has at most 10 people." : "Pick up to 9 friends. Messages are end-to-end encrypted.";
+  $("group-sub").textContent = full ? `A group has at most ${GROUP_MAX} people.` : `Pick up to ${GROUP_MAX - 1} friends. Messages are end-to-end encrypted.`;
   $("group-save").disabled = editingGroup ? false : picked < 1;
 }
 $("group-name").addEventListener("input", updateGroupSave);
@@ -9635,3 +9665,122 @@ window.addEventListener("beforeunload", () => {
   stopWatching();
   stopShare();
 });
+
+// ---------- pinned conversations, friend groups, a resizable sidebar ----------
+//
+// Pins and friend groups travel with the rest of your synced settings.
+
+function dmPinned(peer) {
+  return prefs.notify.pinned?.[peer] ? 1 : 0;
+}
+
+function setDmPinned(peer, on) {
+  prefs.notify.pinned ??= {};
+  if (on) prefs.notify.pinned[peer] = true;
+  else delete prefs.notify.pinned[peer];
+  saveNotify();
+  renderAll();
+}
+
+function friendGroup(key) {
+  return prefs.notify.friendGroups?.[key] ?? "";
+}
+
+function setFriendGroup(key, name) {
+  prefs.notify.friendGroups ??= {};
+  const clean = name.trim().slice(0, 32);
+  if (clean) prefs.notify.friendGroups[key] = clean;
+  else delete prefs.notify.friendGroups[key];
+  saveNotify();
+  renderAll();
+}
+
+/** The names of your friend groups, in order. */
+function friendGroupNames() {
+  return [...new Set(Object.values(prefs.notify.friendGroups ?? {}))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+/** Friends sorted into your groups (alphabetically), the rest last. */
+function groupFriends(rows) {
+  const names = friendGroupNames().filter((n) => rows.some((f) => friendGroup(f.key) === n));
+  if (!names.length) return [["", rows]];
+  return [...names.map((n) => [n, rows.filter((f) => friendGroup(f.key) === n)]), ["", rows.filter((f) => !friendGroup(f.key))]];
+}
+
+async function pickFriendGroup(f) {
+  const name = await askText({
+    title: "Friend group",
+    label: "Group for " + f.display_name,
+    value: friendGroup(f.key),
+    options: friendGroupNames(),
+    hint: "Pick one you have, or name a new one. Only you see your groups.",
+    ok: "Save",
+  });
+  if (name !== null) setFriendGroup(f.key, name);
+}
+
+/** A small dialog asking for a short text; null when cancelled. */
+function askText({ title, label, value = "", options = [], hint = "", ok = "Save" }) {
+  const dialog = $("text-dialog");
+  $("text-title").textContent = title;
+  $("text-label").textContent = label;
+  $("text-hint").textContent = hint;
+  $("text-ok").textContent = ok;
+  $("text-options").replaceChildren(...options.map((o) => Object.assign(document.createElement("option"), { value: o })));
+  const input = $("text-input");
+  input.value = value;
+  openModal(dialog);
+  input.focus();
+  input.select();
+  return new Promise((resolve) => {
+    const done = (v) => {
+      $("text-form").onsubmit = $("text-cancel").onclick = dialog.oncancel = null;
+      if (dialog.open) dialog.close();
+      resolve(v);
+    };
+    $("text-form").onsubmit = (e) => {
+      e.preventDefault();
+      done(input.value);
+    };
+    $("text-cancel").onclick = () => done(null);
+    dialog.oncancel = () => done(null);
+  });
+}
+
+// The sidebar's width: drag its edge; a double-click puts it back.
+var SIDEBAR_MIN = 200;
+var SIDEBAR_MAX = 420;
+var SIDEBAR_DEFAULT = 248;
+
+function setSidebarWidth(w, keep = true) {
+  const width = Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w)));
+  document.querySelector(".frame").style.setProperty("--sidebar-w", width + "px");
+  if (keep) save("sidebarWidth", String(width));
+  return width;
+}
+
+(() => {
+  const sidebar = document.querySelector(".sidebar");
+  const grip = el("div", "sidebar-grip");
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-label", "Drag to change the width");
+  sidebar.append(grip);
+  const saved = Number(load("sidebarWidth", String(SIDEBAR_DEFAULT)));
+  setSidebarWidth(saved || SIDEBAR_DEFAULT, false);
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const left = sidebar.getBoundingClientRect().left;
+    document.body.classList.add("resizing");
+    const move = (ev) => setSidebarWidth(ev.clientX - left, false);
+    const up = (ev) => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      document.body.classList.remove("resizing");
+      setSidebarWidth(ev.clientX - left);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+  grip.addEventListener("dblclick", () => setSidebarWidth(SIDEBAR_DEFAULT));
+})();

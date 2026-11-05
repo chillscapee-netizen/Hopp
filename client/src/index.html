@@ -595,6 +595,24 @@
   </dialog>
 
   <!-- ---------- folder settings ---------- -->
+  <dialog id="text-dialog" class="modal small">
+    <form id="text-form" method="dialog">
+      <div class="modal-body">
+        <h2 id="text-title"></h2>
+        <label class="field">
+          <span id="text-label" class="field-label"></span>
+          <input id="text-input" maxlength="32" autocomplete="off" list="text-options">
+          <datalist id="text-options"></datalist>
+          <span id="text-hint" class="hint"></span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" id="text-cancel" class="btn-link">Cancel</button>
+        <button type="submit" id="text-ok" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="folder-dialog" class="modal">
     <form id="folder-form" method="dialog">
       <div class="modal-body">
