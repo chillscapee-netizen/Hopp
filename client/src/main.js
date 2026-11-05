@@ -2412,7 +2412,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     }
     const li = el("li", "msg " + (grouped ? "cont" : "first"));
     li.dataset.id = m.id;
-    if (m.id > drawnBefore) li.classList.add("arrive");
+    if (m.id > drawnBefore && m.author_key !== state.account?.publicKey) li.classList.add("arrive");
     if (isBlocked(m.author_key) && !state.shownBlocked.has(m.id)) {
       const line = el("li", "msg blocked-msg");
       const show = el("button", "link", "Show");
@@ -2480,7 +2480,15 @@ function renderMessages(keepScrollUnlessAtBottom) {
     items.push(li);
     prev = m;
   }
-  for (const o of state.outbox.filter((x) => x.channel === state.view)) items.push(outboxItem(o));
+  // Messages on their way look exactly as they will once sent (grouped under yours),
+  // so nothing changes height when the server confirms them.
+  const myName = me()?.name ?? state.account?.name ?? "";
+  let last = prev && !prev.blocked ? { sender_name: prev.sender_name, sent_at: prev.sent_at } : null;
+  for (const o of state.outbox.filter((x) => x.channel === state.view)) {
+    const grouped = !!last && !o.reply && !o.failed && last.sender_name === myName && o.at - last.sent_at < GROUP_WINDOW_MS && dayLabel(last.sent_at) === dayLabel(o.at);
+    items.push(outboxItem(o, grouped));
+    last = { sender_name: myName, sent_at: o.at };
+  }
   $("messages").replaceChildren(...items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
   if (msgs.length) drawnUpTo.set(state.view, msgs.at(-1).id);
@@ -5947,8 +5955,12 @@ function failOutbox(o, why) {
   if (o.channel === state.view) renderMessages(true);
 }
 
-function outboxItem(o) {
-  const li = el("li", "msg first " + (o.failed ? "failed" : "pending"));
+function outboxItem(o, grouped) {
+  const li = el("li", "msg " + (grouped ? "cont " : "first ") + (o.failed ? "failed" : "pending"));
+  if (grouped) {
+    li.append(el("span", "msg-gutter", clock(o.at)), messageText(o.text));
+    return li;
+  }
   if (o.reply) li.append(replyLine(o.reply));
   const head = el("div", "msg-head");
   const name = state.account?.name ?? "";
