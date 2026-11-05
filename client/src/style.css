@@ -2913,7 +2913,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .sidebar { border-right: none; }
 .members { border-left: none; }
 .active-now { border-left: none; }
-/* Headers sit over the content with a soft shadow instead of a hard line. */
+/* Headers flow straight into the content. */
 .sidebar-head, .main-head { border-bottom: none; box-shadow: none; }
 /* The window title stays quiet: the sidebar already says where you are. */
 .topbar-title { color: var(--faint); font-size: 12px; font-weight: 500; }
@@ -2933,3 +2933,9 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .composer-box:focus-within { border-color: var(--border-strong); }
 /* Cards on Home without outlines. */
 .active-card { border-color: transparent; }
+/* Settings and dialogs: shades instead of outlines. */
+.settings-nav { border-right: none; }
+.card { background: var(--side-2); border-color: transparent; }
+.row { border-top-color: rgb(255 255 255 / 0.045); }
+.modal-foot { border-top: none; background: none; padding-top: 4px; }
+.account-card { border-color: transparent; }
