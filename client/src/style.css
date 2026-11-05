@@ -2905,3 +2905,4 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .msg-actions .quick-react { width: 30px; font-size: 16px; line-height: 1; }
 .msg-actions .quick-react.on { background: color-mix(in srgb, var(--link) 18%, transparent); }
 .mention-emoji { width: 24px; font-size: 18px; text-align: center; }
+.dm-view { position: relative; }

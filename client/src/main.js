@@ -4782,13 +4782,16 @@ async function decrypt(peer, m) {
 }
 
 async function addDmMessages(peer, raw, prepend) {
+  const seen = new Set((state.dmMessages.get(peer) ?? []).map((m) => m.id));
+  const opened = [];
+  for (const m of raw) {
+    if (seen.has(m.id)) continue;
+    opened.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, edited_at: m.edited_at ?? null, text: await decrypt(peer, m) });
+  }
+  // Others may have arrived while these were being opened: merge into the list as it is now.
   const list = state.dmMessages.get(peer) ?? [];
   const known = new Set(list.map((m) => m.id));
-  const fresh = [];
-  for (const m of raw) {
-    if (known.has(m.id)) continue;
-    fresh.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, edited_at: m.edited_at ?? null, text: await decrypt(peer, m) });
-  }
+  const fresh = opened.filter((m) => !known.has(m.id));
   const merged = prepend ? [...fresh, ...list] : [...list, ...fresh];
   merged.sort((a, b) => a.sent_at - b.sent_at);
   state.dmMessages.set(peer, merged);
@@ -5120,7 +5123,17 @@ function renderDmView(keepScroll) {
     const lock = el("p", "dm-lock");
     lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
     form.append(box);
-    view.append(scroller, form);
+    const jump = el("button", "jump-bar dm-jump-bar");
+    jump.type = "button";
+    jump.hidden = true;
+    const go = el("span", "jump-go", "Jump to present ");
+    go.append(icon("chevron", "xs"));
+    jump.append(el("span", "jump-text", "You're viewing older messages"), go);
+    jump.addEventListener("click", () => toBottom(scroller));
+    scroller.addEventListener("scroll", () => {
+      jump.hidden = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 400;
+    });
+    view.append(scroller, jump, form);
     body.replaceChildren(view);
     view.addEventListener("dragover", (e) => {
       if ([...(e.dataTransfer?.types ?? [])].includes("Files")) e.preventDefault();
@@ -7493,15 +7506,7 @@ function updateJumpBar() {
   bar.hidden = false;
 }
 
-$("jump-bar").addEventListener("click", () => {
-  const scroller = $("scroller");
-  scroller.scrollTo({ top: scroller.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  // Messages may land meanwhile: end up at the very bottom either way.
-  setTimeout(() => {
-    scroller.scrollTop = scroller.scrollHeight;
-    updateJumpBar();
-  }, 700);
-});
+$("jump-bar").addEventListener("click", () => toBottom($("scroller")));
 
 /** The grey arrow's popup: which Hopp you have, and a way to look for a newer one. */
 function fillUpToDatePop(pop) {
@@ -8721,3 +8726,49 @@ function emojiCandidates(q) {
     .slice(0, 8)
     .map((e) => ({ ...e, key: `emoji:${e.emoji}` }));
 }
+
+// ---------- moving through a conversation quickly ----------
+
+/** The message list on screen: the channel's, or the open DM's. */
+function activeScroller() {
+  if (online()) return $("scroller");
+  return document.querySelector(".dm-view .dm-scroll");
+}
+
+/** Down to the newest message, smoothly, landing exactly at the bottom. */
+function toBottom(scroller) {
+  if (!scroller) return;
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  setTimeout(() => {
+    scroller.scrollTop = scroller.scrollHeight;
+    scroller.dispatchEvent(new Event("scroll"));
+    if (online()) {
+      updateJumpBar();
+      markViewedRead();
+    }
+  }, 450);
+}
+
+/**
+ * Page Up / Page Down page through the conversation (even while writing),
+ * Ctrl+End goes to the newest message and Ctrl+Home to the oldest loaded one,
+ * Escape in an empty DM box catches up.
+ */
+document.addEventListener("keydown", (e) => {
+  const scroller = activeScroller();
+  if (!scroller || document.querySelector("dialog[open]")) return;
+  const inOtherField = e.target.closest?.("input, select") || (e.target.tagName === "TEXTAREA" && e.target !== chatInput && e.target.id !== "dm-input");
+  if (inOtherField) return;
+  if ((e.key === "PageUp" || e.key === "PageDown") && !e.altKey) {
+    e.preventDefault();
+    scroller.scrollBy({ top: (e.key === "PageUp" ? -1 : 1) * scroller.clientHeight * 0.85, behavior: "auto" });
+  } else if (e.ctrlKey && e.key === "End") {
+    e.preventDefault();
+    toBottom(scroller);
+  } else if (e.ctrlKey && e.key === "Home") {
+    e.preventDefault();
+    scroller.scrollTop = 0;
+  } else if (e.key === "Escape" && e.target.id === "dm-input" && !e.target.value) {
+    toBottom(scroller);
+  }
+});
