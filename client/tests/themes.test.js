@@ -36,7 +36,29 @@
   check("your own colour is used", prefs.theme === "custom" && JSON.parse(load("themeCustom", "{}")).a === "#ff2a6d");
   check("dark colours give a dark theme", css("color-scheme") === "dark");
   const main = css("--main");
-  check("tinted, calm and dark enough to read on", /^hsl\(341\.\d 25\.0% 30\.0%\)$/.test(main), main);
+  check("tinted, calm and dark enough to read on", /^hsl\(341\.\d 25\.0% 2\d\.\d%\)$/.test(main), main);
+
+  // Light or dark is your choice: dragging through light colours doesn't flip it.
+  const modeBefore = prefs.mode;
+  for (const c of ["#9a9aa0", "#c8c8d0", "#f0f0f6"]) {
+    picker.value = c;
+    picker.dispatchEvent(new Event("input"));
+    await wait(30);
+  }
+  check("light colours keep a dark theme dark", css("color-scheme") === "dark");
+  const lighter = css("--main");
+  picker.value = "#30303a";
+  picker.dispatchEvent(new Event("input"));
+  await wait(30);
+  check("and still change it, a step at a time", css("--main") !== lighter);
+  document.querySelector('.theme-mode .segment[data-look="light"]').click();
+  await wait(30);
+  check("Light makes it light", css("color-scheme") === "light" && document.querySelector(".theme-mode .segment.active")?.dataset.look === "light");
+  check("your voice settings are untouched", prefs.mode === modeBefore);
+  document.querySelector('.theme-mode .segment[data-look="dark"]').click();
+  picker.value = "#ff2a6d";
+  picker.dispatchEvent(new Event("input"));
+  await wait(30);
 
   // A second colour: a fade.
   const second = document.getElementById("theme-b");

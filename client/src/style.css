@@ -3084,3 +3084,4 @@ body { background: var(--frame-bg, var(--frame)); }
 /* Chat: your text size and space between messages. */
 .msg-text { font-size: var(--chat-size, 15px); }
 .msg.first { margin-top: var(--chat-space, 16px); }
+.theme-mode { width: 220px; }

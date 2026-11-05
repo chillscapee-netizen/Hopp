@@ -9385,17 +9385,19 @@ function hexToHsl(hex) {
 }
 
 /** The whole set of shades for a theme built around one colour. */
-function themeTokens(base, { contrast = 50, saturation = 50 } = {}) {
+function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
   const [h, sRaw, picked] = hexToHsl(base);
-  // Light picks make a light theme, others a dark one, each kept in a range where text reads well.
-  const l = picked > 60 ? Math.min(97, Math.max(88, picked)) : Math.min(30, Math.max(14, picked));
+  // Light or dark: as asked, or else from the colour. The colour's lightness then moves the
+  // theme smoothly within a range where text always reads well.
+  const light = mode ? mode === "light" : picked > 60;
+  const l = light ? 86 + (picked / 100) * 11 : 12 + (Math.min(picked, 80) / 80) * 20;
   // Surfaces stay calm: even a bright pick becomes a tint (more of it with colourfulness up).
   const s = Math.min(sRaw, 6 + (saturation / 100) * 38);
   // Contrast spreads the steps between surfaces.
   const k = 0.6 + (contrast / 100) * 0.8;
   const at = (dl, sat = s) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + Math.max(0, Math.min(100, l + dl * k)).toFixed(1) + "%)";
   const tint = (lightness, sat = Math.min(s, 10)) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + lightness + "%)";
-  if (picked > 60) {
+  if (light) {
     // Light: what's further back is a little darker; text is near-black.
     return {
       frame: at(-9), "side-2": at(-6), side: at(-4), main: at(0), elev: at(-7), "elev-2": at(-11), "elev-3": at(-15), deep: at(-5),
@@ -9418,7 +9420,7 @@ var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "frame-bg", "sheet-bg"
 
 /** What to paint: a preset, a colour theme, or your own. */
 function themeSpec() {
-  if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation };
+  if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation, mode: prefs.custom.mode };
   const g = GRADIENTS.find((x) => x.id === prefs.theme);
   if (g) return { a: g.a, b: g.b, contrast: 50, saturation: 60 };
   return { a: THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base, b: null, contrast: 50, saturation: 50 };
@@ -9457,13 +9459,18 @@ function setTheme(id) {
   syncThemePage();
 }
 
+var themeFrame = 0;
 function saveCustom(change) {
   Object.assign(prefs.custom, change);
   save("themeCustom", JSON.stringify(prefs.custom));
   prefs.theme = "custom";
   save("theme", "custom");
-  applyTheme();
-  syncThemePage();
+  // Dragging a colour fires many times a frame: paint once per frame.
+  clearTimeout(themeFrame);
+  themeFrame = setTimeout(() => {
+    applyTheme();
+    syncThemePage();
+  }, 16);
 }
 
 /** A little picture of a theme: the sidebar, the chat and two lines of text. */
@@ -9531,6 +9538,10 @@ function syncThemePage() {
   if (document.activeElement !== $("theme-b")) $("theme-b").value = c.b ?? c.a;
   $("theme-b").parentElement.classList.toggle("off", !c.b);
   $("theme-b-clear").hidden = !c.b;
+  for (const b of document.querySelectorAll(".theme-mode .segment")) {
+    b.classList.toggle("active", b.dataset.look === c.mode);
+    b.setAttribute("aria-checked", String(b.dataset.look === c.mode));
+  }
   $("theme-contrast").value = c.contrast;
   $("theme-contrast-value").textContent = c.contrast + "%";
   $("theme-saturation").value = c.saturation;
@@ -9543,6 +9554,9 @@ function syncThemePage() {
 
 prefs.theme = load("theme", "mid");
 prefs.custom = { a: load("themeColor", "#3b4a46"), b: null, contrast: 50, saturation: 50, ...JSON.parse(load("themeCustom", "{}") || "{}") };
+// Older saves picked light or dark from the colour; keep what they had.
+prefs.custom.mode ??= hexToHsl(prefs.custom.a)[2] > 60 ? "light" : "dark";
+for (const b of document.querySelectorAll(".theme-mode .segment")) b.addEventListener("click", () => saveCustom({ mode: b.dataset.look }));
 prefs.chatSize = Number(load("chatSize", "15"));
 prefs.chatSpace = Number(load("chatSpace", "16"));
 

@@ -1105,13 +1105,20 @@
             <div class="row">
               <span class="row-label">
                 <span class="row-title">Your own theme</span>
-                <span class="row-sub">Pick a colour, and a second one for a gentle fade. Hopp builds the rest, light or dark.</span>
+                <span class="row-sub">Pick a colour, and a second one for a gentle fade. Hopp builds the rest and keeps the text readable.</span>
               </span>
               <span class="row-control theme-colors">
                 <label class="color-field" title="First colour"><input id="theme-a" type="color"></label>
                 <label class="color-field" title="Second colour"><input id="theme-b" type="color"></label>
                 <button id="theme-b-clear" type="button" class="btn-link sm">One colour</button>
               </span>
+            </div>
+            <div class="row">
+              <span class="row-title">Light or dark</span>
+              <div class="segmented theme-mode" role="radiogroup" aria-label="Light or dark">
+                <button type="button" class="segment" data-look="dark" role="radio">Dark</button>
+                <button type="button" class="segment" data-look="light" role="radio">Light</button>
+              </div>
             </div>
             <label class="row">
               <span class="row-title">Contrast</span>
