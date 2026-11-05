@@ -2906,3 +2906,30 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .msg-actions .quick-react.on { background: color-mix(in srgb, var(--link) 18%, transparent); }
 .mention-emoji { width: 24px; font-size: 18px; text-align: center; }
 .dm-view { position: relative; }
+
+/* ---------- clean and flowing: surfaces instead of lines ---------- */
+/* The panels meet without rules; shades of grey tell them apart. */
+.frame { border-color: rgb(255 255 255 / 0.05); }
+.sidebar { border-right: none; }
+.members { border-left: none; }
+.active-now { border-left: none; }
+/* Headers sit over the content with a soft shadow instead of a hard line. */
+.sidebar-head, .main-head { position: relative; z-index: 2; border-bottom: none; box-shadow: 0 1px 0 rgb(0 0 0 / 0.2), 0 3px 8px -4px rgb(0 0 0 / 0.35); }
+/* The window title stays quiet: the sidebar already says where you are. */
+.topbar-title { color: var(--faint); font-size: 12px; font-weight: 500; }
+/* One family of rounded corners for everything you can point at. */
+.channel-row, .server-row, .member, .menu-item, .friend-row, .active-row, .nav-row { border-radius: 8px; }
+/* Friends: clean rows, no table lines. */
+.friend-row, .friend-row:hover, .friend-row:hover + .friend-row { border-top: none; }
+.friend-row + .friend-row { margin-top: 2px; }
+/* Add friend invites rather than shouts; it fills in when it's the open tab. */
+.friend-tab.add { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+.friend-tab.add:hover { background: color-mix(in srgb, var(--green) 24%, transparent); }
+.friend-tab.add.active { background: var(--green); color: var(--frame); }
+/* The user panel belongs to the sidebar instead of being a separate bar. */
+.user-panel { border-top: none; }
+/* The message box: a soft field that only outlines itself while you write. */
+.composer-box { border-color: transparent; }
+.composer-box:focus-within { border-color: var(--border-strong); }
+/* Cards on Home without outlines. */
+.active-card { border-color: transparent; }
