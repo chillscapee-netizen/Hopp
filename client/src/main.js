@@ -1503,6 +1503,7 @@ async function connectTo(server, create, reconnecting) {
   saveDraft();
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
+  rememberServerView();
   if (state.activeId) await call("disconnect");
   state.activeId = null;
   state.roster = null;
@@ -1534,6 +1535,7 @@ async function connectTo(server, create, reconnecting) {
     state.roster = roster;
     state.activeId = server.id;
     state.notice = null;
+    freshView();
     rememberServerLook(server, roster);
     // We're a member now; the invite has done its job.
     delete server.invite;
@@ -1731,7 +1733,8 @@ listen("chat-history", (e) => {
   else state.olderDone.delete(ch);
   const server = currentServer();
   if (server) noteHistory(server, ch, messages);
-  if (ch === state.view) renderMessages(false);
+  // While connecting, the channel is drawn once the server is ready (with its address in the keys).
+  if (ch === state.view && online()) renderMessages(false);
   renderUnread();
   // Opened from a message link: go to it once its channel is here.
   if (state.pendingJump && ch === state.view) {
@@ -1850,6 +1853,7 @@ function connectingServer() {
 
 function renderAll() {
   if (!state.account) return;
+  if (online() || !connectingServer()) freshView();
   if (typeof renderCall === "function") queueMicrotask(renderCall);
   const on = online();
   const loading = !on && !!connectingServer();
@@ -1881,6 +1885,20 @@ function renderLoading() {
   const server = connectingServer();
   const view = document.querySelector(".channel-view");
   view.classList.toggle("no-members", !prefs.showMembers);
+  const seen = serverViews.get(server.id);
+  if (seen) {
+    // What it looked like when you left: there at once, quietly, until the server answers.
+    $("chat-channel").textContent = seen.channel;
+    $("chat-topic").textContent = seen.topic;
+    $("composer").hidden = true;
+    renderedChannel = undefined;
+    $("messages").replaceChildren(...seen.messages);
+    $("member-list").replaceChildren(...seen.members);
+    for (const n of [$("messages"), $("member-list")]) n.classList.add("stale");
+    const scroller = $("scroller");
+    scroller.scrollTop = scroller.scrollHeight;
+    return;
+  }
   $("chat-channel").textContent = "";
   $("chat-topic").textContent = "";
   $("composer").hidden = true;
@@ -1929,6 +1947,12 @@ function renderSidebar() {
   if (pending) {
     $("sidebar-title").textContent = pending.label;
     head.disabled = true;
+    const seen = serverViews.get(pending.id);
+    if (seen) {
+      body.replaceChildren(...seen.sidebar);
+      body.classList.add("stale");
+      return;
+    }
     body.replaceChildren(
       category("Text channels"),
       ...skeleton("channel-row skeleton-row", [62, 48, 70]),
@@ -9855,4 +9879,29 @@ function linkCard(p, link) {
     card.append(img);
   }
   return card;
+}
+
+// ---------- switching servers without the wait ----------
+//
+// Leaving a server keeps what was on screen (channels, messages, members). Coming back shows
+// it at once, quietly and not clickable, until the server answers a moment later; the fresh
+// view then reuses those very messages, so nothing jumps.
+
+/** What each server looked like when you left it, for this session. */
+var serverViews = new Map();
+
+function rememberServerView() {
+  if (!state.activeId || !state.roster || state.atHome) return;
+  serverViews.set(state.activeId, {
+    channel: $("chat-channel").textContent,
+    topic: $("chat-topic").textContent,
+    sidebar: [...$("sidebar-body").children],
+    messages: [...$("messages").children].filter((n) => n.dataset.key),
+    members: [...$("member-list").children],
+  });
+}
+
+/** Connected again: the remembered view gives way to the real one. */
+function freshView() {
+  for (const n of [$("sidebar-body"), $("messages"), $("member-list")]) n.classList.remove("stale");
 }

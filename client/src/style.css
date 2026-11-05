@@ -3058,3 +3058,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .link-card-title:hover { text-decoration: underline; }
 .link-card-desc { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .link-card-img { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 8px; align-self: start; }
+
+/* A server you come back to shows what you saw last, quietly, until it answers. */
+.stale { opacity: 0.6; pointer-events: none; transition: opacity 150ms; }
