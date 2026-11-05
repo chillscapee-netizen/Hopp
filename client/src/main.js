@@ -2468,6 +2468,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     state.newSince = read && read.last_id > read.read_id ? { channel: state.view, id: read.read_id } : null;
   }
   let newSince = state.newSince?.channel === state.view ? state.newSince.id : null;
+  const unreadFrom = newSince;
 
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
@@ -2579,7 +2580,14 @@ function renderMessages(keepScrollUnlessAtBottom) {
     last = { author_key: state.account?.publicKey, sender_name: myName, sent_at: o.at };
   }
   reconcile($("messages"), items);
-  if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
+  // Opening a channel with more new than fits: start at the "New" line, not past it.
+  const divider = !keepScrollUnlessAtBottom ? $("messages").querySelector(".new-divider") : null;
+  const dividerAt = divider ? divider.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : 0;
+  if (divider && dividerAt < scroller.scrollHeight - scroller.clientHeight - 40) {
+    scroller.scrollTop = dividerAt - 56;
+    scroller.unstick?.();
+    jumpSeen = { channel: state.view, id: unreadFrom };
+  } else if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
   if (msgs.length) drawnUpTo.set(state.view, msgs.at(-1).id);
   updateJumpBar();
   markViewedRead();
@@ -8435,6 +8443,8 @@ function stickToBottom(scroller, list) {
   const keep = () => {
     if (atBottom) scroller.scrollTop = scroller.scrollHeight;
   };
+  // Placed somewhere on purpose (like the "New" line): stay there.
+  scroller.unstick = () => (atBottom = false);
   new ResizeObserver(keep).observe(list);
   // Cards filled in, pictures and GIFs finishing: the same, without waiting for a frame.
   new MutationObserver(keep).observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class", "src"] });
