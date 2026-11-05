@@ -3066,3 +3066,21 @@ body.resizing { cursor: col-resize; user-select: none; }
 .invite-card { border-color: transparent; }
 .invite-card-icon { display: grid; place-items: center; font-weight: 700; color: var(--text); }
 .invite-card-kicker { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+/* Colour themes: fading backgrounds when a theme has two colours. */
+body { background: var(--frame-bg, var(--frame)); }
+.frame { background: var(--sheet-bg, var(--main)); }
+.sidebar, .members { background: var(--side-bg, var(--side-2)); }
+.gradient-list { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+.gradient-swatch { width: 44px; height: 44px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
+.gradient-swatch:hover { transform: scale(1.06); }
+.gradient-swatch.active { border-color: var(--text); }
+.theme-editor { margin-top: 20px; }
+.theme-colors { display: flex; align-items: center; gap: 8px; }
+.color-field { position: relative; width: 32px; height: 32px; border-radius: 50%; overflow: hidden; box-shadow: inset 0 0 0 2px var(--border-strong); cursor: pointer; }
+.color-field input { position: absolute; inset: -8px; width: 48px; height: 48px; border: none; padding: 0; background: none; cursor: pointer; }
+.color-field.off { opacity: 0.45; }
+
+/* Chat: your text size and space between messages. */
+.msg-text { font-size: var(--chat-size, 15px); }
+.msg.first { margin-top: var(--chat-space, 16px); }

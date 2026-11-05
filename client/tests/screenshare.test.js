@@ -36,14 +36,29 @@
   const myRow = document.querySelector(`.voice-user[data-user="${state.roster.me}"]`);
   check("LIVE shows on your own name", !!myRow?.querySelector(".live-pill"));
 
-  // Watching it (the handshake comes back to this page, so it's our own screen).
-  watchScreen(state.roster.me);
+  // Your own stream shows at once, straight from your screen.
   const video = document.getElementById("screen-video");
+  check("you see your own stream", !document.getElementById("screen-stage").hidden && video.srcObject === screenShare.stream && document.getElementById("screen-who").textContent.startsWith("Your screen"));
+  check("without a connection to yourself", screenShare.peers.size === 0);
+  document.getElementById("screen-close").click();
+  myRow.querySelector(".live-pill").click();
+  await wait(50);
+  check("your own LIVE opens it again", !document.getElementById("screen-stage").hidden && watching?.local);
+  stopWatching();
+
+  // Someone watching it over a real connection: the handshakes come back to this page as if
+  // from Elin, so this page is both the one sharing and the one watching.
+  const viewer = state.roster.users.find((u) => u.session_id !== state.roster.me && u.voice_channel === 1);
+  const rv = structuredClone(state.roster);
+  rv.users.find((u) => u.session_id === viewer.session_id).sharing = true;
+  emit("roster", rv);
+  await wait(50);
+  watchScreen(viewer.session_id);
   for (let i = 0; i < 80 && !(video.videoWidth > 0); i++) await wait(100);
   check("the screen arrives over a real connection", video.videoWidth === 640, `${video.videoWidth}x${video.videoHeight}`);
   check("shown above the chat", !document.getElementById("screen-stage").hidden && document.getElementById("screen-who").textContent.endsWith("'s screen"));
   check("'Connecting…' goes once it plays", document.getElementById("screen-wait").hidden);
-  const peer = screenShare.peers.get(state.roster.me);
+  const peer = screenShare.peers.get(viewer.session_id);
   const params = peer?.getSenders()[0]?.getParameters();
   check("sent at high quality", params?.encodings?.[0]?.maxBitrate === 6_000_000, JSON.stringify(params?.encodings));
 

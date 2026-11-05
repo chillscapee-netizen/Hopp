@@ -1,4 +1,5 @@
-// Themes: presets, your own colour, kept for next time, and Mid grey is the stylesheet itself.
+// Themes: presets, colour themes, your own (with a picker that stays open while you use it),
+// kept for next time, and Mid grey is the stylesheet itself. Chat text size and spacing too.
 
 (async () => {
   await inServer();
@@ -6,7 +7,7 @@
   const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
   const bodyBg = () => getComputedStyle(document.body).backgroundColor;
 
-  check("starts in Mid grey, with nothing overridden", prefs.theme === "mid" && root.style.length === 0);
+  check("starts in Mid grey, with no colour overridden", prefs.theme === "mid" && !root.style.getPropertyValue("--main"));
   const midBg = bodyBg();
 
   openSettings("appearance");
@@ -25,20 +26,51 @@
   check("kept for next time", localStorage.getItem("theme") === "light");
   check("the card follows", document.querySelector(".theme-card.active")?.dataset.theme === "light");
 
-  // Your own colour: a bright pick becomes a calm dark theme around it.
-  const picker = document.querySelector(".theme-color");
+  // Your own colour: the picker is the same element all along, so it stays open while you drag.
+  const picker = document.getElementById("theme-a");
+  picker.focus();
   picker.value = "#ff2a6d";
   picker.dispatchEvent(new Event("input"));
   await wait(50);
-  check("your own colour is used", prefs.theme === "custom" && localStorage.getItem("themeColor") === "#ff2a6d");
+  check("the picker isn't rebuilt while you use it", document.getElementById("theme-a") === picker && document.activeElement === picker);
+  check("your own colour is used", prefs.theme === "custom" && JSON.parse(load("themeCustom", "{}")).a === "#ff2a6d");
   check("dark colours give a dark theme", css("color-scheme") === "dark");
   const main = css("--main");
-  check("tinted, calm and dark enough to read on", /^hsl\(341\.\d 22\.0% 30\.0%\)$/.test(main), main);
+  check("tinted, calm and dark enough to read on", /^hsl\(341\.\d 25\.0% 30\.0%\)$/.test(main), main);
+
+  // A second colour: a fade.
+  const second = document.getElementById("theme-b");
+  second.value = "#2a6dff";
+  second.dispatchEvent(new Event("input"));
+  await wait(50);
+  check("a second colour makes a fade", css("--sheet-bg").startsWith("linear-gradient"));
+  const contrast = document.getElementById("theme-contrast");
+  contrast.value = "100";
+  contrast.dispatchEvent(new Event("input"));
+  await wait(50);
+  check("contrast spreads the shades", css("--frame") !== "" && document.getElementById("theme-contrast-value").textContent === "100%");
+  document.getElementById("theme-b-clear").click();
+  await wait(50);
+  check("one colour again: no fade", !css("--sheet-bg"));
+
+  // Colour themes.
+  document.querySelector('.gradient-swatch[data-theme="dusk"]').click();
+  await wait(50);
+  check("a colour theme fades between its colours", prefs.theme === "dusk" && css("--frame-bg").startsWith("linear-gradient") && document.querySelector(".gradient-swatch.active")?.dataset.theme === "dusk");
+
+  // Chat text size and spacing.
+  const size = document.getElementById("chat-size");
+  size.value = "18";
+  size.dispatchEvent(new Event("input"));
+  await wait(50);
+  check("chat text gets bigger", getComputedStyle(document.querySelector("#messages .msg-text")).fontSize === "18px");
 
   // Back to Mid grey: exactly the stylesheet again.
   document.querySelector('.theme-card[data-theme="mid"]').click();
+  size.value = "15";
+  size.dispatchEvent(new Event("input"));
   await wait(50);
-  check("Mid grey clears every override", root.style.length === 0 && bodyBg() === midBg);
+  check("Mid grey clears every colour", !root.style.getPropertyValue("--main") && !root.style.getPropertyValue("--sheet-bg") && bodyBg() === midBg);
   document.getElementById("settings").close();
   report();
 })();

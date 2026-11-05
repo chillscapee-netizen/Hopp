@@ -2163,10 +2163,10 @@ function userRow(u, className, size, sub) {
   if (className === "voice-user" && u.sharing) {
     const live = el("button", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE");
     live.type = "button";
-    live.dataset.tip = isSelf ? "You're sharing your screen" : watching?.from === u.session_id ? "You're watching" : "Watch their screen";
+    live.dataset.tip = watching?.from === u.session_id ? "You're watching" : isSelf ? "See your own stream" : "Watch their screen";
     live.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (!isSelf) watchScreen(u.session_id);
+      watchScreen(u.session_id);
     });
     row.append(live);
   }
@@ -9350,14 +9350,25 @@ function jumpToDm(peer, id) {
 // ---------- themes ----------
 //
 // Every colour in Hopp comes from a handful of surface, border and text shades. A theme is
-// one colour: Hopp builds those shades around it, as a dark theme or, for a light colour,
-// a light one. "Mid grey" is the stylesheet itself.
+// built around one colour (and, for a colour theme, a second one it fades into): dark, or
+// light for a light colour. "Mid grey" is the stylesheet itself. Contrast spreads the shades
+// further apart, colourfulness lets more of the colour through; text always stays readable.
 
 var THEMES = [
   { id: "mid", name: "Mid grey", base: "#3c3c42" },
   { id: "dark", name: "Dark", base: "#2a2a2e" },
   { id: "midnight", name: "Midnight", base: "#2b3140" },
   { id: "light", name: "Light grey", base: "#f2f2f4" },
+];
+
+/** Colour themes: two colours, fading from one to the other. */
+var GRADIENTS = [
+  { id: "dusk", name: "Dusk", a: "#3a2f52", b: "#23384a" },
+  { id: "forest", name: "Forest", a: "#2c3d33", b: "#3b4632" },
+  { id: "ember", name: "Ember", a: "#4a2e36", b: "#4a3a2a" },
+  { id: "ocean", name: "Ocean", a: "#1f3346", b: "#1f4141" },
+  { id: "plum", name: "Plum", a: "#40284a", b: "#2e2a4a" },
+  { id: "dawn", name: "Dawn", a: "#f3e9ef", b: "#e8eef8" },
 ];
 
 function hexToHsl(hex) {
@@ -9374,13 +9385,15 @@ function hexToHsl(hex) {
 }
 
 /** The whole set of shades for a theme built around one colour. */
-function themeTokens(base) {
+function themeTokens(base, { contrast = 50, saturation = 50 } = {}) {
   const [h, sRaw, picked] = hexToHsl(base);
   // Light picks make a light theme, others a dark one, each kept in a range where text reads well.
   const l = picked > 60 ? Math.min(97, Math.max(88, picked)) : Math.min(30, Math.max(14, picked));
-  // Surfaces stay calm: even a bright pick becomes a gentle tint.
-  const s = Math.min(sRaw, 22);
-  const at = (dl, sat = s) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + Math.max(0, Math.min(100, l + dl)).toFixed(1) + "%)";
+  // Surfaces stay calm: even a bright pick becomes a tint (more of it with colourfulness up).
+  const s = Math.min(sRaw, 6 + (saturation / 100) * 38);
+  // Contrast spreads the steps between surfaces.
+  const k = 0.6 + (contrast / 100) * 0.8;
+  const at = (dl, sat = s) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + Math.max(0, Math.min(100, l + dl * k)).toFixed(1) + "%)";
   const tint = (lightness, sat = Math.min(s, 10)) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + lightness + "%)";
   if (picked > 60) {
     // Light: what's further back is a little darker; text is near-black.
@@ -9401,74 +9414,155 @@ function themeTokens(base) {
   };
 }
 
-var THEME_KEYS = Object.keys(themeTokens("#3c3c42"));
+var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "frame-bg", "sheet-bg", "side-bg"];
 
-/** The chosen theme's colour: a preset's, or your own. */
-function themeColor() {
-  if (prefs.theme === "custom") return prefs.themeColor;
-  return THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base;
+/** What to paint: a preset, a colour theme, or your own. */
+function themeSpec() {
+  if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation };
+  const g = GRADIENTS.find((x) => x.id === prefs.theme);
+  if (g) return { a: g.a, b: g.b, contrast: 50, saturation: 60 };
+  return { a: THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base, b: null, contrast: 50, saturation: 50 };
+}
+
+/** Tokens for a whole spec: the first colour's shades, and fades into the second's. */
+function specTokens(spec) {
+  const t = themeTokens(spec.a, spec);
+  if (spec.b) {
+    const u = themeTokens(spec.b, spec);
+    // Light and dark don't mix: the second colour follows the first.
+    if (u.scheme === t.scheme) {
+      t["frame-bg"] = "linear-gradient(160deg, " + t.frame + ", " + u.frame + ")";
+      t["sheet-bg"] = "linear-gradient(160deg, " + t.main + ", " + u.main + ")";
+      t["side-bg"] = "linear-gradient(180deg, " + t["side-2"] + ", " + u["side-2"] + ")";
+    }
+  }
+  return t;
 }
 
 function applyTheme() {
   const root = document.documentElement.style;
   for (const k of THEME_KEYS) root.removeProperty(k === "scheme" ? "color-scheme" : "--" + k);
   // Mid grey is the stylesheet's own colours.
-  if (prefs.theme === "mid" || !prefs.theme) return;
-  const t = themeTokens(themeColor());
-  for (const [k, v] of Object.entries(t)) root.setProperty(k === "scheme" ? "color-scheme" : "--" + k, v);
+  if (prefs.theme !== "mid" && prefs.theme) {
+    for (const [k, v] of Object.entries(specTokens(themeSpec()))) root.setProperty(k === "scheme" ? "color-scheme" : "--" + k, v);
+  }
+  root.setProperty("--chat-size", prefs.chatSize + "px");
+  root.setProperty("--chat-space", prefs.chatSpace + "px");
 }
 
-function setTheme(id, color) {
+function setTheme(id) {
   prefs.theme = id;
   save("theme", id);
-  if (color) {
-    prefs.themeColor = color;
-    save("themeColor", color);
-  }
   applyTheme();
-  renderThemes();
+  syncThemePage();
 }
 
-/** The theme cards in Settings: a small picture of each, and your own colour last. */
+function saveCustom(change) {
+  Object.assign(prefs.custom, change);
+  save("themeCustom", JSON.stringify(prefs.custom));
+  prefs.theme = "custom";
+  save("theme", "custom");
+  applyTheme();
+  syncThemePage();
+}
+
+/** A little picture of a theme: the sidebar, the chat and two lines of text. */
+function themePicture(spec) {
+  const t = specTokens(spec);
+  const pic = el("span", "theme-pic");
+  pic.style.background = t["frame-bg"] ?? t.frame;
+  const side = el("span", "theme-pic-side");
+  side.style.background = t["side-bg"] ?? t["side-2"];
+  const main = el("span", "theme-pic-main");
+  main.style.background = t["sheet-bg"] ?? t.main;
+  for (const w of [70, 45]) {
+    const line = el("i");
+    line.style.width = w + "%";
+    line.style.background = t.faint;
+    main.append(line);
+  }
+  pic.append(side, main);
+  return pic;
+}
+
+/** A colour as a bright, clear swatch (the theme itself uses its calm, dark shades). */
+function swatchColor(hex) {
+  const [h, s, l] = hexToHsl(hex);
+  return "hsl(" + h.toFixed(0) + " " + Math.min(70, s + 25).toFixed(0) + "% " + (l > 60 ? 82 : 46) + "%)";
+}
+
+/** Builds the Appearance page once; after that only marks and colours change, so a colour picker stays open while you use it. */
 function renderThemes() {
   const list = $("theme-list");
-  if (!list) return;
-  const card = (id, name, base, extra) => {
-    const t = themeTokens(base);
-    const b = el("button", "theme-card" + (prefs.theme === id ? " active" : ""));
+  if (!list || list.childElementCount) return syncThemePage();
+  const card = (id, name, spec) => {
+    const b = el("button", "theme-card");
     b.type = "button";
     b.dataset.theme = id;
-    const pic = el("span", "theme-pic");
-    pic.style.background = t.frame;
-    const side = el("span", "theme-pic-side");
-    side.style.background = t["side-2"];
-    const main = el("span", "theme-pic-main");
-    main.style.background = t.main;
-    for (const w of [70, 45]) {
-      const line = el("i");
-      line.style.width = w + "%";
-      line.style.background = t.faint;
-      main.append(line);
-    }
-    pic.append(side, main);
-    b.append(pic, el("span", "theme-name", name));
-    if (extra) b.append(extra);
-    b.addEventListener("click", (e) => {
-      if (e.target.closest("input")) return;
-      setTheme(id);
-    });
+    b.append(themePicture(spec), el("span", "theme-name", name));
+    b.addEventListener("click", () => setTheme(id));
     return b;
   };
-  const picker = el("input", "theme-color");
-  picker.type = "color";
-  picker.value = prefs.themeColor;
-  picker.dataset.tip = "Pick your colour";
-  picker.addEventListener("input", () => setTheme("custom", picker.value));
-  list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, t.base)), card("custom", "Your own", prefs.themeColor, picker));
+  list.replaceChildren(
+    ...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })),
+    card("custom", "Your own", { ...prefs.custom }),
+  );
+  $("gradient-list").replaceChildren(
+    ...GRADIENTS.map((g) => {
+      const b = el("button", "gradient-swatch");
+      b.type = "button";
+      b.dataset.theme = g.id;
+      b.dataset.tip = g.name;
+      b.style.background = "linear-gradient(135deg, " + swatchColor(g.a) + ", " + swatchColor(g.b) + ")";
+      b.addEventListener("click", () => setTheme(g.id));
+      return b;
+    }),
+  );
+  syncThemePage();
+}
+
+/** The page follows the settings without being rebuilt. */
+function syncThemePage() {
+  for (const n of document.querySelectorAll(".theme-card, .gradient-swatch")) n.classList.toggle("active", n.dataset.theme === prefs.theme);
+  const custom = document.querySelector('.theme-card[data-theme="custom"]');
+  if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
+  const c = prefs.custom;
+  if (document.activeElement !== $("theme-a")) $("theme-a").value = c.a;
+  if (document.activeElement !== $("theme-b")) $("theme-b").value = c.b ?? c.a;
+  $("theme-b").parentElement.classList.toggle("off", !c.b);
+  $("theme-b-clear").hidden = !c.b;
+  $("theme-contrast").value = c.contrast;
+  $("theme-contrast-value").textContent = c.contrast + "%";
+  $("theme-saturation").value = c.saturation;
+  $("theme-saturation-value").textContent = c.saturation + "%";
+  $("chat-size").value = prefs.chatSize;
+  $("chat-size-value").textContent = prefs.chatSize + " px";
+  $("chat-space").value = prefs.chatSpace;
+  $("chat-space-value").textContent = prefs.chatSpace + " px";
 }
 
 prefs.theme = load("theme", "mid");
-prefs.themeColor = load("themeColor", "#3b4a46");
+prefs.custom = { a: load("themeColor", "#3b4a46"), b: null, contrast: 50, saturation: 50, ...JSON.parse(load("themeCustom", "{}") || "{}") };
+prefs.chatSize = Number(load("chatSize", "15"));
+prefs.chatSpace = Number(load("chatSpace", "16"));
+
+$("theme-a").addEventListener("input", (e) => saveCustom({ a: e.target.value }));
+$("theme-b").addEventListener("input", (e) => saveCustom({ b: e.target.value }));
+$("theme-b-clear").addEventListener("click", () => saveCustom({ b: null }));
+$("theme-contrast").addEventListener("input", (e) => saveCustom({ contrast: Number(e.target.value) }));
+$("theme-saturation").addEventListener("input", (e) => saveCustom({ saturation: Number(e.target.value) }));
+$("chat-size").addEventListener("input", (e) => {
+  prefs.chatSize = Number(e.target.value);
+  save("chatSize", String(prefs.chatSize));
+  applyTheme();
+  syncThemePage();
+});
+$("chat-space").addEventListener("input", (e) => {
+  prefs.chatSpace = Number(e.target.value);
+  save("chatSpace", String(prefs.chatSpace));
+  applyTheme();
+  syncThemePage();
+});
 applyTheme();
 renderThemes();
 
@@ -9547,6 +9641,8 @@ async function startShare() {
   screenShare.stream = stream;
   call("set_sharing", { on: true });
   renderVoicePanel();
+  // See what the others see.
+  watchScreen(state.roster.me);
 }
 
 function stopShare(quiet = false) {
@@ -9556,6 +9652,7 @@ function stopShare(quiet = false) {
     pc.close();
   }
   screenShare.peers.clear();
+  if (watching?.local) stopWatching(false);
   screenShare.stream.getTracks().forEach((t) => t.stop());
   screenShare.stream = null;
   if (!quiet && connected()) call("set_sharing", { on: false });
@@ -9593,6 +9690,15 @@ function tuneScreenSender(pc) {
 function watchScreen(session) {
   if (watching?.from === session) return;
   stopWatching();
+  if (session === state.roster?.me) {
+    // Your own: shown straight from your screen.
+    if (!screenShare.stream) return;
+    watching = { from: session, pc: null, pending: [], local: true };
+    $("screen-video").srcObject = screenShare.stream;
+    renderScreenStage();
+    renderSidebar();
+    return;
+  }
   const w = { from: session, pc: null, pending: [] };
   watching = w;
   renderScreenStage();
@@ -9608,7 +9714,7 @@ function watchScreen(session) {
 
 function stopWatching(tell = true) {
   if (!watching) return;
-  if (tell) screenSend(watching.from, { k: "stop", s: "sharer" });
+  if (tell && !watching.local) screenSend(watching.from, { k: "stop", s: "sharer" });
   watching.pc?.close();
   watching = null;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -9672,7 +9778,8 @@ function syncScreen() {
     stopWatching(false);
     return;
   }
-  if (watching) {
+  // Your own stays while you share (the server may not have said so yet).
+  if (watching && !watching.local) {
     const u = state.roster.users.find((x) => x.session_id === watching.from);
     if (!u || !u.sharing || u.voice_channel !== myVoice()) {
       if (u && !u.sharing) toast((u.name ?? "They") + " stopped sharing.");
@@ -9695,7 +9802,7 @@ function renderScreenStage() {
     video.srcObject = null;
     return;
   }
-  $("screen-who").textContent = (userName(watching.from) ?? "Someone") + "'s screen";
+  $("screen-who").textContent = watching.local ? "Your screen · what the others see" : (userName(watching.from) ?? "Someone") + "'s screen";
   $("screen-wait").hidden = !!video.srcObject && !video.paused;
 }
 

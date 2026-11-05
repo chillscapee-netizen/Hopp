@@ -1097,7 +1097,43 @@
           <h2 class="page-title">Appearance</h2>
           <div class="card-title">Theme</div>
           <div id="theme-list" class="theme-list"></div>
-          <p class="row-note hint">Make your own: pick any colour and Hopp builds a whole theme around it, light or dark.</p>
+
+          <div class="card-title">Colour themes</div>
+          <div id="gradient-list" class="gradient-list"></div>
+
+          <div id="theme-editor" class="card theme-editor">
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Your own theme</span>
+                <span class="row-sub">Pick a colour, and a second one for a gentle fade. Hopp builds the rest, light or dark.</span>
+              </span>
+              <span class="row-control theme-colors">
+                <label class="color-field" title="First colour"><input id="theme-a" type="color"></label>
+                <label class="color-field" title="Second colour"><input id="theme-b" type="color"></label>
+                <button id="theme-b-clear" type="button" class="btn-link sm">One colour</button>
+              </span>
+            </div>
+            <label class="row">
+              <span class="row-title">Contrast</span>
+              <span class="row-control slider-control"><input id="theme-contrast" type="range" min="0" max="100" step="5"><output id="theme-contrast-value"></output></span>
+            </label>
+            <label class="row">
+              <span class="row-title">Colourfulness</span>
+              <span class="row-control slider-control"><input id="theme-saturation" type="range" min="0" max="100" step="5"><output id="theme-saturation-value"></output></span>
+            </label>
+          </div>
+
+          <div class="card-title">Chat</div>
+          <div class="card">
+            <label class="row">
+              <span class="row-title">Text size</span>
+              <span class="row-control slider-control"><input id="chat-size" type="range" min="12" max="20" step="1"><output id="chat-size-value"></output></span>
+            </label>
+            <label class="row">
+              <span class="row-title">Space between messages</span>
+              <span class="row-control slider-control"><input id="chat-space" type="range" min="0" max="32" step="2"><output id="chat-space-value"></output></span>
+            </label>
+          </div>
         </section>
 
         <section data-panel="keys" class="settings-page" hidden>
