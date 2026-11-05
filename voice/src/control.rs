@@ -53,6 +53,8 @@ impl Control {
 pub struct Roster {
     pub server_name: String,
     pub server_icon: Option<String>,
+    /// Cloud servers: the owner turned pictures off everywhere.
+    pub pictures_off: bool,
     pub me: SessionId,
     pub channels: Vec<Channel>,
     pub users: Vec<User>,
@@ -69,7 +71,8 @@ impl Roster {
             }
             ServerMsg::UserLeft { session_id } => self.users.retain(|u| u.session_id != *session_id),
             ServerMsg::ChannelsUpdated { channels } => self.channels = channels.clone(),
-            ServerMsg::ServerUpdated { name, icon } => {
+            ServerMsg::ServerUpdated { name, icon, pictures_off } => {
+                self.pictures_off = *pictures_off;
                 self.server_name = name.clone();
                 self.server_icon = icon.clone();
             }
@@ -222,8 +225,8 @@ pub async fn connect(address: &str, identity: &Identity, invite: Option<&str>, c
     };
     writer.send(&ClientMsg::Auth { signature: identity.sign_challenge(&nonce) }).await?;
     let (roster, udp_token, udp_port) = match reader.answer().await? {
-        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon } => {
-            (Roster { server_name, server_icon, me: session_id, channels, users }, udp_token, udp_port)
+        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon, pictures_off } => {
+            (Roster { server_name, server_icon, pictures_off, me: session_id, channels, users }, udp_token, udp_port)
         }
         ServerMsg::Error { message } => anyhow::bail!(message),
         other => anyhow::bail!("unexpected message during login: {other:?}"),
@@ -287,7 +290,7 @@ mod tests {
 
     #[test]
     fn roster_tracks_presence_and_channels() {
-        let mut r = Roster { server_name: String::new(), server_icon: None, me: 1, channels: vec![], users: vec![user(1, None)] };
+        let mut r = Roster { server_name: String::new(), server_icon: None, pictures_off: false, me: 1, channels: vec![], users: vec![user(1, None)] };
         r.apply(&ServerMsg::UserJoined { user: user(2, None) });
         r.apply(&ServerMsg::UserUpdated { user: user(2, Some(1)) });
         assert_eq!(r.users, vec![user(1, None), user(2, Some(1))]);
@@ -295,7 +298,7 @@ mod tests {
         assert_eq!(r.users, vec![user(1, None)]);
         assert_eq!(r.me().unwrap().session_id, 1);
 
-        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None }];
+        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false }];
         r.apply(&ServerMsg::ChannelsUpdated { channels: channels.clone() });
         assert_eq!(r.channels, channels);
     }

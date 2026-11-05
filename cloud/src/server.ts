@@ -60,7 +60,7 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean }
 const MAX_CATEGORY_LEN = 24;
 const MAX_TOPIC_LEN = 200;
 interface User {
@@ -203,6 +203,7 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("position")) this.sql.exec("ALTER TABLE channels ADD COLUMN position INTEGER");
     if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
     if (!channelColumns.has("category")) this.sql.exec("ALTER TABLE channels ADD COLUMN category TEXT");
+    if (!channelColumns.has("no_pictures")) this.sql.exec("ALTER TABLE channels ADD COLUMN no_pictures INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
@@ -282,6 +283,7 @@ export class StromServer extends DurableObject<Env> {
     const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
     const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length > 0;
     if (!member || banned) return fail("You're not a member of this server.", 403);
+    if (this.meta("pictures_off") === "1") return fail("Pictures are turned off in this server.", 403);
     const now = Date.now();
     const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE uploader = ? AND created_at > ?", key, now - 86_400_000).one().n);
     if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
@@ -320,12 +322,13 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic, category FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec("SELECT id, name, kind, topic, category, no_pictures FROM channels ORDER BY coalesce(position, id + 100000), id")
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
         if (r.topic) c.topic = String(r.topic);
         if (r.category) c.category = String(r.category);
+        if (r.no_pictures) c.no_pictures = true;
         return c;
       });
   }
@@ -627,6 +630,7 @@ export class StromServer extends DurableObject<Env> {
       type: "welcome",
       server_name: this.meta("name"),
       server_icon: this.meta("icon"),
+      pictures_off: this.meta("pictures_off") === "1",
       session_id: user.session_id,
       // Cloud servers carry no UDP voice relay; voice between members is peer-to-peer.
       udp_token: 0,
@@ -713,6 +717,10 @@ export class StromServer extends DurableObject<Env> {
         s.tokens -= 1;
         ws.serializeAttachment(s);
         const picture = text.match(IMAGE_TOKEN);
+        if (picture && (this.meta("pictures_off") === "1" || ch.no_pictures)) {
+          this.sql.exec("DELETE FROM images WHERE id = ?", picture[1]);
+          return this.error(ws, "Pictures are turned off here.");
+        }
         if (picture) {
           const owned = this.sql.exec("SELECT 1 FROM images WHERE id = ? AND uploader = ?", picture[1], s.key!).toArray().length > 0;
           if (!owned) return this.error(ws, "That picture didn't upload. Try again.");
@@ -844,6 +852,7 @@ export class StromServer extends DurableObject<Env> {
         const category = String(msg.category ?? "").trim();
         if ([...category].length > MAX_CATEGORY_LEN) return this.error(ws, `Category names are at most ${MAX_CATEGORY_LEN} characters.`);
         this.sql.exec("UPDATE channels SET name = ?, topic = ?, category = ? WHERE id = ?", name, topic || null, category || null, ch.id);
+        if (msg.no_pictures != null) this.sql.exec("UPDATE channels SET no_pictures = ? WHERE id = ?", msg.no_pictures ? 1 : null, ch.id);
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "reorder_channels": {
@@ -951,7 +960,8 @@ export class StromServer extends DurableObject<Env> {
         this.setMeta("name", name);
         if (icon === null) this.sql.exec("DELETE FROM meta WHERE key = 'icon'");
         else this.setMeta("icon", icon);
-        return this.broadcast({ type: "server_updated", name, icon });
+        if (msg.pictures_off != null) this.setMeta("pictures_off", msg.pictures_off ? "1" : "0");
+        return this.broadcast({ type: "server_updated", name, icon, pictures_off: this.meta("pictures_off") === "1" });
       }
       case "get_server_settings":
         if (!allowed("admin")) return;

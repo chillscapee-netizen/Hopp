@@ -1,4 +1,4 @@
 {
   "0.2.1": "• A clean new logo\n• Pictures in chat: paste, drop or press +, with a caption\n• Roles: make friends moderators or admins, and hand over a server\n• Server settings → Members lists everyone, online or not\n• Mark a server or channel as read from its menu\n• Scrolled up? A bar counts new messages and jumps back down\n• The update arrow, and your version under Settings → App\n• Clear words when Hopp Cloud is busy\n• Smaller fixes all over",
-  "0.2.2": "• Drag pictures straight into the chat\n• Other files get a clear message instead of nothing happening"
+  "0.2.2": "• Fixes changing your profile picture and a server picture\n• Drag pictures straight into the chat\n• Owners can turn pictures off for a server or one channel\n• Other files get a clear message instead of nothing happening"
 }

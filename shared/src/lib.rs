@@ -37,6 +37,13 @@ pub struct Channel {
     /// The heading it's listed under; `None`: the plain text and voice lists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// Cloud servers: the owner turned pictures off in this channel.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_pictures: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 pub const MAX_CATEGORY_LEN: usize = 24;
@@ -248,6 +255,9 @@ pub enum ClientMsg {
         topic: Option<String>,
         #[serde(default)]
         category: Option<String>,
+        /// Cloud servers: `Some(true)` turns pictures off in the channel; `None` leaves it.
+        #[serde(default)]
+        no_pictures: Option<bool>,
     },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },
@@ -268,7 +278,13 @@ pub enum ClientMsg {
     /// Owner only: answered with `Invites` and `Bans`.
     GetServerSettings,
     /// Owner only: sets the server name and picture (`icon` is a small `data:image/...` URL, or `None` to remove it).
-    UpdateServer { name: String, icon: Option<String> },
+    UpdateServer {
+        name: String,
+        icon: Option<String>,
+        /// Cloud servers: `Some(true)` turns pictures off everywhere; `None` leaves it.
+        #[serde(default)]
+        pictures_off: Option<bool>,
+    },
     /// Cloud servers: where peers in our voice channel can reach us directly
     /// ("ip:port"). `public` comes from STUN; `local` are addresses on our own network.
     VoiceEndpoint { public: Option<String>, local: Vec<String> },
@@ -309,9 +325,17 @@ pub enum ServerMsg {
         /// The server picture as a `data:image/...;base64,` URL, if the owner set one.
         #[serde(default)]
         server_icon: Option<String>,
+        /// Cloud servers: the owner turned pictures off.
+        #[serde(default)]
+        pictures_off: bool,
     },
     /// The owner renamed the server or changed its picture.
-    ServerUpdated { name: String, icon: Option<String> },
+    ServerUpdated {
+        name: String,
+        icon: Option<String>,
+        #[serde(default)]
+        pictures_off: bool,
+    },
     /// Cloud servers, after JoinVoice: the channel's voice key (hex, 32 bytes) and
     /// the endpoints of everyone already in it. Voice then goes peer to peer.
     VoiceSession { channel: ChannelId, key: String, peers: Vec<PeerEndpoint> },

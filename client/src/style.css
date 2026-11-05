@@ -2815,3 +2815,9 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .lightbox::backdrop { background: rgb(0 0 0 / 0.82); }
 .lightbox img { display: block; max-width: 92vw; max-height: 92vh; border-radius: 8px; }
 .attach-btn[hidden] { display: none; }
+
+/* An on/off setting inside a form (server overview, channel editor). */
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 16px; padding: 12px 14px; background: var(--side); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.setting-row[hidden] { display: none; }
+.setting-row .row-label { display: grid; gap: 2px; }
+.setting-row .row-sub { color: var(--muted); font-size: 13px; line-height: 1.4; }

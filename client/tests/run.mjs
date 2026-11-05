@@ -28,6 +28,15 @@ cpSync(src, work, { recursive: true });
 copyFileSync(join(here, "mock.js"), join(work, "mock.js"));
 const page = readFileSync(join(src, "index.html"), "utf8");
 
+// Two functions with one name: the later one silently replaces the earlier everywhere.
+const declared = new Map();
+for (const [, name] of readFileSync(join(src, "main.js"), "utf8").matchAll(/^(?:async )?function (\w+)/gm)) declared.set(name, (declared.get(name) ?? 0) + 1);
+const twice = [...declared].filter(([, n]) => n > 1).map(([name]) => name);
+if (twice.length) {
+  console.log("FAIL functions declared twice in main.js: " + twice.join(", "));
+  process.exit(1);
+}
+
 const filter = process.argv[2] ?? "";
 const tests = readdirSync(here).filter((f) => f.endsWith(".test.js") && f.includes(filter));
 let failed = 0;

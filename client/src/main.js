@@ -2159,7 +2159,7 @@ function renderChannelView() {
   $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
   $("chat-input").placeholder = `Message #${channelName(view)}`;
-  $("attach-btn").hidden = !isCloud(activeServer());
+  $("attach-btn").hidden = !picturesAllowed();
   if (typeof renderAttachment === "function") renderAttachment();
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
   $("members-toggle").classList.toggle("selected", prefs.showMembers);
@@ -2939,13 +2939,15 @@ const overview = { icon: null };
 function resetOverview() {
   overview.icon = state.roster?.server_icon ?? null;
   $("overview-name").value = state.roster?.server_name ?? "";
+  $("overview-pictures").checked = !state.roster?.pictures_off;
+  $("overview-pictures-row").hidden = !isCloud(activeServer());
   $("overview-error").hidden = true;
   renderOverview();
 }
 
 function overviewChanged() {
   const r = state.roster;
-  return !!r && ($("overview-name").value.trim() !== r.server_name || overview.icon !== (r.server_icon ?? null));
+  return !!r && ($("overview-name").value.trim() !== r.server_name || overview.icon !== (r.server_icon ?? null) || $("overview-pictures").checked === !!r.pictures_off);
 }
 
 function renderOverview() {
@@ -3004,6 +3006,7 @@ $("overview-remove").addEventListener("click", () => {
   renderOverview();
 });
 $("overview-name").addEventListener("input", renderOverview);
+$("overview-pictures").addEventListener("change", renderOverview);
 $("overview-reset").addEventListener("click", resetOverview);
 $("overview-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -3012,7 +3015,7 @@ $("overview-form").addEventListener("submit", async (e) => {
   const btn = $("overview-save");
   setBusy(btn, true, "Saving…");
   try {
-    await invoke("update_server", { name, icon: overview.icon });
+    await invoke("update_server", { name, icon: overview.icon, picturesOff: isCloud(activeServer()) ? !$("overview-pictures").checked : null });
     $("overview-error").hidden = true;
   } catch (err) {
     $("overview-error").textContent = friendlyError(err);
@@ -6067,6 +6070,11 @@ function openChannelEdit(ch) {
   $("channel-edit-name").value = ch.name;
   $("channel-edit-topic").value = ch.topic ?? "";
   $("channel-edit-topic-field").hidden = !text;
+  $("channel-edit-pictures").checked = !ch.no_pictures;
+  $("channel-edit-pictures-row").hidden = !text || !isCloud(activeServer());
+  $("channel-edit-pictures-sub").textContent = state.roster?.pictures_off
+    ? "Pictures are off for the whole server (Server settings → Overview)."
+    : "Members can share pictures in this channel.";
   $("channel-edit-category").value = ch.category ?? "";
   $("category-options").replaceChildren(...[...new Set(state.roster.channels.map((c) => c.category).filter(Boolean))].map((c) => {
     const o = el("option");
@@ -6085,8 +6093,10 @@ $("channel-edit-form").addEventListener("submit", () => {
   const topic = $("channel-edit-topic").value.trim();
   const category = $("channel-edit-category").value.trim();
   if (!editingChannel || !name) return;
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "")) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null });
+  const noPictures = editingChannel.kind === "text" && isCloud(activeServer()) ? !$("channel-edit-pictures").checked : null;
+  const picturesSame = noPictures === null || noPictures === !!editingChannel.no_pictures;
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -7278,6 +7288,11 @@ const PICTURE_MAX_BYTES = 300_000;
 const PICTURE_MAX_SIDE = 1600;
 state.attachment = null; // { channel, blob, type, width, height, url, sending }
 
+/** Pictures need a cloud server whose owner hasn't turned them off, here or everywhere. */
+function picturesAllowed() {
+  return isCloud(activeServer()) && !state.roster?.pictures_off && !channel(state.view)?.no_pictures;
+}
+
 function cloudHttp() {
   return prefs.cloudUrl.replace(/^ws/, "http").replace(/\/+$/, "");
 }
@@ -7288,7 +7303,7 @@ function pictureUrl(id) {
 }
 
 /** Shrinks a picture until it's light enough to send. */
-async function shrinkPicture(file) {
+async function shrinkChatPicture(file) {
   const source = URL.createObjectURL(file);
   const bitmap = await new Promise((ok, fail) => {
     const img = new Image();
@@ -7321,8 +7336,9 @@ async function attachPicture(file) {
   if (!file || !/^image\//.test(file.type)) return;
   if (!online() || state.view === null) return;
   if (!isCloud(activeServer())) return toast("Pictures work on Hopp Cloud servers.", true);
+  if (!picturesAllowed()) return toast("Pictures are turned off in this channel.", true);
   try {
-    const shrunk = await shrinkPicture(file);
+    const shrunk = await shrinkChatPicture(file);
     clearAttachment();
     state.attachment = { channel: state.view, ...shrunk, url: URL.createObjectURL(shrunk.blob), sending: false };
     renderAttachment();

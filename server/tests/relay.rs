@@ -550,14 +550,14 @@ async fn owner_renames_the_server_and_sets_a_picture() {
     let mut guest = FakeClient::connect(&server, "guest").await;
     let icon = "data:image/png;base64,iVBORw0KGgo=".to_string();
 
-    guest.send(ClientMsg::UpdateServer { name: "Hack".into(), icon: None }).await;
+    guest.send(ClientMsg::UpdateServer { name: "Hack".into(), icon: None, pictures_off: None }).await;
     assert!(guest.error().await.contains("owner"));
 
-    server.admin.send(ClientMsg::UpdateServer { name: "  The Crew ".into(), icon: Some("https://evil.example/x.png".into()) }).await;
+    server.admin.send(ClientMsg::UpdateServer { name: "  The Crew ".into(), icon: Some("https://evil.example/x.png".into()), pictures_off: None }).await;
     assert!(server.admin.error().await.contains("picture"));
 
-    server.admin.send(ClientMsg::UpdateServer { name: "  The Crew ".into(), icon: Some(icon.clone()) }).await;
-    let ServerMsg::ServerUpdated { name, icon: got } = guest.wait_for(|m| matches!(m, ServerMsg::ServerUpdated { .. })).await
+    server.admin.send(ClientMsg::UpdateServer { name: "  The Crew ".into(), icon: Some(icon.clone()), pictures_off: None }).await;
+    let ServerMsg::ServerUpdated { name, icon: got, .. } = guest.wait_for(|m| matches!(m, ServerMsg::ServerUpdated { .. })).await
     else {
         unreachable!()
     };
@@ -653,10 +653,10 @@ async fn leaving_needs_a_new_invite_to_come_back() {
 async fn owner_renames_and_reorders_channels() {
     let mut server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
-    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()), category: None }).await;
+    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()), category: None, no_pictures: None }).await;
     assert!(alice.error().await.contains("owner"));
 
-    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()), category: Some(" Info ".into()) }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()), category: Some(" Info ".into()), no_pictures: None }).await;
     let ServerMsg::ChannelsUpdated { channels } = alice.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { .. })).await else { unreachable!() };
     let general = channels.iter().find(|c| c.id == GENERAL).unwrap();
     assert_eq!((general.name.as_str(), general.topic.as_deref(), general.category.as_deref()), ("main-chat", Some("Say hi"), Some("Info")));

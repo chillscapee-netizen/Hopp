@@ -231,7 +231,7 @@ test("the owner sets the server name and picture", async () => {
 
   owner.send({ type: "update_server", name: "  The Crew ", icon });
   const update = await guest.waitFor((m) => m.type === "server_updated");
-  assert.deepEqual(update, { type: "server_updated", name: "The Crew", icon });
+  assert.deepEqual(update, { type: "server_updated", name: "The Crew", icon, pictures_off: false });
 
   const late = await join(id, "late", { invite });
   assert.equal(late.welcome.server_name, "The Crew");
@@ -606,6 +606,21 @@ test("pictures: members upload signed pictures, send them, and they go with the 
   bob.send({ type: "delete_message", channel: general, id: sent.id });
   await owner.waitFor((m) => m.type === "message_deleted");
   assert.equal((await fetch(`${HTTP}/servers/${id}/images/${picture}`)).status, 404, "a deleted picture is gone");
+
+  // The owner turns pictures off in a channel, then in the whole server.
+  owner.send({ type: "update_channel", channel: general, name: "general", topic: null, category: null, no_pictures: true });
+  const off = await bob.waitFor((m) => m.type === "channels_updated");
+  assert.equal(off.channels.find((c) => c.id === general).no_pictures, true);
+  const second = (await (await upload(bob.key)).json()).id;
+  bob.send({ type: "send_chat", channel: general, text: `hopp-image:${second} 10x10` });
+  assert.match(await errorOf(bob), /turned off here/);
+  owner.send({ type: "update_server", name: "Test server", icon: null, pictures_off: true });
+  const updated = await bob.waitFor((m) => m.type === "server_updated");
+  assert.equal(updated.pictures_off, true);
+  assert.equal((await upload(bob.key)).status, 403, "no uploads when pictures are off");
+  const late = await join(id, "carol", { invite });
+  assert.equal(late.welcome.pictures_off, true);
+  late.close();
   owner.close();
   bob.close();
 });

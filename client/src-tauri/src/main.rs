@@ -748,8 +748,8 @@ fn load_older(state: State<'_, AppState>, channel: ChannelId, before: u64) -> Cm
 }
 
 #[tauri::command]
-fn update_server(state: State<'_, AppState>, name: String, icon: Option<String>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateServer { name, icon }))
+fn update_server(state: State<'_, AppState>, name: String, icon: Option<String>, pictures_off: Option<bool>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateServer { name, icon, pictures_off }))
 }
 
 #[tauri::command]
@@ -758,8 +758,15 @@ fn create_channel(state: State<'_, AppState>, name: String, kind: ChannelKind) -
 }
 
 #[tauri::command]
-fn update_channel(state: State<'_, AppState>, channel: ChannelId, name: String, topic: Option<String>, category: Option<String>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category }))
+fn update_channel(
+    state: State<'_, AppState>,
+    channel: ChannelId,
+    name: String,
+    topic: Option<String>,
+    category: Option<String>,
+    no_pictures: Option<bool>,
+) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures }))
 }
 
 #[tauri::command]

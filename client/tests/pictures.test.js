@@ -66,6 +66,45 @@
   const stray = dropOn($("sidebar") ?? document.body, new File(["x"], "x.txt", { type: "text/plain" }));
   check("a stray drop doesn't open the file", stray.defaultPrevented);
 
+  // Server and profile pictures still come out as small image data.
+  const iconData = await shrinkPicture(new File([Uint8Array.from(atob(smallPng.split(",")[1]), (c) => c.charCodeAt(0))], "icon.png", { type: "image/png" }));
+  check("server and profile pictures still work", typeof iconData === "string" && iconData.startsWith("data:image/"));
+
+  // The owner turns pictures off: in one channel, then everywhere.
+  const r = structuredClone(state.roster);
+  r.channels.find((c) => c.id === 0).no_pictures = true;
+  emit("roster", r);
+  await wait(150);
+  check("no button where pictures are off", $("attach-btn").hidden);
+  dropOn($("scroller"), new File([Uint8Array.from(atob(smallPng.split(",")[1]), (c) => c.charCodeAt(0))], "x.png", { type: "image/png" }));
+  await wait(100);
+  check("says pictures are off", document.body.textContent.includes("Pictures are turned off in this channel") && !state.attachment);
+  openChannelEdit(state.roster.channels.find((c) => c.id === 0));
+  check("channel editor shows it off", !$("channel-edit-pictures-row").hidden && !$("channel-edit-pictures").checked);
+  $("channel-edit-pictures").checked = true;
+  sent.length = 0;
+  $("channel-edit-form").dispatchEvent(new Event("submit", { cancelable: true }));
+  await wait(50);
+  check("turning it back on is saved", sent.some((m) => m.type === "update_channel" && m.noPictures === false));
+  $("channel-edit-dialog").close();
+
+  const r2 = structuredClone(state.roster);
+  r2.channels.find((c) => c.id === 0).no_pictures = false;
+  r2.pictures_off = true;
+  emit("roster", r2);
+  await wait(150);
+  check("off for the whole server", $("attach-btn").hidden);
+  openServerSettings();
+  check("overview shows it off", !$("overview-pictures-row").hidden && !$("overview-pictures").checked);
+  $("overview-pictures").checked = true;
+  $("overview-pictures").dispatchEvent(new Event("change"));
+  check("changing it offers Save", !$("overview-save-bar").hidden);
+  sent.length = 0;
+  $("overview-form").dispatchEvent(new Event("submit", { cancelable: true }));
+  await wait(50);
+  check("saved for the server", sent.some((m) => m.type === "update_server" && m.picturesOff === false));
+  $("server-settings").close();
+
   // Self-hosted servers have no picture button.
   await connectTo(prefs.servers.find((s) => s.address === "192.168.8.35"));
   await wait(200);

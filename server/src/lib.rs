@@ -415,6 +415,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             let _ = tx.send(ServerMsg::Welcome {
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
+                pictures_off: false,
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -606,11 +607,11 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None });
+                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false });
                         st.channels_changed();
                     }
                 }
-                ClientMsg::UpdateChannel { channel, name, topic, category } => {
+                ClientMsg::UpdateChannel { channel, name, topic, category, .. } => {
                     let category = category.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
                     let kind = st.channel(channel).map(|c| c.kind);
                     let name = kind.map(|k| normalize_channel_name(&name, k)).unwrap_or_default();
@@ -737,7 +738,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     let _ = tx.send(ServerMsg::Invites { invites: st.usable_invites() });
                     let _ = tx.send(ServerMsg::Bans { bans: st.bans.clone() });
                 }
-                ClientMsg::UpdateServer { name, icon } if is_owner => {
+                ClientMsg::UpdateServer { name, icon, .. } if is_owner => {
                     let name = name.trim().to_string();
                     if name.is_empty() || name.chars().count() > MAX_SERVER_NAME_LEN {
                         error(&format!("Server names must be 1–{MAX_SERVER_NAME_LEN} characters."));
@@ -747,7 +748,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         st.config.name = name.clone();
                         st.config.icon = icon.clone();
                         st.storage.save_config(&st.config);
-                        st.broadcast(&ServerMsg::ServerUpdated { name, icon });
+                        st.broadcast(&ServerMsg::ServerUpdated { name, icon, pictures_off: false });
                     }
                 }
                 ClientMsg::Unban { .. }
