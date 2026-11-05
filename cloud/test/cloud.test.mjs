@@ -752,9 +752,9 @@ test("timeouts, slowmode, bans that delete history, and the audit log", async ()
   // The audit log has it all, newest first.
   owner.send({ type: "get_audit_log" });
   const log = await owner.waitFor((m) => m.type === "audit_log");
-  assert.deepEqual(log.entries.map((e) => e.action), ["ban", "untimeout", "timeout"]);
+  assert.deepEqual(log.entries.map((e) => e.action), ["ban", "update_channel", "untimeout", "timeout"]);
   assert.equal(log.entries[0].detail, "deleted 1 messages");
-  assert.equal(log.entries[2].detail, "10 minutes");
+  assert.equal(log.entries[3].detail, "10 minutes");
   owner.close();
   bob.close();
 });

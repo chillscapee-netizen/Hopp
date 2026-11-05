@@ -10835,6 +10835,9 @@ function slowmodeWait(view) {
 
 var AUDIT_WORDS = {
   kick: "kicked", ban: "banned", unban: "unbanned", timeout: "timed out", untimeout: "lifted the timeout for",
+  role: "changed the role of", transfer: "gave the server to", create_channel: "created the channel", update_channel: "edited the channel",
+  delete_channel: "deleted the channel", delete_message: "deleted a message by", server_mute: "server-muted", server_unmute: "unmuted",
+  server_deafen: "server-deafened", server_undeafen: "undeafened", voice_disconnect: "disconnected", voice_move: "moved",
 };
 
 listen("audit-log", (e) => {

@@ -754,6 +754,8 @@ export class StromServer extends DurableObject<Env> {
         const [tws, ts] = found;
         if (target !== user.session_id && rank(this.roleOf(ts.key!)) >= myRank) return this.error(ws, "You can't do that to someone with the same role as you or higher.");
         if (msg.type === "server_mute") {
+          if (!!msg.muted !== !!ts.user!.server_muted) this.audit(user.name, msg.muted ? "server_mute" : "server_unmute", ts.user!.name, null);
+          if (!!msg.deafened !== !!ts.user!.server_deafened) this.audit(user.name, msg.deafened ? "server_deafen" : "server_undeafen", ts.user!.name, null);
           return this.updateUser(tws, ts, (u) => {
             u.server_muted = !!msg.muted;
             u.server_deafened = !!msg.deafened;
@@ -761,6 +763,7 @@ export class StromServer extends DurableObject<Env> {
         }
         if (ts.user!.voice_channel === null) return this.error(ws, `${ts.user!.name} isn't in a voice channel.`);
         if (msg.type === "disconnect_voice") {
+          this.audit(user.name, "voice_disconnect", ts.user!.name, null);
           delete ts.endpoint;
           return this.updateUser(tws, ts, (u) => {
             u.voice_channel = null;
@@ -772,6 +775,7 @@ export class StromServer extends DurableObject<Env> {
         if (ch.id === ts.user!.voice_channel) return;
         const full = this.enterVoice(tws, ts, ch);
         if (full) return this.error(ws, full);
+        this.audit(user.name, "voice_move", ts.user!.name, "to " + ch.name);
         return;
       }
       case "leave_voice":
@@ -962,6 +966,10 @@ export class StromServer extends DurableObject<Env> {
         if (row.author_key !== s.key && (myRank < RANK.mod || (!owner && rank(this.roleOf(String(row.author_key))) >= myRank))) {
           return this.error(ws, "You can only delete your own messages.");
         }
+        if (row.author_key !== s.key) {
+          const author = this.sql.exec("SELECT name FROM accounts WHERE key = ?", String(row.author_key)).toArray()[0];
+          this.audit(user.name, "delete_message", author ? String(author.name) : "someone", null);
+        }
         this.dropPicture(id);
         this.sql.exec("DELETE FROM messages WHERE id = ?", id);
         return this.broadcast({ type: "message_deleted", channel, id });
@@ -980,6 +988,7 @@ export class StromServer extends DurableObject<Env> {
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
         if (this.channels().length >= MAX_CHANNELS) return this.error(ws, `A server can have at most ${MAX_CHANNELS} channels.`);
         this.sql.exec("INSERT INTO channels (name, kind) VALUES (?, ?)", name, kind);
+        this.audit(user.name, "create_channel", name, null);
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "update_channel": {
@@ -993,6 +1002,7 @@ export class StromServer extends DurableObject<Env> {
         const category = String(msg.category ?? "").trim();
         if ([...category].length > MAX_CATEGORY_LEN) return this.error(ws, `Category names are at most ${MAX_CATEGORY_LEN} characters.`);
         this.sql.exec("UPDATE channels SET name = ?, topic = ?, category = ? WHERE id = ?", name, topic || null, category || null, ch.id);
+        this.audit(user.name, "update_channel", name, null);
         if (msg.no_pictures != null) this.sql.exec("UPDATE channels SET no_pictures = ? WHERE id = ?", msg.no_pictures ? 1 : null, ch.id);
         if (ch.kind === "voice" && msg.user_limit != null) {
           const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
@@ -1025,6 +1035,7 @@ export class StromServer extends DurableObject<Env> {
         if (!allowed("admin")) return;
         const id = Number(msg.channel);
         if (!this.channel(id)) return this.error(ws, "That channel doesn't exist.");
+        this.audit(user.name, "delete_channel", this.channel(id)!.name, null);
         this.sql.exec("DELETE FROM channels WHERE id = ?", id);
         this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND text LIKE 'hopp-image:%')", id);
         this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
@@ -1190,6 +1201,7 @@ export class StromServer extends DurableObject<Env> {
         if (!owner && (role === "admin" || rank(target.role) >= myRank)) return this.error(ws, "Only the owner can name or remove admins.");
         this.sql.exec("UPDATE accounts SET role = ? WHERE key = ?", role, key);
         this.rolesChanged();
+        this.audit(user.name, "role", target.name, role ?? "member");
         return;
       }
       case "transfer_ownership": {
@@ -1204,6 +1216,7 @@ export class StromServer extends DurableObject<Env> {
         this.sql.exec("UPDATE accounts SET role = 'admin' WHERE key = ?", s.key!);
         this.sql.exec("UPDATE accounts SET role = NULL WHERE key = ?", key);
         this.rolesChanged();
+        this.audit(user.name, "transfer", target.name, null);
         return;
       }
       case "ping":
