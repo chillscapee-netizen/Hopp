@@ -2525,6 +2525,9 @@ function renderMessages(keepScrollUnlessAtBottom) {
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
     li.addEventListener("contextmenu", (e) => openMessageMenu(m, e));
+    // Kept as is when nothing it shows has changed (a playing video keeps playing).
+    li.dataset.key = `${activeServer()?.address}|${m.id}`;
+    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id)]);
     items.push(li);
     prev = m;
   }
@@ -2537,7 +2540,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     items.push(outboxItem(o, grouped));
     last = { sender_name: myName, sent_at: o.at };
   }
-  $("messages").replaceChildren(...items);
+  reconcile($("messages"), items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
   if (msgs.length) drawnUpTo.set(state.view, msgs.at(-1).id);
   updateJumpBar();
@@ -5197,10 +5200,12 @@ function renderDmView(keepScroll) {
         );
       });
     }
+    li.dataset.key = `${peer}|${m.id}`;
+    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name]);
     items.push(li);
     prev = m;
   }
-  view.querySelector(".dm-messages").replaceChildren(...items);
+  reconcile(view.querySelector(".dm-messages"), items);
   if (keepScroll) scroller.scrollTop = scroller.scrollHeight - oldHeight + scroller.scrollTop;
   else if (atBottom || !view.dataset.scrolled) {
     scroller.scrollTop = scroller.scrollHeight;
@@ -8548,4 +8553,30 @@ function mentionUser(u) {
   autosize();
   chatInput.focus();
   chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+}
+
+// ---------- redrawing lists without disturbing them ----------
+
+/**
+ * Puts `items` into `list`, keeping existing rows whose key and signature match
+ * (data-key, data-sig) exactly where they are. Untouched rows aren't moved or
+ * rebuilt, so a playing video, a half-loaded picture or a hover stays as it is.
+ */
+function reconcile(list, items) {
+  const old = new Map();
+  for (const node of list.children) if (node.dataset.key) old.set(node.dataset.key, node);
+  const wanted = items.map((node) => {
+    const kept = node.dataset.key ? old.get(node.dataset.key) : null;
+    return kept && kept.dataset.sig === node.dataset.sig ? kept : node;
+  });
+  const keep = new Set(wanted);
+  for (const node of [...list.children]) if (!keep.has(node)) node.remove();
+  let cursor = list.firstChild;
+  for (const node of wanted) {
+    if (node === cursor) {
+      cursor = cursor.nextSibling;
+      continue;
+    }
+    list.insertBefore(node, cursor);
+  }
 }
