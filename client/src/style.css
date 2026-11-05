@@ -2974,14 +2974,23 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .bait-warning { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--yellow); font-size: 12.5px; }
 .bait-warning .i { flex: none; }
 
-/* Search: a field on top, results like pinned messages, the words marked. */
-.search-input { width: 100%; margin-bottom: 10px; padding: 9px 12px; background: var(--deep); border: 1px solid transparent; border-radius: 8px; color: var(--text); font: inherit; font-size: 14px; outline: none; }
-.search-input:focus { border-color: var(--border-focus); }
-.search-input::-webkit-search-cancel-button { filter: invert(0.6); }
+/* Search: a quiet field in the header, a little wider while you type; results on the right. */
+.head-search { flex: none; display: flex; align-items: center; gap: 6px; width: 180px; height: 30px; margin: 0 6px; padding: 0 8px 0 10px; background: var(--deep); border-radius: 8px; color: var(--faint); cursor: text; transition: width 150ms ease; }
+.head-search:focus-within { width: 260px; color: var(--muted); }
+.head-search .i { flex: none; width: 15px; height: 15px; }
+.head-search input { flex: 1; min-width: 0; height: 100%; padding: 0; background: none; border: none; outline: none; color: var(--text); font-size: 13.5px; }
+.head-search input::placeholder { color: var(--faint); }
+.head-search input::-webkit-search-cancel-button { filter: grayscale(1) opacity(0.6); cursor: pointer; }
+.dm-search { margin-left: auto; }
+.dm-search:not([hidden]) + .dm-call-btn { margin-left: 2px; }
+.search-panel { flex: none; display: flex; flex-direction: column; width: 360px; min-height: 0; background: var(--side-2); }
+.search-panel-head { flex: none; display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 8px 0 16px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.search-results { flex: 1; display: grid; align-content: start; gap: 2px; padding: 0 8px 12px; overflow-y: auto; }
+.search-item { display: grid; gap: 4px; width: 100%; padding: 10px; background: none; border: none; border-radius: 8px; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+.search-item:hover, .search-item.active { background: var(--hover); }
 .search-where { flex: none; color: var(--muted); font-size: 12px; }
 .search-item mark { background: color-mix(in srgb, var(--yellow) 30%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; }
-.dm-search-btn { margin-left: auto; }
-.dm-search-btn:not([hidden]) + .dm-call-btn { margin-left: 0; }
+.channel-body.searching .members { display: none; }
 
 /* Theme cards: a little picture of each theme. */
 .theme-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 12px; }

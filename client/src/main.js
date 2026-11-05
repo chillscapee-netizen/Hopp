@@ -4109,11 +4109,11 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") closePopovers();
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
-    const btn = state.openDm && !online() ? $("dm-search-btn") : connected() && state.view !== null ? $("search-btn") : null;
-    if (btn && !btn.hidden) {
+    const input = state.openDm && !online() ? $("dm-search-input") : connected() && state.view !== null ? $("search-input") : null;
+    if (input?.offsetParent) {
       e.preventDefault();
-      if ($("search-pop").hidden) btn.click();
-      else $("search-pop").querySelector("input")?.select();
+      input.focus();
+      input.select();
       return;
     }
   }
@@ -7027,7 +7027,7 @@ function renderCall() {
   const elsewhere = dmOpen && isGroup(state.openDm) && !(c && c.peer === state.openDm) ? state.groupCalls.get(state.openDm) : null;
   const joinable = elsewhere?.inCall.size ? elsewhere : null;
   $("dm-call-btn").hidden = !dmOpen || !!c || !!joinable;
-  $("dm-search-btn").hidden = !dmOpen;
+  $("dm-search-input-box").hidden = !dmOpen;
   const here = c && dmOpen && c.peer === state.openDm && !ringingHere;
   const stage = $("call-stage");
   stage.hidden = !here && !joinable;
@@ -9090,67 +9090,84 @@ function baitWarning() {
 
 // ---------- search ----------
 //
+// The field sits in the header, always there; results open in a panel on the right.
 // Servers search their own history (they keep it anyway). Direct messages are encrypted,
 // so a conversation is searched here, on this computer, after loading the rest of it.
 
-/** The search under way: what was asked, and where its results go. */
+/** The search under way: what was asked and where (a conversation, or this server). */
 var searching = null;
 
-function openSearch(anchor, where) {
-  const pop = $("search-pop");
-  if (!pop.hidden) return closePopovers();
-  const input = el("input", "search-input");
-  input.type = "search";
-  input.maxLength = 100;
-  input.placeholder = where.dm ? "Search " + personFor(where.dm).display_name : "Search " + (state.roster?.server_name ?? "this server");
-  const results = el("div", "pins-list search-results");
-  results.append(el("div", "pins-empty", where.dm ? "Words from your messages with them." : "Words from any channel in this server."));
-  pop.replaceChildren(input, results);
-  const r = anchor.getBoundingClientRect();
-  placePopover(pop, r.right - 380, r.bottom + 8);
-  input.focus();
-  let timer;
-  const run = () => {
-    clearTimeout(timer);
-    runSearch(input.value, results, where);
-  };
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(run, 350);
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") run();
-  });
+function searchWhere(input) {
+  return input.id === "dm-search-input" ? { dm: state.openDm } : { server: state.activeId };
 }
 
-async function runSearch(query, results, where) {
+/** Opens the results panel beside the chat or the conversation. */
+function showSearchPanel(where) {
+  const panel = $("search-panel");
+  const host = where.dm ? $("home-body") : document.querySelector(".channel-body");
+  if (panel.parentElement !== host) host.append(panel);
+  panel.hidden = false;
+  document.querySelector(".channel-body").classList.toggle("searching", !where.dm);
+}
+
+function closeSearch(clear = true) {
+  searching = null;
+  $("search-panel").hidden = true;
+  document.querySelector(".channel-body").classList.remove("searching");
+  if (clear) $("search-input").value = $("dm-search-input").value = "";
+}
+
+for (const input of [$("search-input"), $("dm-search-input")]) {
+  let timer;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    if (!input.value.trim()) return closeSearch(false);
+    timer = setTimeout(() => runSearch(input.value, searchWhere(input)), 350);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(timer);
+      if (input.value.trim()) runSearch(input.value, searchWhere(input));
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      closeSearch();
+      input.blur();
+    }
+  });
+}
+$("search-close").addEventListener("click", () => closeSearch());
+
+function searchStatus(text, items = []) {
+  $("search-count").textContent = text;
+  $("search-results").replaceChildren(...items);
+}
+
+async function runSearch(query, where) {
   const needle = query.trim().toLowerCase();
+  showSearchPanel(where);
   if (needle.length < 2) {
     searching = null;
-    results.replaceChildren(el("div", "pins-empty", "Type at least two letters."));
-    return;
+    return searchStatus("Type at least two letters");
   }
-  const mine = { query: query, results, where };
+  const mine = { query, where };
   searching = mine;
-  results.replaceChildren(el("div", "pins-empty", "Searching…"));
+  searchStatus("Searching…");
   if (where.dm) {
     const found = await searchConversation(where.dm, needle);
     if (searching === mine) showResults(mine, found);
     return;
   }
-  if (!state.roster?.features?.includes("search")) {
-    results.replaceChildren(el("div", "pins-empty", "This server needs an update before it can be searched."));
-    return;
-  }
-  invoke("search_messages", { query }).catch((err) => searching === mine && results.replaceChildren(el("div", "pins-empty", friendlyError(err))));
+  if (!state.roster?.features?.includes("search")) return searchStatus("This server needs an update before it can be searched");
+  invoke("search_messages", { query }).catch((err) => searching === mine && searchStatus(friendlyError(err)));
   setTimeout(() => {
-    if (searching === mine && !mine.done) results.replaceChildren(el("div", "pins-empty", "The server didn't answer. Try again in a moment."));
+    if (searching === mine && !mine.done) searchStatus("The server didn't answer. Try again in a moment.");
   }, 6000);
 }
 
 listen("search-results", (e) => {
   const s = searching;
-  if (!s || s.where.dm || e.payload.query !== s.query) return;
+  if (!s || s.where.dm || s.where.server !== state.activeId || e.payload.query !== s.query) return;
   showResults(s, e.payload.messages);
 });
 
@@ -9175,31 +9192,29 @@ async function searchConversation(peer, needle) {
 function showResults(s, messages) {
   s.done = true;
   const needle = s.query.trim().toLowerCase();
-  if (!messages.length) {
-    s.results.replaceChildren(el("div", "pins-empty", "Nothing found."));
-    return;
-  }
-  s.results.replaceChildren(
-    ...messages.map((m) => {
-      const dm = s.where.dm;
-      const name = dm ? personFor(m.from_key).display_name : m.sender_name;
-      const picture = dm ? personFor(m.from_key).avatar : pictureFor(m.author_key);
-      const item = el("button", "pin-item search-item");
-      item.type = "button";
-      const head = el("div", "pin-head");
-      head.append(avatar(name, "s24", undefined, picture), el("strong", "ellipsis", name));
-      if (!dm) head.append(el("span", "search-where", "#" + channelName(m.channel)));
-      head.append(el("span", "pin-date", dayLabel(m.sent_at)));
-      item.append(head, highlighted(previewText(m.text), needle));
-      item.addEventListener("click", () => {
-        closePopovers();
-        if (dm) return jumpToDm(dm, m.id);
-        openTextChannel(m.channel);
-        jumpToMessage(m.id);
-      });
-      return item;
-    }),
-  );
+  if (!messages.length) return searchStatus("Nothing found");
+  const items = messages.map((m) => {
+    const dm = s.where.dm;
+    const name = dm ? personFor(m.from_key).display_name : m.sender_name;
+    const picture = dm ? personFor(m.from_key).avatar : pictureFor(m.author_key);
+    const item = el("button", "search-item");
+    item.type = "button";
+    const head = el("div", "pin-head");
+    head.append(avatar(name, "s24", undefined, picture), el("strong", "ellipsis", name));
+    if (!dm) head.append(el("span", "search-where", "#" + channelName(m.channel)));
+    head.append(el("span", "pin-date", dayLabel(m.sent_at)));
+    item.append(head, highlighted(previewText(m.text), needle));
+    item.addEventListener("click", () => {
+      // The results stay, so the next one is a click away.
+      document.querySelectorAll(".search-item.active").forEach((n) => n.classList.remove("active"));
+      item.classList.add("active");
+      if (dm) return jumpToDm(dm, m.id);
+      openTextChannel(m.channel);
+      jumpToMessage(m.id);
+    });
+    return item;
+  });
+  searchStatus(messages.length === 1 ? "1 result" : messages.length + " results", items);
 }
 
 /** Text with every match of the words marked. */
@@ -9227,12 +9242,6 @@ function jumpToDm(peer, id) {
     node.classList.add("flash");
   });
 }
-
-$("search-btn").addEventListener("click", (e) => {
-  if (state.view === null) return;
-  openSearch(e.currentTarget, {});
-});
-$("dm-search-btn").addEventListener("click", (e) => state.openDm && openSearch(e.currentTarget, { dm: state.openDm }));
 
 // ---------- themes ----------
 //

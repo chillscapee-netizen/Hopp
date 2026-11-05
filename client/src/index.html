@@ -235,7 +235,7 @@
             <button type="button" class="friend-tab" data-ftab="blocked">Blocked</button>
             <button type="button" class="friend-tab add" data-ftab="add">Add friend</button>
           </nav>
-          <button id="dm-search-btn" type="button" class="icon-btn dm-search-btn" data-tip="Search this conversation (Ctrl+F)" hidden><svg class="i"><use href="#i-search"/></svg></button>
+          <label class="head-search dm-search" id="dm-search-input-box" hidden><svg class="i"><use href="#i-search"/></svg><input id="dm-search-input" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
           <button id="dm-call-btn" type="button" class="icon-btn dm-call-btn" data-tip="Start a voice call"><svg class="i"><use href="#i-phone"/></svg></button>
         </header>
         <div id="call-stage" class="call-stage" hidden></div>
@@ -249,8 +249,8 @@
           <span class="head-sep"></span>
           <span id="chat-topic" class="head-topic ellipsis"></span>
           <span class="head-spacer"></span>
+          <label class="head-search" id="search-input-box"><svg class="i"><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
           <button id="invite-head-btn" class="icon-btn" data-tip="Invite people"><svg class="i"><use href="#i-user-plus"/></svg></button>
-          <button id="search-btn" class="icon-btn" data-tip="Search (Ctrl+F)"><svg class="i"><use href="#i-search"/></svg></button>
           <button id="pins-btn" class="icon-btn" data-tip="Pinned messages"><svg class="i"><use href="#i-pin"/></svg></button>
           <button id="members-toggle" class="icon-btn" data-tip="Member list"><svg class="i"><use href="#i-users"/></svg></button>
         </header>
@@ -1135,7 +1135,10 @@
   <dialog id="lightbox" class="lightbox"><img id="lightbox-img" alt=""></dialog>
   <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="pins-pop" class="popover pins-pop" hidden></div>
-  <div id="search-pop" class="popover pins-pop search-pop" hidden></div>
+  <aside id="search-panel" class="search-panel" hidden>
+    <div class="search-panel-head"><span id="search-count"></span><button id="search-close" type="button" class="icon-btn" data-tip="Close (Esc)"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div id="search-results" class="search-results"></div>
+  </aside>
   <div id="incoming-call" class="incoming-call" hidden>
     <span id="incoming-avatar"></span>
     <div class="incoming-text"><strong id="incoming-name" class="ellipsis"></strong><span id="incoming-what" class="ellipsis">Incoming call…</span></div>
