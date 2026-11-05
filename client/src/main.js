@@ -4078,9 +4078,16 @@ document.addEventListener("mousedown", (e) => {
 // ---------- tooltips ----------
 
 const tip = $("tooltip");
+/** Icons that say what they are: no tooltip, just the icon (the words stay for screen readers). */
+var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add";
+
 document.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
   if (!target || !target.dataset.tip) return;
+  if (target.matches(PLAIN_ICONS)) {
+    if (!target.getAttribute("aria-label")) target.setAttribute("aria-label", target.dataset.tip);
+    return;
+  }
   tip.textContent = target.dataset.tip;
   tip.hidden = false;
   const anchor = target.querySelector(".rail-icon") ?? target;
