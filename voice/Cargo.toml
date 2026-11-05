@@ -24,6 +24,10 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 sonora = "0.2.0"
 sha2 = "0.10"
 socket2 = "0.6"
+# TURN (relay) logins: HMAC-SHA1 keyed with MD5, as the standard says.
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
 
 [dev-dependencies]
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls"] }

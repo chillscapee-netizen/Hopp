@@ -21,6 +21,15 @@ export interface Env {
    * Set it under the Worker's Settings → Variables in the Cloudflare dashboard.
    */
   PAUSE_NEW?: string;
+  /**
+   * The voice relay (Cloudflare Realtime TURN), for people whose networks block direct voice.
+   * Create a TURN key in the dashboard (Realtime → TURN), then:
+   *   npx wrangler secret put TURN_KEY_ID      (the key's id)
+   *   npx wrangler secret put TURN_KEY_TOKEN   (its API token)
+   * Without them voice still works directly; only blocked pairs can't hear each other.
+   */
+  TURN_KEY_ID?: string;
+  TURN_KEY_TOKEN?: string;
 }
 
 /** Server ids are long and random, so they can't be guessed. */

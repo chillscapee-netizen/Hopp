@@ -38,6 +38,7 @@ const ALLOWED: &[&str] = &[
     "dm_edit",
     "dm_delete",
     "file_signal",
+    "turn_login",
 ];
 
 #[derive(Default)]

@@ -24,6 +24,8 @@ use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce, Tag};
 use strom_shared::{PeerEndpoint, SessionId};
 
+use crate::turn::{State as TurnState, Turn};
+
 pub const KIND_VOICE: u8 = 0x10;
 pub const KIND_PING: u8 = 0x11;
 pub const KIND_PONG: u8 = 0x12;
@@ -222,6 +224,10 @@ struct Link {
     candidates: Vec<SocketAddr>,
     /// The address that last answered; voice goes only there.
     path: Option<SocketAddr>,
+    /// Whether that path goes through our relay (only when nothing direct works).
+    relayed: bool,
+    /// When a direct packet last came: a direct path beats the relay while it lives.
+    last_direct: Option<Instant>,
     last_heard: Option<Instant>,
     last_ping: Option<Instant>,
     rtt_ms: Option<u32>,
@@ -237,7 +243,16 @@ pub struct Mesh {
     pub key: [u8; 32],
     pub cipher: ChaCha20Poly1305,
     links: Mutex<HashMap<SessionId, Link>>,
+    /// Our relay, once the app hands us a login (only needed when someone is unreachable).
+    pub turn: Mutex<Option<Turn>>,
+    /// Where peers can reach us; grows a relay address when we get one.
+    pub endpoint: Mutex<Option<PeerEndpoint>>,
 }
+
+/// After this long without a direct path, probes go through our relay too.
+const RELAY_PROBE_AFTER: Duration = Duration::from_secs(2);
+/// A direct path heard from this recently wins over the relay.
+const DIRECT_PREFERRED_FOR: Duration = Duration::from_millis(1500);
 
 fn parse_addrs(peer: &PeerEndpoint) -> Vec<SocketAddr> {
     // Local addresses first: on the same network they work even when the router can't loop back.
@@ -247,7 +262,14 @@ fn parse_addrs(peer: &PeerEndpoint) -> Vec<SocketAddr> {
 
 impl Mesh {
     pub fn new(me: SessionId, key: &[u8; 32]) -> Self {
-        Mesh { me, key: *key, cipher: ChaCha20Poly1305::new(key.into()), links: Mutex::new(HashMap::new()) }
+        Mesh {
+            me,
+            key: *key,
+            cipher: ChaCha20Poly1305::new(key.into()),
+            links: Mutex::new(HashMap::new()),
+            turn: Mutex::new(None),
+            endpoint: Mutex::new(None),
+        }
     }
 
     /// Adds a peer or updates its addresses.
@@ -260,6 +282,8 @@ impl Mesh {
         let link = links.entry(peer.session_id).or_insert(Link {
             candidates: Vec::new(),
             path: None,
+            relayed: false,
+            last_direct: None,
             last_heard: None,
             last_ping: None,
             rtt_ms: None,
@@ -279,13 +303,33 @@ impl Mesh {
         self.links.lock().unwrap().retain(|&id, _| keep(id));
     }
 
-    /// Where our voice should go: every peer with a working path.
-    pub fn paths(&self) -> Vec<SocketAddr> {
-        self.links.lock().unwrap().values().filter_map(|l| l.path).collect()
+    /// Where our voice should go: every peer with a working path, and whether it's relayed.
+    pub fn paths(&self) -> Vec<(SocketAddr, bool)> {
+        self.links.lock().unwrap().values().filter_map(|l| l.path.map(|p| (p, l.relayed))).collect()
     }
 
-    /// Addresses to ping now: keepalives on working paths, probes on every candidate otherwise.
-    pub fn due_pings(&self) -> Vec<SocketAddr> {
+    /// Every IP a peer might reach us from: the relay must be told to let them through.
+    pub fn peer_ips(&self) -> Vec<IpAddr> {
+        let links = self.links.lock().unwrap();
+        let mut ips: Vec<IpAddr> = links.values().flat_map(|l| l.candidates.iter().chain(l.path.iter()).map(|a| a.ip())).collect();
+        ips.sort();
+        ips.dedup();
+        ips
+    }
+
+    /// Whether anyone has been out of reach long enough that a relay would help.
+    pub fn wants_relay(&self) -> bool {
+        self.links.lock().unwrap().values().any(|l| l.path.is_none() && l.searching_since.elapsed() > RELAY_PROBE_AFTER)
+    }
+
+    fn relay_ready(&self) -> bool {
+        self.turn.lock().unwrap().as_ref().is_some_and(|t| matches!(t.state(), TurnState::Ready(_)))
+    }
+
+    /// Addresses to ping now, and whether through the relay: keepalives on working paths,
+    /// probes on every candidate otherwise (and through the relay once direct has failed a while).
+    pub fn due_pings(&self) -> Vec<(SocketAddr, bool)> {
+        let relay = self.relay_ready();
         let now = Instant::now();
         let mut out = Vec::new();
         for link in self.links.lock().unwrap().values_mut() {
@@ -300,23 +344,38 @@ impl Mesh {
             }
             link.last_ping = Some(now);
             match link.path {
-                Some(path) => out.push(path),
-                None => out.extend(&link.candidates),
+                Some(path) => out.push((path, link.relayed)),
+                None => {
+                    out.extend(link.candidates.iter().map(|&c| (c, false)));
+                    if relay && now - link.searching_since > RELAY_PROBE_AFTER {
+                        out.extend(link.candidates.iter().map(|&c| (c, true)));
+                    }
+                }
             }
         }
         out
     }
 
     /// Records a genuine packet from `id` arriving from `from`. False if `id` isn't in our channel.
-    pub fn heard(&self, id: SessionId, from: SocketAddr) -> bool {
+    pub fn heard(&self, id: SessionId, from: SocketAddr, relayed: bool) -> bool {
         let from = canonical(from);
+        let now = Instant::now();
         let mut links = self.links.lock().unwrap();
         let Some(link) = links.get_mut(&id) else { return false };
-        if link.path != Some(from) {
-            tracing::info!("direct voice path to peer {id} via {from}");
+        // A live direct path stays, even when the relay delivers too.
+        if relayed && !link.relayed && link.path.is_some() && link.last_direct.is_some_and(|t| now - t < DIRECT_PREFERRED_FOR) {
+            link.last_heard = Some(now);
+            return true;
+        }
+        if link.path != Some(from) || link.relayed != relayed {
+            tracing::info!("voice path to peer {id} via {from}{}", if relayed { " (through the relay)" } else { "" });
         }
         link.path = Some(from);
-        link.last_heard = Some(Instant::now());
+        link.relayed = relayed;
+        link.last_heard = Some(now);
+        if !relayed {
+            link.last_direct = Some(now);
+        }
         true
     }
 
@@ -392,14 +451,14 @@ mod tests {
         let key = [1u8; 32];
         let (a, b) = (Mesh::new(1, &key), Mesh::new(2, &key));
         b.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec!["127.0.0.1:5000".into()] });
-        assert_eq!(b.due_pings(), vec!["127.0.0.1:5000".parse().unwrap()]);
+        assert_eq!(b.due_pings(), vec![("127.0.0.1:5000".parse().unwrap(), false)]);
         // Nothing more until the probe interval has passed.
         assert!(b.due_pings().is_empty());
         assert!(b.paths().is_empty());
-        assert!(b.heard(1, "127.0.0.1:5000".parse().unwrap()));
+        assert!(b.heard(1, "127.0.0.1:5000".parse().unwrap(), false));
         assert_eq!(b.paths().len(), 1);
         // Strangers are ignored.
-        assert!(!a.heard(2, "127.0.0.1:6000".parse().unwrap()));
+        assert!(!a.heard(2, "127.0.0.1:6000".parse().unwrap(), false));
     }
 
     #[test]
@@ -408,7 +467,7 @@ mod tests {
         mesh.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec!["127.0.0.1:5000".into()] });
         // Still searching: nothing to say yet.
         assert!(mesh.reach_changes().is_empty());
-        assert!(mesh.heard(1, "127.0.0.1:5000".parse().unwrap()));
+        assert!(mesh.heard(1, "127.0.0.1:5000".parse().unwrap(), false));
         assert_eq!(mesh.reach_changes(), vec![(1, true)]);
         assert!(mesh.reach_changes().is_empty());
     }
@@ -469,5 +528,21 @@ mod network_tests {
         assert!(got.contains(&"[2a02:aa1::5]:4000".parse().unwrap()));
         assert!(got.contains(&"203.0.113.5:4000".parse().unwrap()));
         assert_eq!(got[0], "192.168.1.5:4000".parse().unwrap(), "same network first");
+    }
+
+    #[test]
+    fn a_direct_path_wins_over_the_relay() {
+        let mesh = Mesh::new(2, &[0; 32]);
+        mesh.set_peer(&PeerEndpoint { session_id: 1, public: Some("203.0.113.5:4000".into()), local: vec![] });
+        let direct: SocketAddr = "203.0.113.5:4000".parse().unwrap();
+        let via_relay: SocketAddr = "203.0.113.5:4001".parse().unwrap();
+        // Only the relay works at first.
+        assert!(mesh.heard(1, via_relay, true));
+        assert_eq!(mesh.paths(), vec![(via_relay, true)]);
+        // A direct packet arrives: voice switches to it, and the relay can't take it back while it lives.
+        assert!(mesh.heard(1, direct, false));
+        assert_eq!(mesh.paths(), vec![(direct, false)]);
+        assert!(mesh.heard(1, via_relay, true));
+        assert_eq!(mesh.paths(), vec![(direct, false)]);
     }
 }

@@ -634,6 +634,14 @@ fn start_peer_voice(ui: AppHandle, generation: u64, attempt: u64, channel: Chann
     let relay = ui.clone();
     std::thread::spawn(move || {
         for ev in events {
+            // A relay address to hand out: everyone in the channel learns it from the server.
+            if let strom_voice::EngineEvent::Endpoint { endpoint } = &ev {
+                let state = relay.state::<AppState>();
+                let conn = state.conn.lock().unwrap();
+                if let Some(c) = conn.as_ref() {
+                    c.control.send(ClientMsg::VoiceEndpoint { public: endpoint.public.clone(), local: endpoint.local.clone() });
+                }
+            }
             let _ = relay.emit("voice", ev);
         }
     });
@@ -677,6 +685,19 @@ fn call_peer(state: State<'_, AppState>, call_id: String, peer: PeerEndpoint) {
     if let Some(call) = state.call.lock().unwrap().as_ref().filter(|c| c.id == call_id) {
         call.engine.set_peer(&peer);
     }
+}
+
+/// A relay login (from the account) for voice in the channel and in a call: used only
+/// for people no direct path reaches.
+#[tauri::command]
+fn set_relay(state: State<'_, AppState>, login: strom_voice::turn::TurnLogin) -> CmdResult {
+    if let Some(engine) = state.conn.lock().unwrap().as_ref().and_then(|c| c.engine.as_ref()) {
+        engine.set_relay(&login).map_err(|e| format!("Couldn't use the voice relay: {e:#}"))?;
+    }
+    if let Some(call) = state.call.lock().unwrap().as_ref() {
+        call.engine.set_relay(&login).map_err(|e| format!("Couldn't use the voice relay: {e:#}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1372,6 +1393,7 @@ fn main() {
             transfer_ownership,
             get_members,
             upload_image,
+            set_relay,
             downloads::download_start,
             downloads::download_chunk,
             downloads::download_finish,

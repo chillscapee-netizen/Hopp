@@ -112,6 +112,7 @@ const commands = {
     if (m.type === "dm_history") setTimeout(() => emit("account", { type: "dm_history", with: m.with, messages: dmHistory[m.with] ?? [], complete: true }), 10);
     // File handshakes come straight back, as if from the friend: this page plays both sides.
     if (m.type === "file_signal") setTimeout(() => emit("account", { type: "file_signal", from: m.to, transfer: m.transfer, sealed: m.sealed }), 5);
+    if (m.type === "turn_login") setTimeout(() => emit("account", { type: "turn_login", login: { server: "turn.example:3478", username: "u", credential: "c" } }), 5);
     if (m.type === "dm_edit") setTimeout(() => emit("account", { type: "dm_edited", with: m.with, id: m.id, sealed: typeof m.sealed === "string" ? m.sealed : m.sealed[ME], edited_at: Date.now() }), 10);
     if (m.type === "dm_delete") setTimeout(() => emit("account", { type: "dm_deleted", with: m.with, id: m.id }), 10);
     if (m.type === "dm_send") setTimeout(() => emit("account", { type: "dm", with: m.to, nonce: m.nonce, message: { id: "d" + nextId++, from_key: ME, sealed: m.sealed, sent_at: Date.now() } }), 10);
@@ -135,6 +136,7 @@ const commands = {
   download_finish: () => { downloaded.done = true; return "C:/Users/me/Downloads/" + downloaded.name; },
   download_cancel: () => { downloaded.cancelled = true; },
   show_download: () => {},
+  set_relay: ({ login }) => { sent.push({ type: "set_relay", login }); },
   gif_search: () => ({ gifs: [], next: null }),
   fetch_profile: ({ key }) => ({ key, username: null, display_name: "Someone", avatar: null, bio: "" }),
   send_chat: ({ channel, text }) => {

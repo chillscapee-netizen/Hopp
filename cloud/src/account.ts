@@ -14,6 +14,8 @@ const ACCOUNT_PROTOCOL = 1;
 const MAX_DISPLAY_NAME = 32;
 /** New servers per account per day, so a script can't fill the cloud. */
 const MAX_NEW_SERVERS_PER_DAY = 10;
+/** Relay logins per account per day; each lasts a day, so one is usually plenty. */
+const RELAY_LOGINS_PER_DAY = 12;
 const MAX_BIO = 190;
 const MAX_ACTIVITY = 80;
 /** Small pictures only: 128 px WebP is about 10 KB. */
@@ -599,6 +601,8 @@ export class StromAccount extends DurableObject<Env> {
         if (kind === "ring" && !reached) this.send(ws, { type: "call", from: to, kind: "offline", call_id: callId });
         return;
       }
+      case "turn_login":
+        return this.relayLogin(ws);
       case "file_signal": {
         // Files go straight between friends' computers; this only passes their handshake
         // (sealed like a DM, so the cloud can't read it).
@@ -1011,6 +1015,47 @@ export class StromAccount extends DurableObject<Env> {
       mention: m.mention,
       preview: m.preview,
     });
+  }
+
+  /**
+   * A login for the voice relay (Cloudflare TURN), for when a direct path fails. Kept and
+   * reused for half its life, so the relay's API is asked rarely.
+   */
+  private async relayLogin(ws: WebSocket) {
+    const fail = (message: string) => this.send(ws, { type: "error", message, for: "turn_login" });
+    if (!this.env.TURN_KEY_ID || !this.env.TURN_KEY_TOKEN) return fail("The voice relay isn't set up on this Hopp Cloud.");
+    const now = Date.now();
+    const kept = this.meta("turn_login");
+    if (kept) {
+      const { login, until } = JSON.parse(kept);
+      if (until > now) return this.send(ws, { type: "turn_login", login });
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const [d, n] = (this.meta("turn_today") ?? "").split(" ");
+    const count = d === day ? Number(n) : 0;
+    if (count >= RELAY_LOGINS_PER_DAY) return fail("The voice relay is busy for you today. Try again tomorrow.");
+    this.setMeta("turn_today", `${day} ${count + 1}`);
+    const ttl = 86_400;
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${this.env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.env.TURN_KEY_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ ttl }),
+    });
+    if (!res.ok) return fail("The voice relay didn't answer. Try again in a moment.");
+    const body = (await res.json()) as { iceServers?: unknown };
+    const servers = (Array.isArray(body.iceServers) ? body.iceServers : [body.iceServers]) as { urls?: string | string[]; username?: string; credential?: string }[];
+    for (const s of servers) {
+      const urls = Array.isArray(s?.urls) ? s.urls : s?.urls ? [s.urls] : [];
+      // Voice goes over UDP: "turn:host:port?transport=udp" (or no transport, which means UDP).
+      const url = urls.find((u) => /^turn:/.test(u) && !/transport=tcp/.test(u));
+      const server = url?.replace(/^turn:/, "").replace(/\?.*$/, "");
+      if (server && s.username && s.credential) {
+        const login = { server, username: s.username, credential: s.credential };
+        this.setMeta("turn_login", JSON.stringify({ login, until: now + (ttl / 2) * 1000 }));
+        return this.send(ws, { type: "turn_login", login });
+      }
+    }
+    return fail("The voice relay sent something unexpected.");
   }
 
   /** A file handshake from a friend. False when none of our devices is online. */

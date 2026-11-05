@@ -1664,12 +1664,18 @@ listen("voice", (e) => {
   } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
     playSound("muted");
     toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "need_relay") {
+    useRelay();
   } else if (ev.type === "peer_reach") {
     if (ev.reachable) state.unreachable.delete(ev.session_id);
     else {
       state.unreachable.add(ev.session_id);
-      const name = userName(ev.session_id) ?? "Someone";
-      toast(`Can't connect to ${name} directly, so you can't hear each other. Their network or yours is blocking it; a different network (or turning off a VPN) usually helps.`, true);
+      // The relay usually sorts this out within seconds; only say something if it can't.
+      setTimeout(() => {
+        if (!state.unreachable.has(ev.session_id)) return;
+        const name = userName(ev.session_id) ?? "Someone";
+        toast(`Can't connect to ${name}, so you can't hear each other. Their network or yours is blocking voice; a different network (or turning off a VPN) usually helps.`, true);
+      }, relayState.unavailable ? 0 : 12_000);
     }
     renderSidebar();
   }
@@ -4760,6 +4766,10 @@ async function addDmMessages(peer, raw, prepend) {
 }
 
 function onDmEvent(m) {
+  if (m.type === "turn_login" || (m.type === "error" && m.for === "turn_login")) {
+    onRelayLogin(m);
+    return true;
+  }
   if (m.type === "file_signal") {
     onFileSignal(m);
     return true;
@@ -6808,9 +6818,13 @@ listen("call-voice", (e) => {
   } else if (ev.type === "devices_changed") {
     // A headset unplugged mid-call: carry on with what's there.
     devicesChanged();
+  } else if (ev.type === "need_relay") {
+    useRelay();
+  } else if (ev.type === "endpoint" && state.call) {
+    callSend(state.call, "endpoint", { public: ev.endpoint.public ?? null, local: ev.endpoint.local ?? [] });
   } else if (ev.type === "peer_reach" && state.call) {
     state.call.unreachable = !ev.reachable;
-    if (!ev.reachable) toast(`Can't connect to ${personFor(state.call.peer).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
+    if (!ev.reachable && relayState.unavailable) toast(`Can't connect to ${personFor(state.call.peer).display_name} directly. Their network or yours is blocking calls; a different network (or turning off a VPN) usually helps.`, true);
     renderCall();
   }
 });
@@ -8412,4 +8426,32 @@ function fileCard(peer, m) {
     });
   }
   return card;
+}
+
+// ---------- the voice relay ----------
+//
+// When someone can't be reached directly, the voice engine asks for a relay. The
+// account fetches a day-long login for Cloudflare's TURN relay and the engines use it
+// only for the people no direct path reaches. Voice stays end-to-end encrypted.
+
+var relayState = { login: null, waiting: false, unavailable: false };
+
+function useRelay() {
+  if (relayState.login) return invoke("set_relay", { login: relayState.login }).catch(() => {});
+  if (relayState.waiting || !state.accountConnected) return;
+  relayState.waiting = true;
+  invoke("account_send", { msg: { type: "turn_login" } }).catch(() => (relayState.waiting = false));
+}
+
+function onRelayLogin(m) {
+  relayState.waiting = false;
+  if (m.type === "error") {
+    relayState.unavailable = true;
+    return;
+  }
+  relayState.login = m.login;
+  relayState.unavailable = false;
+  invoke("set_relay", { login: m.login }).catch(() => {});
+  // A day-long login: forget it well before, so a fresh one is fetched next time.
+  setTimeout(() => (relayState.login = null), 6 * 3600 * 1000);
 }

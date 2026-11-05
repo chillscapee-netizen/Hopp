@@ -64,6 +64,10 @@ pub enum EngineEvent {
     /// Peer-to-peer voice: whether we can reach someone directly. Unreachable people
     /// can't hear us (nor we them) until one of the networks lets the traffic through.
     PeerReach { session_id: SessionId, reachable: bool },
+    /// Someone can't be reached directly: give the engine a relay login (`set_relay`).
+    NeedRelay,
+    /// Where peers can reach us changed (a relay address was added): tell them again.
+    Endpoint { endpoint: PeerEndpoint },
 }
 
 /// Audio devices by name; `None` means the system default.
@@ -169,7 +173,9 @@ impl VoiceEngine {
             }
         }
         let endpoint = PeerEndpoint { session_id, public: public.map(|a| a.to_string()), local };
-        let route = Route::Mesh(Arc::new(Mesh::new(session_id, &key)));
+        let mesh = Mesh::new(session_id, &key);
+        *mesh.endpoint.lock().unwrap() = Some(endpoint.clone());
+        let route = Route::Mesh(Arc::new(mesh));
         Self::start_with(socket, session_id, route, Some(endpoint), devices, settings)
     }
 
@@ -217,6 +223,24 @@ impl VoiceEngine {
         if let Route::Mesh(m) = &self.route {
             m.set_peer(peer);
         }
+    }
+
+    /// Peer-to-peer voice only: a relay to reach people no direct path gets to.
+    /// Harmless to call again; a working relay is kept.
+    pub fn set_relay(&self, login: &crate::turn::TurnLogin) -> anyhow::Result<()> {
+        let Route::Mesh(m) = &self.route else { return Ok(()) };
+        let mut turn = m.turn.lock().unwrap();
+        if turn.as_ref().is_some_and(|t| t.state() != crate::turn::State::Failed) {
+            return Ok(());
+        }
+        let dual = mesh::is_dual(&self.socket);
+        let server = std::net::ToSocketAddrs::to_socket_addrs(login.server.as_str())?
+            .find(|a| dual || a.is_ipv4())
+            .ok_or_else(|| anyhow::anyhow!("couldn't find the relay"))?;
+        let (t, first) = crate::turn::Turn::new(server, login);
+        self.socket.send_to(&first, mesh::wire(server, dual))?;
+        *turn = Some(t);
+        Ok(())
     }
 
     /// Peer-to-peer voice only: stops sending to everyone `keep` rejects.
@@ -702,8 +726,9 @@ impl Net {
                 }
                 let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
                 sealer.seal(mesh::KIND_PING, &nonce.to_be_bytes(), &mut self.packet);
-                for addr in due {
-                    let _ = self.socket.send_to(&self.packet, mesh::wire(addr, self.dual));
+                let m = m.clone();
+                for (addr, relayed) in due {
+                    self.send_mesh(&m, addr, relayed);
                 }
             }
         }
@@ -725,18 +750,59 @@ impl Net {
                 self.plain.extend_from_slice(opus);
                 let sealer = self.sealer.as_mut().expect("mesh routes have a sealer");
                 sealer.seal(mesh::KIND_VOICE, &self.plain, &mut self.packet);
-                for addr in paths {
-                    let _ = self.socket.send_to(&self.packet, mesh::wire(addr, self.dual));
+                let m = m.clone();
+                for (addr, relayed) in paths {
+                    self.send_mesh(&m, addr, relayed);
                 }
             }
         }
     }
 
     /// Answers a peer's ping with the same payload, so they can time the round trip.
-    fn pong(&mut self, payload: &[u8], to: SocketAddr) {
+    fn pong(&mut self, payload: &[u8], to: SocketAddr, relayed: bool) {
+        let Route::Mesh(m) = &self.route else { return };
+        let m = m.clone();
         if let Some(sealer) = self.sealer.as_mut() {
             sealer.seal(mesh::KIND_PONG, payload, &mut self.packet);
-            let _ = self.socket.send_to(&self.packet, mesh::wire(to, self.dual));
+            self.send_mesh(&m, to, relayed);
+        }
+    }
+
+    /// Sends the sealed packet in `self.packet` to a peer: straight there, or through our relay.
+    fn send_mesh(&mut self, m: &Mesh, addr: SocketAddr, relayed: bool) {
+        if !relayed {
+            let _ = self.socket.send_to(&self.packet, mesh::wire(addr, self.dual));
+            return;
+        }
+        let mut turn = m.turn.lock().unwrap();
+        let Some(t) = turn.as_mut() else { return };
+        let server = mesh::wire(t.server, self.dual);
+        let (wrapped, bind) = t.wrap(addr, &self.packet);
+        if let Some(bind) = bind {
+            let _ = self.socket.send_to(&bind, server);
+        }
+        let _ = self.socket.send_to(&wrapped, server);
+    }
+
+    /// The relay's upkeep: retries, refreshes, and letting every peer's IP through.
+    /// Returns our relay address the first time it's ready.
+    fn relay_upkeep(&mut self, m: &Mesh, announced: &mut bool) -> Option<SocketAddr> {
+        let mut turn = m.turn.lock().unwrap();
+        let t = turn.as_mut()?;
+        let server = mesh::wire(t.server, self.dual);
+        let mut out = t.tick();
+        for ip in m.peer_ips() {
+            out.extend(t.permit(ip));
+        }
+        for msg in out {
+            let _ = self.socket.send_to(&msg, server);
+        }
+        match t.state() {
+            crate::turn::State::Ready(addr) if !*announced => {
+                *announced = true;
+                Some(addr)
+            }
+            _ => None,
         }
     }
 }
@@ -779,11 +845,25 @@ impl Encoder {
         let mut last_reminder: Option<Instant> = None;
         let settings = self.settings.clone();
 
+        let mut relay_announced = false;
+        let mut relay_asked = false;
         while !stop.load(Ordering::Relaxed) {
             self.net.tick();
             if let Route::Mesh(m) = &self.net.route {
+                let m = m.clone();
                 for (session_id, reachable) in m.reach_changes() {
                     let _ = self.events.send(EngineEvent::PeerReach { session_id, reachable });
+                }
+                if !relay_asked && m.wants_relay() && m.turn.lock().unwrap().is_none() {
+                    relay_asked = true;
+                    let _ = self.events.send(EngineEvent::NeedRelay);
+                }
+                if let Some(relay) = self.net.relay_upkeep(&m, &mut relay_announced) {
+                    let mut endpoint = m.endpoint.lock().unwrap();
+                    if let Some(e) = endpoint.as_mut() {
+                        e.local.push(relay.to_string());
+                        let _ = self.events.send(EngineEvent::Endpoint { endpoint: e.clone() });
+                    }
                 }
             }
             let chunk = match capture.recv_timeout(Duration::from_millis(200)) {
@@ -857,9 +937,28 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
                 continue;
             }
         };
+        // From our relay: a peer's packet inside, or the relay's own business.
+        let mut from = mesh::canonical(from);
+        let mut relayed = false;
+        let mut inner = Vec::new();
+        let relay_server = mesh.turn.lock().unwrap().as_ref().map(|t| t.server);
+        if relay_server == Some(from) && crate::turn::looks_like_turn(packet) {
+            let (data, replies) = match mesh.turn.lock().unwrap().as_mut() {
+                Some(t) => t.handle(packet),
+                None => (None, Vec::new()),
+            };
+            for r in replies {
+                let _ = net.socket.send_to(&r, mesh::wire(from, net.dual));
+            }
+            let Some((peer, data)) = data else { continue };
+            from = mesh::canonical(peer);
+            relayed = true;
+            inner = data;
+        }
+        let packet = if relayed { &inner[..] } else { packet };
         // Peer to peer: only sealed packets from people in our channel count.
         let Some((kind, sender, payload)) = mesh::open(&mesh.cipher, packet) else { continue };
-        if !mesh.heard(sender, from) {
+        if !mesh.heard(sender, from, relayed) {
             continue;
         }
         match kind {
@@ -867,7 +966,7 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
                 let seq = u32::from_be_bytes(payload[..4].try_into().unwrap());
                 mixer.lock().unwrap().push(sender, seq, payload[4..].to_vec());
             }
-            mesh::KIND_PING => net.pong(&payload, from),
+            mesh::KIND_PING => net.pong(&payload, from, relayed),
             mesh::KIND_PONG if payload.len() == 4 => {
                 let rtt = net.now_ms().wrapping_sub(u32::from_be_bytes(payload[..4].try_into().unwrap()));
                 if let Some(slowest) = mesh.record_rtt(sender, rtt) {
@@ -1143,6 +1242,49 @@ mod tests {
         c.set_peer(a.endpoint().unwrap());
         a.set_peer(c.endpoint().unwrap());
         assert!(!connected(&c_events));
+    }
+
+    /// Two people whose networks block every direct path still hear each other,
+    /// through a relay (a real little TURN relay on this computer).
+    #[test]
+    #[ignore = "opens audio devices"]
+    fn engines_reach_each_other_through_a_relay_when_direct_fails() {
+        let relay = crate::turn::testing::Relay::spawn();
+        let key = [5u8; 32];
+        let devices = DeviceChoice::default();
+        let (a, a_events) = VoiceEngine::start_mesh(1, key, &devices, Default::default()).unwrap();
+        let (b, b_events) = VoiceEngine::start_mesh(2, key, &devices, Default::default()).unwrap();
+        a.settings().set_muted(true);
+        b.settings().set_muted(true);
+        // Addresses that lead nowhere: no direct path either way.
+        let nowhere = |id| PeerEndpoint { session_id: id, public: Some("127.0.0.1:9".into()), local: vec![] };
+        a.set_peer(&nowhere(2));
+        b.set_peer(&nowhere(1));
+
+        let wait_for = |rx: &Receiver<EngineEvent>, secs: u64, pick: &dyn Fn(&EngineEvent) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(secs);
+            while Instant::now() < deadline {
+                if let Ok(ev) = rx.recv_timeout(Duration::from_millis(100)) {
+                    if pick(&ev) {
+                        return Some(ev);
+                    }
+                }
+            }
+            None
+        };
+        // Engine 1 notices and asks for a relay; once it has one it says where to find it.
+        assert!(wait_for(&a_events, 6, &|e| matches!(e, EngineEvent::NeedRelay)).is_some(), "asks for a relay");
+        a.set_relay(&relay.login).unwrap();
+        let Some(EngineEvent::Endpoint { endpoint }) = wait_for(&a_events, 5, &|e| matches!(e, EngineEvent::Endpoint { .. })) else {
+            panic!("never got a relay address");
+        };
+        // Engine 2 learns only the relay address, nothing direct.
+        let relay_addr = endpoint.local.last().unwrap().clone();
+        b.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec![relay_addr] });
+
+        let connected = |rx: &Receiver<EngineEvent>| wait_for(rx, 8, &|e| matches!(e, EngineEvent::Latency { .. })).is_some();
+        assert!(connected(&b_events), "engine 2 never reached engine 1 through the relay");
+        assert!(connected(&a_events), "engine 1 never heard back through the relay");
     }
 
     #[test]

@@ -547,3 +547,13 @@ test("file handshakes pass between online friends only", async () => {
   assert.equal(offline.offline, true);
   a.d.close();
 });
+
+test("a relay login says plainly when the relay isn't set up", async () => {
+  const u = await userWithName("relayer");
+  u.d.send({ type: "turn_login" });
+  const answer = await u.d.waitFor((m) => m.type === "turn_login" || (m.type === "error" && m.for === "turn_login"));
+  // The local test cloud has no TURN key: the app is told, and voice carries on directly.
+  assert.equal(answer.type, "error");
+  assert.match(answer.message, /isn't set up/);
+  u.d.close();
+});

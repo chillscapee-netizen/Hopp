@@ -8,6 +8,7 @@ pub mod engine;
 pub mod identity;
 pub mod jitter;
 pub mod mesh;
+pub mod turn;
 pub mod settings;
 
 pub use account::{connect_account, AccountLink};
