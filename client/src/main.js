@@ -1404,21 +1404,32 @@ function openMenu(items, x, y, above) {
 }
 
 function openServerMenu(server, x, y) {
-  const active = server.id === state.activeId;
+  const active = server.id === state.activeId && !!state.roster;
   const folder = prefs.rail.find((item) => item.folder && item.ids.includes(server.id));
+  // Running it: only known for the server we're in.
+  const manage = active && can("manage");
   openMenu(
     [
-      active
-        ? { label: "Disconnect", icon: "logout", action: disconnect }
-        : { label: "Connect", icon: "link", action: () => connectTo(server) },
-      ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
+      { label: "Invite people", icon: "user-plus", action: () => onServer(server, openInvite) },
       ...(serverHasUnread(server.address) ? [{ label: "Mark as read", icon: "check", action: () => markServerRead(server.address) }] : []),
+      ...(manage
+        ? [
+            "sep",
+            { label: "Server settings", icon: "settings", action: () => onServer(server, openServerSettings) },
+            { label: "Create text channel", icon: "hash", action: () => onServer(server, () => openChannelDialog("text")) },
+            { label: "Create voice channel", icon: "volume", action: () => onServer(server, () => openChannelDialog("voice")) },
+          ]
+        : []),
       "sep",
       { heading: "Notifications" },
       ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
         label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
       })),
       "sep",
+      active
+        ? { label: "Disconnect", icon: "logout", action: disconnect }
+        : { label: "Connect", icon: "link", action: () => connectTo(server) },
+      ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
       ...(server.owner || (active && isOwner())
         ? isCloud(server)
           ? [{ label: "Delete server", icon: "trash", danger: true, action: () => deleteServer(server) }]
@@ -1981,8 +1992,8 @@ function renderSidebar() {
     row.dataset.tip = ch.id === mine ? "You're here" : `Join ${ch.name}`;
     row.append(icon("volume"), el("span", "ellipsis", ch.name));
     row.addEventListener("click", () => joinVoice(ch.id));
+    row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
     if (owner) {
-      row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
       draggableChannel(row, ch);
     }
     const users = r.users.filter((u) => u.voice_channel === ch.id).sort(byName);
@@ -2049,8 +2060,13 @@ function openChannelMenu(ch, e) {
   e.stopPropagation();
   const address = activeServer()?.address;
   const muted = channelMuted(address, ch.id);
+  const inThis = ch.kind === "voice" && myVoice() === ch.id;
   openMenu(
     [
+      ...(ch.kind === "voice"
+        ? [inThis ? { label: "Leave voice", icon: "phone-off", action: () => call("leave_voice") } : { label: "Join voice", icon: "volume", action: () => joinVoice(ch.id) }]
+        : []),
+      { label: "Invite people", icon: "user-plus", action: openInvite },
       ...(ch.kind === "text" && (channelUnread(address, ch.id) || channelMentions(address, ch.id))
         ? [{ label: "Mark as read", icon: "check", action: () => markChannelRead(address, ch.id) }]
         : []),
@@ -2121,6 +2137,7 @@ function userRow(u, className, size, sub) {
   if (flags) row.append(flags);
   else if (!member && !isSelf && vol !== undefined && vol !== 100) row.append(el("span", "vol-tag", vol === 0 ? "Muted" : `${vol}%`));
   if (!isSelf) row.addEventListener("click", () => openUserCard(u, row));
+  row.addEventListener("contextmenu", (e) => openUserMenu(u, row, e));
   return row;
 }
 
@@ -8471,4 +8488,64 @@ function onRelayLogin(m) {
   invoke("set_relay", { login: m.login }).catch(() => {});
   // A day-long login: forget it well before, so a fresh one is fetched next time.
   setTimeout(() => (relayState.login = null), 6 * 3600 * 1000);
+}
+
+/** Opens a server (instantly if already connected) and then does something there. */
+async function onServer(server, then) {
+  if (await connectTo(server)) then();
+}
+
+// ---------- right-click on a person ----------
+
+function openUserMenu(u, row, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const key = keyOf(u);
+  const isSelf = u.session_id === state.roster?.me;
+  const friend = key ? state.friends?.get(key) : null;
+  const vol = prefs.userVolumes[u.name] ?? 100;
+  const items = [{ label: "Profile", icon: "user", action: () => openUserCard(u, row) }];
+  if (!isSelf) {
+    items.push({ label: "Mention", icon: "at", action: () => mentionUser(u) });
+    if (friend?.state === "friend") {
+      items.push({ label: "Message", icon: "message", action: () => openDm(key) });
+      items.push({ label: "Call", icon: "phone", action: () => {
+        openDm(key);
+        startCall(key);
+      } });
+    } else if (key && friend?.state !== "blocked" && friend?.state !== "outgoing") {
+      items.push({ label: friend?.state === "incoming" ? "Accept friend request" : "Add friend", icon: "user-plus", action: () => {
+        if (friend?.state === "incoming") accountSend({ type: "friend_accept", key }).catch(() => {});
+        else accountSend({ type: "friend_request", key }).then(() => toast(`Friend request sent to ${u.name}.`), () => {});
+      } });
+    }
+    items.push("sep", { label: vol === 0 ? "Unmute for me" : "Mute for me", icon: vol === 0 ? "volume" : "mic-off", action: () => {
+      cardUser = u;
+      setUserVolume(vol === 0 ? 100 : 0);
+    } });
+    if (can("moderate") && outranks(u)) {
+      items.push("sep");
+      items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
+        cardUser = u;
+        removeUser(false);
+      } });
+      if (can("manage")) items.push({ label: `Ban ${u.name}`, icon: "ban", danger: true, action: () => {
+        cardUser = u;
+        removeUser(true);
+      } });
+    }
+  }
+  openMenu(items, e.clientX, e.clientY);
+}
+
+/** Puts "@name " in the message box, as picking them from the @ list would. */
+function mentionUser(u) {
+  const key = keyOf(u);
+  const label = `@${u.name}`;
+  const v = chatInput.value;
+  chatInput.value = v + (v && !v.endsWith(" ") ? " " : "") + label + " ";
+  if (key) composeMentions.set(label, key);
+  autosize();
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
 }
