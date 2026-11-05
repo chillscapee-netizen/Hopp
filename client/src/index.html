@@ -27,6 +27,7 @@
     <symbol id="i-video" viewBox="0 0 24 24"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
     <symbol id="i-video-off" viewBox="0 0 24 24"><path d="M10.7 6H14a2 2 0 0 1 2 2v3.3l1 1L22 8v8M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/></symbol>
     <symbol id="i-pip" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
     <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
@@ -437,6 +438,25 @@
           <span class="field-label">Topic</span>
           <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>
         </label>
+        <div id="channel-edit-voice" class="channel-voice-settings" hidden>
+          <label class="field">
+            <span class="field-label">User limit <output id="channel-edit-limit-value"></output></span>
+            <input id="channel-edit-limit" type="range" min="0" max="10" step="1">
+          </label>
+          <label class="row setting-row">
+            <span class="row-label">
+              <span class="row-title">AFK channel</span>
+              <span class="row-sub">People who are away this long are moved here, muted.</span>
+            </span>
+            <select id="channel-edit-afk" class="row-select">
+              <option value="0">Off</option>
+              <option value="5">After 5 minutes</option>
+              <option value="15">After 15 minutes</option>
+              <option value="30">After 30 minutes</option>
+              <option value="60">After 1 hour</option>
+            </select>
+          </label>
+        </div>
         <label id="channel-edit-pictures-row" class="row setting-row">
           <span class="row-label">
             <span class="row-title">Allow pictures</span>
@@ -1298,6 +1318,7 @@
   <dialog id="lightbox" class="lightbox"><img id="lightbox-img" alt=""></dialog>
   <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="pins-pop" class="popover pins-pop" hidden></div>
+  <div id="server-submenu" class="popover menu submenu" hidden></div>
   <aside id="search-panel" class="search-panel" hidden>
     <div class="search-panel-head"><span id="search-count"></span><button id="search-close" type="button" class="icon-btn" data-tip="Close (Esc)"><svg class="i"><use href="#i-x"/></svg></button></div>
     <div id="search-results" class="search-results"></div>

@@ -417,7 +417,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
-                features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into()],
+                features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into(), "voice-settings".into()],
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -458,6 +458,9 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             };
             match msg {
                 ClientMsg::JoinVoice { channel } => match st.channel(channel) {
+                    Some(c) if c.kind == ChannelKind::Voice && c.user_limit.is_some_and(|l| st.clients.values().filter(|o| o.user.voice_channel == Some(channel) && o.user.session_id != session_id).count() >= l as usize) => {
+                        error(&format!("{} is full.", c.name));
+                    }
                     Some(c) if c.kind == ChannelKind::Voice => st.update_user(session_id, |u| {
                         u.voice_channel = Some(channel);
                         u.sharing = false;
@@ -647,11 +650,11 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false });
+                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None });
                         st.channels_changed();
                     }
                 }
-                ClientMsg::UpdateChannel { channel, name, topic, category, .. } => {
+                ClientMsg::UpdateChannel { channel, name, topic, category, user_limit, afk_after, .. } => {
                     let category = category.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
                     let kind = st.channel(channel).map(|c| c.kind);
                     let name = kind.map(|k| normalize_channel_name(&name, k)).unwrap_or_default();
@@ -671,6 +674,20 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         c.name = name;
                         c.topic = topic;
                         c.category = category;
+                        if c.kind == ChannelKind::Voice {
+                            if let Some(limit) = user_limit {
+                                c.user_limit = (limit > 0).then_some(limit.min(99));
+                            }
+                        }
+                        let is_voice = c.kind == ChannelKind::Voice;
+                        // One AFK channel at most.
+                        if let (true, Some(minutes)) = (is_voice, afk_after) {
+                            for other in st.config.channels.iter_mut() {
+                                other.afk_after = None;
+                            }
+                            let c = st.config.channels.iter_mut().find(|c| c.id == channel).expect("checked above");
+                            c.afk_after = (minutes > 0).then_some(minutes.clamp(1, 240));
+                        }
                         st.channels_changed();
                     }
                 }

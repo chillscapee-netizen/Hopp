@@ -69,7 +69,7 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number }
 const MAX_CATEGORY_LEN = 24;
 const MAX_TOPIC_LEN = 200;
 interface User {
@@ -222,6 +222,8 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("topic")) this.sql.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
     if (!channelColumns.has("category")) this.sql.exec("ALTER TABLE channels ADD COLUMN category TEXT");
     if (!channelColumns.has("no_pictures")) this.sql.exec("ALTER TABLE channels ADD COLUMN no_pictures INTEGER");
+    if (!channelColumns.has("user_limit")) this.sql.exec("ALTER TABLE channels ADD COLUMN user_limit INTEGER");
+    if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
@@ -340,13 +342,15 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic, category, no_pictures FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after FROM channels ORDER BY coalesce(position, id + 100000), id")
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
         if (r.topic) c.topic = String(r.topic);
         if (r.category) c.category = String(r.category);
         if (r.no_pictures) c.no_pictures = true;
+        if (r.user_limit) c.user_limit = Number(r.user_limit);
+        if (r.afk_after) c.afk_after = Number(r.afk_after);
         return c;
       });
   }
@@ -675,7 +679,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings"],
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
@@ -702,6 +706,9 @@ export class StromServer extends DurableObject<Env> {
       case "join_voice": {
         const ch = this.channel(Number(msg.channel));
         if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
+        // The channel's own limit (moderators moving someone in aren't held to it).
+        const limit = Number(this.channels().find((c) => c.id === ch.id)?.user_limit ?? 0);
+        if (limit && this.voiceMembers(ch.id).filter(([o]) => o !== ws).length >= limit) return this.error(ws, `${ch.name} is full (${limit} people).`);
         const full = this.enterVoice(ws, s, ch);
         if (full) return this.error(ws, full + " Try another voice channel.");
         return;
@@ -946,6 +953,16 @@ export class StromServer extends DurableObject<Env> {
         if ([...category].length > MAX_CATEGORY_LEN) return this.error(ws, `Category names are at most ${MAX_CATEGORY_LEN} characters.`);
         this.sql.exec("UPDATE channels SET name = ?, topic = ?, category = ? WHERE id = ?", name, topic || null, category || null, ch.id);
         if (msg.no_pictures != null) this.sql.exec("UPDATE channels SET no_pictures = ? WHERE id = ?", msg.no_pictures ? 1 : null, ch.id);
+        if (ch.kind === "voice" && msg.user_limit != null) {
+          const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
+          this.sql.exec("UPDATE channels SET user_limit = ? WHERE id = ?", limit || null, ch.id);
+        }
+        if (ch.kind === "voice" && msg.afk_after != null) {
+          // One AFK channel at most.
+          const minutes = Math.max(0, Math.min(240, Math.floor(Number(msg.afk_after)) || 0));
+          if (minutes) this.sql.exec("UPDATE channels SET afk_after = NULL");
+          this.sql.exec("UPDATE channels SET afk_after = ? WHERE id = ?", minutes || null, ch.id);
+        }
         return this.broadcast({ type: "channels_updated", channels: this.channels() });
       }
       case "reorder_channels": {

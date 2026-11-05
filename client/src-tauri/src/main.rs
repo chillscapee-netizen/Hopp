@@ -841,8 +841,25 @@ fn update_channel(
     topic: Option<String>,
     category: Option<String>,
     no_pictures: Option<bool>,
+    user_limit: Option<u8>,
+    afk_after: Option<u16>,
 ) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures }))
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after }))
+}
+
+/// Seconds since the last key press or mouse move anywhere in Windows (for the AFK channel).
+#[tauri::command]
+fn idle_seconds() -> u64 {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetTickCount;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+        let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+        if unsafe { GetLastInputInfo(&mut info) }.as_bool() {
+            return (unsafe { GetTickCount() }.wrapping_sub(info.dwTime) / 1000) as u64;
+        }
+    }
+    0
 }
 
 #[tauri::command]
@@ -1443,6 +1460,7 @@ fn main() {
             delete_channel,
             update_channel,
             reorder_channels,
+            idle_seconds,
             set_loopback,
             local_address,
             invite_preview,

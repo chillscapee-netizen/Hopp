@@ -42,6 +42,12 @@ pub struct Channel {
     /// Cloud servers: the owner turned pictures off in this channel.
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_pictures: bool,
+    /// Voice channels: at most this many people (moderators can still move people in).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_limit: Option<u8>,
+    /// Voice channels: this is the AFK channel; people away this many minutes are moved here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub afk_after: Option<u16>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -282,6 +288,12 @@ pub enum ClientMsg {
         /// Cloud servers: `Some(true)` turns pictures off in the channel; `None` leaves it.
         #[serde(default)]
         no_pictures: Option<bool>,
+        /// Voice channels: `Some(0)` for no limit; `None` leaves it.
+        #[serde(default)]
+        user_limit: Option<u8>,
+        /// Voice channels: `Some(minutes)` makes it the AFK channel, `Some(0)` stops it; `None` leaves it.
+        #[serde(default)]
+        afk_after: Option<u16>,
     },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },

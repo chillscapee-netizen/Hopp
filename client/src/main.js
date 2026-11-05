@@ -1391,26 +1391,67 @@ function openMenu(items, x, y, above) {
   document.getElementById("tooltip").hidden = true;
   delete menu.dataset.owner;
   menu.classList.toggle("wide", items.some((i) => i.checked !== undefined));
-  menu.replaceChildren(
-    ...items.map((item) => {
-      if (item === "sep") return el("div", "menu-sep");
-      if (item.heading) return el("div", "menu-heading", item.heading);
-      const b = el("button", "menu-item" + (item.danger ? " danger" : "") + (item.checked ? " checked" : ""));
-      const text = el("span", "menu-text");
-      text.append(el("span", "ellipsis", item.label));
-      if (item.sub) text.append(el("small", "ellipsis", item.sub));
-      b.append(text);
-      if (item.checked !== undefined) b.append(el("span", "menu-radio"));
-      else if (item.icon) b.append(icon(item.icon));
-      b.addEventListener("click", () => {
-        closePopovers();
-        item.action();
-      });
-      return b;
-    }),
-  );
+  menu.replaceChildren(...menuItems(items));
   placePopover(menu, x, y);
   if (above) menu.style.top = `${Math.max(8, y - menu.offsetHeight - 8)}px`;
+}
+
+/** A menu's rows: buttons, ticks, sliders that stay open while you drag, and submenus. */
+function menuItems(items) {
+  return items.map((item) => {
+    if (item === "sep") return el("div", "menu-sep");
+    if (item.heading) return el("div", "menu-heading", item.heading);
+    if (item.slider) {
+      const row = el("div", "menu-slider");
+      const head = el("div", "menu-slider-head");
+      const value = el("span", "menu-slider-value", item.slider.format(item.slider.value));
+      head.append(el("span", "", item.label), value);
+      const input = el("input");
+      input.type = "range";
+      input.min = item.slider.min;
+      input.max = item.slider.max;
+      input.step = item.slider.step ?? 1;
+      input.value = item.slider.value;
+      input.addEventListener("input", () => {
+        value.textContent = item.slider.format(Number(input.value));
+        item.slider.onInput(Number(input.value));
+      });
+      row.append(head, input);
+      return row;
+    }
+    const b = el("button", "menu-item" + (item.danger ? " danger" : "") + (item.checked ? " checked" : "") + (item.submenu ? " has-sub" : ""));
+    const text = el("span", "menu-text");
+    text.append(el("span", "", item.label));
+    if (item.sub) text.append(el("small", "ellipsis", item.sub));
+    b.append(text);
+    if (item.check !== undefined) {
+      const box = el("span", "menu-check" + (item.check ? " on" : ""));
+      if (item.check) box.append(icon("check"));
+      b.append(box);
+    } else if (item.checked !== undefined) b.append(el("span", "menu-radio"));
+    else if (item.submenu) b.append(icon("chevron", "menu-chevron"));
+    else if (item.icon) b.append(icon(item.icon));
+    if (item.submenu) {
+      const open = () => {
+        const r = b.getBoundingClientRect();
+        const sub = $("server-submenu");
+        sub.replaceChildren(...menuItems(item.submenu));
+        sub.hidden = false;
+        const left = r.right + 4 + 220 > window.innerWidth ? r.left - 224 : r.right + 4;
+        sub.style.left = left + "px";
+        sub.style.top = Math.min(r.top - 6, window.innerHeight - sub.offsetHeight - 8) + "px";
+      };
+      b.addEventListener("mouseenter", open);
+      b.addEventListener("click", open);
+      return b;
+    }
+    b.addEventListener("mouseenter", () => ($("server-submenu").hidden = true));
+    b.addEventListener("click", () => {
+      closePopovers();
+      item.action();
+    });
+    return b;
+  });
 }
 
 function openServerMenu(server, x, y) {
@@ -2040,8 +2081,9 @@ function renderSidebar() {
     const row = el("button", "channel-row");
     row.classList.toggle("in-voice", ch.id === mine);
     row.classList.toggle("current", ch.id === state.view && voiceChat());
-    row.dataset.tip = ch.id === mine ? "You're here" : `Join ${ch.name}`;
-    row.append(icon("volume"), el("span", "ellipsis", ch.name));
+    row.append(icon(ch.afk_after ? "moon" : "volume"), el("span", "ellipsis", ch.name));
+    const count = r.users.filter((u) => u.voice_channel === ch.id).length;
+    if (ch.user_limit) row.append(el("span", "voice-limit" + (count >= ch.user_limit ? " full" : ""), count + "/" + ch.user_limit));
     row.addEventListener("click", () => {
       joinVoice(ch.id);
       // Its own chat and who's there open alongside.
@@ -4070,6 +4112,8 @@ function renderMeterState(voice, clipping) {
 
 function closePopovers() {
   document.querySelectorAll(".popover").forEach((p) => (p.hidden = true));
+  const sub = document.getElementById("server-submenu");
+  if (sub) sub.hidden = true;
   $("sidebar-head").classList.remove("open");
 }
 
@@ -4182,7 +4226,7 @@ document.addEventListener("mousedown", (e) => {
 
 const tip = $("tooltip");
 /** Icons that say what they are: no tooltip, just the icon (the words stay for screen readers). */
-var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action";
+var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action, .category-add, .channel-row";
 
 document.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
@@ -6522,6 +6566,11 @@ function openChannelEdit(ch) {
     ? "Pictures are off for the whole server (Server settings → Overview)."
     : "Members can share pictures in this channel.";
   $("channel-edit-category").value = ch.category ?? "";
+  const voiceSettings = !text && !!state.roster?.features?.includes("voice-settings");
+  $("channel-edit-voice").hidden = !voiceSettings;
+  $("channel-edit-limit").value = ch.user_limit ?? 0;
+  $("channel-edit-limit-value").textContent = ch.user_limit ? ch.user_limit + " people" : "No limit";
+  $("channel-edit-afk").value = String(ch.afk_after ?? 0);
   $("category-options").replaceChildren(...[...new Set(state.roster.channels.map((c) => c.category).filter(Boolean))].map((c) => {
     const o = el("option");
     o.value = c;
@@ -6541,8 +6590,12 @@ $("channel-edit-form").addEventListener("submit", () => {
   if (!editingChannel || !name) return;
   const noPictures = editingChannel.kind === "text" && isCloud(activeServer()) ? !$("channel-edit-pictures").checked : null;
   const picturesSame = noPictures === null || noPictures === !!editingChannel.no_pictures;
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures });
+  const voiceSettings = !$("channel-edit-voice").hidden;
+  const userLimit = voiceSettings ? Number($("channel-edit-limit").value) : null;
+  const afkAfter = voiceSettings ? Number($("channel-edit-afk").value) : null;
+  const voiceSame = !voiceSettings || (userLimit === (editingChannel.user_limit ?? 0) && afkAfter === (editingChannel.afk_after ?? 0));
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -8994,7 +9047,15 @@ function openUserMenu(u, row, e) {
         else accountSend({ type: "friend_request", key }).then(() => toast(`Friend request sent to ${u.name}.`), () => {});
       } });
     }
-    items.push("sep", { label: vol === 0 ? "Unmute for me" : "Mute for me", icon: vol === 0 ? "volume" : "mic-off", action: () => {
+    // Their volume, right here: drag it down (or up, to 200%).
+    items.push("sep", {
+      label: "User volume",
+      slider: { value: vol, min: 0, max: 200, step: 5, format: (v) => v + "%", onInput: (v) => {
+        cardUser = u;
+        setUserVolume(v);
+      } },
+    });
+    items.push({ label: "Mute", check: vol === 0, action: () => {
       cardUser = u;
       setUserVolume(vol === 0 ? 100 : 0);
     } });
@@ -10229,8 +10290,15 @@ function renderVoiceStage() {
     join.addEventListener("click", () => joinVoice(view));
     foot.append(join);
   } else if (here.length === 1) {
-    foot.append(el("span", "voice-stage-hint", "Nobody else is here yet. Invite someone, or wait for a friend to join."));
+    foot.append(el("span", "voice-stage-hint", "Nobody else is here yet."));
   }
+  if (mine) {
+    const invite = el("button", "btn sm", "Invite friends");
+    invite.type = "button";
+    invite.addEventListener("click", () => openInvite());
+    foot.append(invite);
+  }
+  if (channel(view)?.afk_after) foot.prepend(el("span", "voice-stage-hint", "This is the AFK channel: people away for " + channel(view).afk_after + " minutes end up here."));
   stage.replaceChildren(...(here.length ? [tiles] : [el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now.")]), foot);
 }
 
@@ -10249,10 +10317,10 @@ function voiceModItems(u) {
   const others = voiceChannels().filter((c) => c.id !== u.voice_channel);
   return [
     "sep",
-    { label: u.server_muted ? "Server unmute" : "Server mute", icon: "mic-off", action: () => call("server_mute", { sessionId: u.session_id, muted: !u.server_muted, deafened: !!u.server_deafened }) },
-    { label: u.server_deafened ? "Server undeafen" : "Server deafen", icon: "headphones-off", action: () => call("server_mute", { sessionId: u.session_id, muted: !!u.server_muted, deafened: !u.server_deafened }) },
-    ...others.map((c) => ({ label: "Move to " + c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) })),
-    { label: "Disconnect from voice", icon: "phone-off", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
+    { label: "Server mute", check: !!u.server_muted, action: () => call("server_mute", { sessionId: u.session_id, muted: !u.server_muted, deafened: !!u.server_deafened }) },
+    { label: "Server deafen", check: !!u.server_deafened, action: () => call("server_mute", { sessionId: u.session_id, muted: !!u.server_muted, deafened: !u.server_deafened }) },
+    ...(others.length ? [{ label: "Move to", submenu: others.map((c) => ({ label: c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) })) }] : []),
+    { label: "Disconnect", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
   ];
 }
 
@@ -10605,3 +10673,25 @@ $("screen-pip").addEventListener("click", () => {
     apply();
   });
 })();
+
+// ---------- the AFK channel ----------
+//
+// Away from the computer (no key or mouse anywhere in Windows) and silent for as long as the
+// server's AFK channel says: you're moved there, muted, and told so when you're back.
+
+var afk = { since: null };
+
+async function checkAfk() {
+  if (!connected() || myVoice() === null) return;
+  const target = voiceChannels().find((c) => c.afk_after);
+  if (!target || myVoice() === target.id) return;
+  const idle = await invoke("idle_seconds").catch(() => 0);
+  const quiet = !state.speaking.has(state.roster.me);
+  if (idle >= target.afk_after * 60 && quiet) {
+    afk.since = Date.now();
+    await joinVoice(target.id);
+    if (!state.muted) await setMuted(true);
+    toast("You were away, so you were moved to " + target.name + ". Join a voice channel to come back.");
+  }
+}
+setInterval(checkAfk, 30_000);

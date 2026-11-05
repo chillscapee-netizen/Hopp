@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(r.users, vec![user(1, None)]);
         assert_eq!(r.me().unwrap().session_id, 1);
 
-        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false }];
+        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None }];
         r.apply(&ServerMsg::ChannelsUpdated { channels: channels.clone() });
         assert_eq!(r.channels, channels);
     }
