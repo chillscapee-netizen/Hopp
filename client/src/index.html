@@ -192,13 +192,17 @@
         <div id="sidebar-body" class="sidebar-body"></div>
 
         <section id="voice-panel" class="voice-panel" hidden>
-          <div class="voice-info">
-            <div class="voice-status"><svg class="i sm"><use href="#i-signal"/></svg> <span id="voice-status-text">Voice connected</span></div>
-            <div id="voice-where" class="voice-where ellipsis"></div>
+          <div class="voice-top">
+            <div class="voice-info">
+              <div class="voice-status"><svg class="i sm"><use href="#i-signal"/></svg> <span id="voice-status-text">Voice connected</span></div>
+              <div id="voice-where" class="voice-where ellipsis"></div>
+            </div>
+            <button id="hangup-btn" class="icon-btn" data-tip="Leave voice"><svg class="i"><use href="#i-phone-off"/></svg></button>
           </div>
-          <button id="cam-btn" class="icon-btn share-btn" aria-label="Turn on camera" hidden><svg class="i"><use href="#i-video"/></svg></button>
-          <button id="share-btn" class="icon-btn share-btn" aria-label="Share your screen" hidden><svg class="i"><use href="#i-monitor"/></svg></button>
-          <button id="hangup-btn" class="icon-btn" data-tip="Leave voice"><svg class="i"><use href="#i-phone-off"/></svg></button>
+          <div id="voice-actions" class="voice-actions" hidden>
+            <button id="cam-btn" class="voice-action share-btn" data-tip="Camera"><svg class="i"><use href="#i-video-off"/></svg></button>
+            <button id="share-btn" class="voice-action share-btn" data-tip="Share your screen"><svg class="i"><use href="#i-monitor"/></svg></button>
+          </div>
         </section>
 
         <section id="call-panel" class="voice-panel call-panel" hidden>

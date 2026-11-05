@@ -3130,3 +3130,12 @@ body { background: var(--frame-bg, var(--frame)); }
 /* Zooming into a shared screen. */
 .screen-frame video { transform-origin: center; transition: transform 60ms linear; }
 .screen-frame.zoomed { cursor: grab; }
+
+/* The voice panel: where you are and Leave on top, camera and screen as a row underneath. */
+.voice-panel { flex-direction: column; align-items: stretch; gap: 0; border-color: transparent; }
+.voice-top { display: flex; align-items: center; gap: 8px; }
+.voice-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 2px 2px 0; }
+.voice-action { display: grid; place-items: center; height: 32px; padding: 0; background: var(--hover); border: none; border-radius: 8px; color: var(--text-2); cursor: pointer; }
+.voice-action:hover { background: var(--active); color: var(--text); }
+.voice-action.on { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+.voice-action .i { width: 18px; height: 18px; }

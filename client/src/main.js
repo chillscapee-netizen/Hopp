@@ -2245,8 +2245,7 @@ function renderVoicePanel() {
     : latency ? `Latency to the server: ${latency}` : "Measuring latency…";
   const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
   $("voice-where").textContent = latency ? `${where} · ${latency}` : where;
-  $("share-btn").hidden = !canShare();
-  $("cam-btn").hidden = !canShare();
+  $("voice-actions").hidden = !canShare();
   $("cam-btn").classList.toggle("on", !!media.out.cam);
   $("cam-btn").setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
   $("cam-btn").querySelector("use").setAttribute("href", media.out.cam ? "#i-video" : "#i-video-off");
@@ -4183,7 +4182,7 @@ document.addEventListener("mousedown", (e) => {
 
 const tip = $("tooltip");
 /** Icons that say what they are: no tooltip, just the icon (the words stay for screen readers). */
-var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add";
+var PLAIN_ICONS = ".icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action";
 
 document.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
