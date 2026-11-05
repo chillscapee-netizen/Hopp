@@ -48,6 +48,9 @@ pub struct Channel {
     /// Voice channels: this is the AFK channel; people away this many minutes are moved here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub afk_after: Option<u16>,
+    /// Seconds between each person's messages here (moderators aren't held to it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slowmode: Option<u32>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -82,6 +85,21 @@ pub struct User {
     /// Deafened by a moderator: they hear nobody, and can't undo it.
     #[serde(default)]
     pub server_deafened: bool,
+    /// Timed out by a moderator until then (milliseconds since 1970): no writing, reacting or voice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_out_until: Option<u64>,
+}
+
+/// One line of a server's audit log: who did what, to whom, when.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditEntry {
+    pub at: u64,
+    pub actor: String,
+    pub action: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 /// The most a screen-sharing handshake message may hold (an offer with its codecs fits easily).
@@ -294,6 +312,9 @@ pub enum ClientMsg {
         /// Voice channels: `Some(minutes)` makes it the AFK channel, `Some(0)` stops it; `None` leaves it.
         #[serde(default)]
         afk_after: Option<u16>,
+        /// Seconds between each person's messages; `Some(0)` turns it off; `None` leaves it.
+        #[serde(default)]
+        slowmode: Option<u32>,
     },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },
@@ -311,7 +332,17 @@ pub enum ClientMsg {
     /// Owner only: disconnects someone.
     Kick { session_id: SessionId },
     /// Owner only: disconnects someone and refuses their Hopp-ID from now on.
-    Ban { session_id: SessionId },
+    /// `delete_hours`: also delete what they wrote in the last so many hours.
+    Ban {
+        session_id: SessionId,
+        #[serde(default)]
+        delete_hours: u32,
+    },
+    /// Moderators, on servers whose welcome lists "mod-tools": time someone out for so many
+    /// minutes (0 lifts it). They can read, but not write, react or be in voice.
+    Timeout { session_id: SessionId, minutes: u32 },
+    /// Admins, on servers with "mod-tools": answered with `AuditLog`.
+    GetAuditLog,
     /// Owner only.
     Unban { public_key: String },
     /// Owner only. `None` means no limit.
@@ -416,6 +447,8 @@ pub enum ServerMsg {
     InviteCreated { invite: Invite },
     Invites { invites: Vec<Invite> },
     Bans { bans: Vec<Ban> },
+    /// The newest audit log entries first.
+    AuditLog { entries: Vec<AuditEntry> },
     Members { members: Vec<Member> },
     Error { message: String },
     Pong,

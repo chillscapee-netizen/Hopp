@@ -2211,7 +2211,7 @@ async function deleteChannel(ch) {
 }
 
 function flagsFor(u) {
-  if (!u.muted && !u.deafened && !u.server_muted && !u.server_deafened) return null;
+  if (!u.muted && !u.deafened && !u.server_muted && !u.server_deafened && !timedOutUntil(u)) return null;
   const flags = el("span", "flags");
   const mark = (name, server, tip) => {
     const i = icon(name, "xs off" + (server ? " server" : ""));
@@ -2220,6 +2220,7 @@ function flagsFor(u) {
     wrap.append(i);
     flags.append(wrap);
   };
+  if (timedOutUntil(u)) mark("clock", true, "Timed out until " + clock(timedOutUntil(u)));
   if (u.server_muted) mark("mic-off", true, "Muted by a moderator");
   else if (u.muted) mark("mic-off", false, "Muted");
   if (u.server_deafened) mark("headphones-off", true, "Deafened by a moderator");
@@ -2359,7 +2360,8 @@ function renderChannelView() {
   $("chat-topic").textContent = topic || `${r.users.length} online`;
   $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
-  $("chat-input").placeholder = isVoiceChannel(view) ? `Message ${channelName(view)}` : `Message #${channelName(view)}`;
+  $("chat-input").placeholder = composerHint(view);
+  $("chat-input").disabled = !!timedOutUntil(meUser());
   $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed();
@@ -3200,10 +3202,15 @@ function openServerSettings() {
   $("server-members").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("member-search").value = "";
   document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
+  document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
   openModal($("server-settings"));
   call("get_server_settings");
 }
 function showServerTab(tab) {
+  if (tab === "audit") {
+    $("audit-list").replaceChildren(el("li", "admin-empty", "Loading…"));
+    call("get_audit_log");
+  }
   document.querySelectorAll("[data-stab]").forEach((t) => t.classList.toggle("active", t.dataset.stab === tab));
   document.querySelectorAll("[data-spanel]").forEach((p) => (p.hidden = p.dataset.spanel !== tab));
 }
@@ -3345,8 +3352,15 @@ function renderBanList(bans) {
 
 // ---------- confirm ----------
 
-function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
+function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true, choice = null }) {
   const dialog = $("confirm-dialog");
+  // An optional choice to make along the way (its answer is in confirmDialog.choice).
+  $("confirm-choice-row").hidden = !choice;
+  if (choice) {
+    $("confirm-choice-label").textContent = choice.label;
+    $("confirm-choice").replaceChildren(...choice.options.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t })));
+    $("confirm-choice").value = choice.value ?? choice.options[0][0];
+  }
   $("confirm-title").textContent = title;
   $("confirm-text").textContent = text;
   $("confirm-ok").textContent = ok;
@@ -3361,7 +3375,10 @@ function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
       $("confirm-ok").onclick = $("confirm-cancel").onclick = dialog.oncancel = null;
       resolve(value);
     };
-    $("confirm-ok").onclick = () => done(true);
+    $("confirm-ok").onclick = () => {
+      confirmDialog.choice = $("confirm-choice").value;
+      done(true);
+    };
     $("confirm-cancel").onclick = () => done(false);
     dialog.oncancel = () => done(false);
   });
@@ -3401,7 +3418,10 @@ chatInput.addEventListener("keydown", async (e) => {
     }
     const text = withMentions(chatInput.value.trim());
     if (!text || state.view === null) return;
+    const wait = slowmodeWait(state.view);
+    if (wait > 0) return toast("Slowmode is on here. Wait " + wait + " s.");
     if (await phraseBlocked(text)) return;
+    noteSent(state.view);
     const replyTo = state.replyTo?.channel === state.view ? state.replyTo.id : null;
     setReply(null);
     chatInput.value = "";
@@ -4213,12 +4233,18 @@ function setUserVolume(vol) {
 async function removeUser(ban) {
   const user = cardUser;
   closePopovers();
+  const history = ban && modTools();
   const ok = await confirmDialog(
     ban
-      ? { title: `Ban ${user.name}`, text: `${user.name} is disconnected and can never rejoin with this Hopp ID, not even with an invite. You can undo this in Server settings.`, ok: "Ban" }
+      ? {
+          title: `Ban ${user.name}`,
+          text: `${user.name} is disconnected and can never rejoin with this Hopp ID, not even with an invite. You can undo this in Server settings.`,
+          ok: "Ban",
+          choice: history ? { label: "Delete their messages", options: [["0", "Don't delete any"], ["1", "From the last hour"], ["24", "From the last 24 hours"], ["168", "From the last 7 days"]] } : null,
+        }
       : { title: `Kick ${user.name}`, text: `${user.name} is disconnected right away. As a member they can rejoin later.`, ok: "Kick" },
   );
-  if (ok) call("kick", { sessionId: user.session_id, ban });
+  if (ok) call("kick", { sessionId: user.session_id, ban, deleteHours: history ? Number(confirmDialog.choice) : null });
 }
 
 $("user-volume").addEventListener("input", (e) => setUserVolume(Number(e.target.value)));
@@ -6589,6 +6615,8 @@ function openChannelEdit(ch) {
   $("channel-edit-limit").value = ch.user_limit ?? 0;
   $("channel-edit-limit-value").textContent = ch.user_limit ? ch.user_limit + " people" : "No limit";
   $("channel-edit-afk").value = String(ch.afk_after ?? 0);
+  $("channel-edit-slow-row").hidden = !modTools();
+  $("channel-edit-slow").value = String(ch.slowmode ?? 0);
   $("category-options").replaceChildren(...[...new Set(state.roster.channels.map((c) => c.category).filter(Boolean))].map((c) => {
     const o = el("option");
     o.value = c;
@@ -6612,8 +6640,10 @@ $("channel-edit-form").addEventListener("submit", () => {
   const userLimit = voiceSettings ? Number($("channel-edit-limit").value) : null;
   const afkAfter = voiceSettings ? Number($("channel-edit-afk").value) : null;
   const voiceSame = !voiceSettings || (userLimit === (editingChannel.user_limit ?? 0) && afkAfter === (editingChannel.afk_after ?? 0));
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter });
+  const slowmode = modTools() ? Number($("channel-edit-slow").value) : null;
+  const slowSame = slowmode === null || slowmode === (editingChannel.slowmode ?? 0);
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame && slowSame) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter, slowmode });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -9079,6 +9109,7 @@ function openUserMenu(u, row, e) {
     } });
     if (can("moderate") && outranks(u)) {
       items.push(...voiceModItems(u));
+      items.push(...timeoutItems(u));
       items.push("sep");
       items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
@@ -10754,3 +10785,76 @@ async function playSoundboard(name) {
 }
 
 $("soundboard-btn").addEventListener("click", (e) => openSoundboard(e.currentTarget));
+
+// ---------- timeouts, slowmode and the audit log ----------
+
+function modTools() {
+  return !!state.roster?.features?.includes("mod-tools");
+}
+
+function meUser() {
+  return state.roster?.users.find((u) => u.session_id === state.roster.me);
+}
+
+/** When someone's timeout ends, if they're timed out right now. */
+function timedOutUntil(u) {
+  return u?.timed_out_until && u.timed_out_until > Date.now() ? u.timed_out_until : null;
+}
+
+var TIMEOUTS = [["60 seconds", 1], ["5 minutes", 5], ["10 minutes", 10], ["1 hour", 60], ["1 day", 1440], ["1 week", 10080]];
+
+function timeoutItems(u) {
+  if (!modTools()) return [];
+  if (timedOutUntil(u)) return [{ label: "Remove timeout", action: () => call("timeout_member", { sessionId: u.session_id, minutes: 0 }) }];
+  return [{ label: "Timeout", submenu: TIMEOUTS.map(([label, minutes]) => ({ label, action: () => call("timeout_member", { sessionId: u.session_id, minutes }) })) }];
+}
+
+/** What the message box says: where you write, slowmode, or your timeout. */
+function composerHint(view) {
+  const until = timedOutUntil(meUser());
+  if (until) return "You're timed out until " + clock(until);
+  const where = isVoiceChannel(view) ? "Message " + channelName(view) : "Message #" + channelName(view);
+  const slow = channel(view)?.slowmode;
+  return slow && !can("moderate") ? where + " · slowmode " + slowText(slow) : where;
+}
+
+function slowText(seconds) {
+  return seconds >= 3600 ? seconds / 3600 + " h" : seconds >= 60 ? seconds / 60 + " min" : seconds + " s";
+}
+
+var lastSentAt = new Map();
+function noteSent(view) {
+  lastSentAt.set(view, Date.now());
+}
+/** Seconds left before slowmode lets you write here again. */
+function slowmodeWait(view) {
+  const slow = channel(view)?.slowmode;
+  if (!slow || can("moderate")) return 0;
+  return Math.max(0, Math.ceil((lastSentAt.get(view) ?? 0) / 1000 + slow - Date.now() / 1000));
+}
+
+var AUDIT_WORDS = {
+  kick: "kicked", ban: "banned", unban: "unbanned", timeout: "timed out", untimeout: "lifted the timeout for",
+};
+
+listen("audit-log", (e) => {
+  const entries = e.payload ?? [];
+  $("audit-list").replaceChildren(
+    ...(entries.length
+      ? entries.map((a) => {
+          const li = el("li", "audit-row");
+          const what = el("span", "audit-what");
+          what.append(el("strong", "", a.actor), " " + (AUDIT_WORDS[a.action] ?? a.action) + " ", el("strong", "", a.target ?? ""));
+          if (a.detail) what.append(el("span", "audit-detail", " · " + a.detail));
+          li.append(what, el("span", "audit-when", dayLabel(a.at) + " " + clock(a.at)));
+          return li;
+        })
+      : [el("li", "admin-empty", "Nothing has happened yet.")]),
+  );
+});
+
+// A timeout ending lets you write again without anyone doing anything.
+setInterval(() => {
+  const me = meUser();
+  if (me?.timed_out_until && !timedOutUntil(me) && $("chat-input").disabled) renderChannelView();
+}, 5000);

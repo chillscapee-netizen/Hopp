@@ -287,7 +287,7 @@ mod tests {
     use super::*;
 
     fn user(id: SessionId, voice: Option<ChannelId>) -> User {
-        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, sharing: false, server_muted: false, server_deafened: false }
+        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None }
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(r.users, vec![user(1, None)]);
         assert_eq!(r.me().unwrap().session_id, 1);
 
-        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None }];
+        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None }];
         r.apply(&ServerMsg::ChannelsUpdated { channels: channels.clone() });
         assert_eq!(r.channels, channels);
     }

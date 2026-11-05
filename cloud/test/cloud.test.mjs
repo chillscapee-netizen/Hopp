@@ -721,3 +721,40 @@ test("voice channels have their own chat, without unread marks for everyone", as
   owner.close();
   bob.close();
 });
+
+test("timeouts, slowmode, bans that delete history, and the audit log", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("mod-tools"));
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+  const bobId = bob.welcome.session_id;
+  // A timeout: bob can't write or join voice.
+  owner.send({ type: "timeout", session_id: bobId, minutes: 10 });
+  const marked = await bob.waitFor((m) => m.type === "user_updated" && m.user.session_id === bobId && m.user.timed_out_until);
+  assert.ok(marked.user.timed_out_until > Date.now());
+  bob.send({ type: "send_chat", channel: general, text: "hello?" });
+  assert.match(await errorOf(bob), /timed out/);
+  bob.send({ type: "join_voice", channel: channelId(owner, "Lobby") });
+  assert.match(await errorOf(bob), /timed out/);
+  owner.send({ type: "timeout", session_id: bobId, minutes: 0 });
+  await bob.waitFor((m) => m.type === "user_updated" && m.user.session_id === bobId && !m.user.timed_out_until);
+  // Slowmode: a member waits between messages; the owner doesn't.
+  owner.send({ type: "update_channel", channel: general, name: "general", slowmode: 30 });
+  await bob.waitFor((m) => m.type === "channels_updated" && m.channels.find((c) => c.id === general).slowmode === 30);
+  bob.send({ type: "send_chat", channel: general, text: "one" });
+  await bob.waitFor((m) => m.type === "chat" && m.message.text === "one");
+  bob.send({ type: "send_chat", channel: general, text: "two" });
+  assert.match(await errorOf(bob), /Slowmode/);
+  // A ban that deletes the last day of their messages.
+  owner.send({ type: "ban", session_id: bobId, delete_hours: 24 });
+  const gone = await owner.waitFor((m) => m.type === "message_deleted");
+  assert.equal(gone.channel, general);
+  // The audit log has it all, newest first.
+  owner.send({ type: "get_audit_log" });
+  const log = await owner.waitFor((m) => m.type === "audit_log");
+  assert.deepEqual(log.entries.map((e) => e.action), ["ban", "untimeout", "timeout"]);
+  assert.equal(log.entries[0].detail, "deleted 1 messages");
+  assert.equal(log.entries[2].detail, "10 minutes");
+  owner.close();
+  bob.close();
+});

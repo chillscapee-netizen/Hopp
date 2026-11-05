@@ -474,6 +474,9 @@ async fn connect(
                 ServerMsg::Invites { invites } => {
                     let _ = ui.emit("invites", invites);
                 }
+                ServerMsg::AuditLog { entries } => {
+                    let _ = ui.emit("audit-log", entries);
+                }
                 ServerMsg::Bans { bans } => {
                     let _ = ui.emit("bans", bans);
                 }
@@ -857,8 +860,20 @@ fn update_channel(
     no_pictures: Option<bool>,
     user_limit: Option<u8>,
     afk_after: Option<u16>,
+    slowmode: Option<u32>,
 ) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after }))
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after, slowmode }))
+}
+
+/// Moderators: times someone out (0 minutes lifts it).
+#[tauri::command]
+fn timeout_member(state: State<'_, AppState>, session_id: SessionId, minutes: u32) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::Timeout { session_id, minutes }))
+}
+
+#[tauri::command]
+fn get_audit_log(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::GetAuditLog))
 }
 
 /// Seconds since the last key press or mouse move anywhere in Windows (for the AFK channel).
@@ -897,8 +912,8 @@ fn typing(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
 }
 
 #[tauri::command]
-fn kick(state: State<'_, AppState>, session_id: SessionId, ban: bool) -> CmdResult {
-    let msg = if ban { ClientMsg::Ban { session_id } } else { ClientMsg::Kick { session_id } };
+fn kick(state: State<'_, AppState>, session_id: SessionId, ban: bool, delete_hours: Option<u32>) -> CmdResult {
+    let msg = if ban { ClientMsg::Ban { session_id, delete_hours: delete_hours.unwrap_or(0) } } else { ClientMsg::Kick { session_id } };
     with_conn(&state, |c| c.control.send(msg))
 }
 
@@ -1476,6 +1491,8 @@ fn main() {
             update_channel,
             reorder_channels,
             idle_seconds,
+            timeout_member,
+            get_audit_log,
             set_loopback,
             local_address,
             invite_preview,

@@ -398,7 +398,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
             let session_id = st.next_id;
             st.next_id += 1;
             let owner = st.config.owner.as_deref() == Some(public_key.as_str());
-            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None, sharing: false, server_muted: false, server_deafened: false };
+            let user = User { session_id, name, voice_channel: None, muted: false, deafened: false, owner, public_key: public_key.clone(), role: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None };
             st.broadcast(&ServerMsg::UserJoined { user: user.clone() });
             let token = rand::random();
             let client = Client {
@@ -650,7 +650,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None });
+                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None });
                         st.channels_changed();
                     }
                 }
@@ -755,7 +755,8 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                         }
                     }
                 }
-                ClientMsg::Kick { session_id: target } | ClientMsg::Ban { session_id: target } => {
+                ClientMsg::Timeout { .. } | ClientMsg::GetAuditLog => error("This server doesn't have that yet."),
+                ClientMsg::Kick { session_id: target } | ClientMsg::Ban { session_id: target, .. } => {
                     let banned = matches!(msg, ClientMsg::Ban { .. });
                     if !is_owner {
                         error("Only the server owner can remove people.");

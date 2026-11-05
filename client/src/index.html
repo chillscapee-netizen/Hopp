@@ -28,6 +28,7 @@
     <symbol id="i-video-off" viewBox="0 0 24 24"><path d="M10.7 6H14a2 2 0 0 1 2 2v3.3l1 1L22 8v8M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/></symbol>
     <symbol id="i-pip" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1"/></symbol>
     <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
     <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
@@ -436,6 +437,22 @@
           <input id="channel-edit-category" maxlength="24" autocomplete="off" list="category-options" placeholder="None">
           <datalist id="category-options"></datalist>
         </label>
+        <label id="channel-edit-slow-row" class="row setting-row" hidden>
+          <span class="row-label">
+            <span class="row-title">Slowmode</span>
+            <span class="row-sub">How long each person waits between messages. Moderators don't.</span>
+          </span>
+          <select id="channel-edit-slow" class="row-select">
+            <option value="0">Off</option>
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="300">5 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="3600">1 hour</option>
+          </select>
+        </label>
         <label id="channel-edit-topic-field" class="field">
           <span class="field-label">Topic</span>
           <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>
@@ -674,6 +691,7 @@
         <button type="button" class="settings-tab" data-stab="members">Members</button>
         <button type="button" class="settings-tab" data-stab="invites">Invites</button>
         <button type="button" class="settings-tab" data-stab="bans">Bans</button>
+        <button type="button" class="settings-tab" data-stab="audit">Audit log</button>
       </nav>
       <div class="settings-content">
         <form id="overview-form" data-spanel="overview">
@@ -730,6 +748,11 @@
           <h2>Bans</h2>
           <p class="hint">Banned Hopp IDs can't rejoin, not even with an invite.</p>
           <ul id="ban-list" class="admin-list"></ul>
+        </section>
+        <section data-spanel="audit" hidden>
+          <h2>Audit log</h2>
+          <p class="hint">Who did what in this server, newest first. Nobody can change it.</p>
+          <ul id="audit-list" class="audit-list"></ul>
         </section>
       </div>
     </div>
@@ -835,6 +858,10 @@
     <div class="modal-body">
       <h2 id="confirm-title"></h2>
       <p id="confirm-text" class="modal-sub"></p>
+      <label id="confirm-choice-row" class="field" hidden>
+        <span id="confirm-choice-label" class="field-label"></span>
+        <select id="confirm-choice"></select>
+      </label>
     </div>
     <div class="modal-foot">
       <button type="button" id="confirm-cancel" class="btn-link">Cancel</button>

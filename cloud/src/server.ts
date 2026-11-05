@@ -17,6 +17,14 @@ const MAX_CHANNELS = 50;
 const MAX_MEMBERS_ONLINE = 500;
 /** A screen-sharing handshake message is never bigger than this. */
 const MAX_SCREEN_SIGNAL = 65_536;
+
+/** "10 minutes", "1 hour", "1 week". */
+function durationText(minutes: number): string {
+  if (minutes % 10080 === 0) return `${minutes / 10080} week${minutes === 10080 ? "" : "s"}`;
+  if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? "" : "s"}`;
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
 /** A search returns at most this many messages, newest first. */
 const SEARCH_RESULTS = 25;
 /** The least time between one person's searches. */
@@ -69,7 +77,7 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number }
 const MAX_CATEGORY_LEN = 24;
 const MAX_TOPIC_LEN = 200;
 interface User {
@@ -86,6 +94,8 @@ interface User {
   /** Muted or deafened by a moderator. */
   server_muted?: boolean;
   server_deafened?: boolean;
+  /** Timed out until then (ms). */
+  timed_out_until?: number;
 }
 /** Who may do what: the owner names admins, admins name moderators. */
 type Role = "owner" | "admin" | "mod";
@@ -119,6 +129,8 @@ interface Session {
   joinedAt?: number;
   /** When it last searched, to keep searches from hogging the server. */
   searchedAt?: number;
+  /** When it last wrote in each slowmode channel. */
+  lastSent?: Record<number, number>;
   nonce?: string;
   key?: string;
   name?: string;
@@ -207,6 +219,8 @@ export class StromServer extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS accounts (key TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, banned_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, channel INTEGER NOT NULL, sender INTEGER NOT NULL,
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
@@ -224,6 +238,7 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("no_pictures")) this.sql.exec("ALTER TABLE channels ADD COLUMN no_pictures INTEGER");
     if (!channelColumns.has("user_limit")) this.sql.exec("ALTER TABLE channels ADD COLUMN user_limit INTEGER");
     if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
+    if (!channelColumns.has("slowmode")) this.sql.exec("ALTER TABLE channels ADD COLUMN slowmode INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
@@ -342,7 +357,7 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode FROM channels ORDER BY coalesce(position, id + 100000), id")
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
@@ -351,6 +366,7 @@ export class StromServer extends DurableObject<Env> {
         if (r.no_pictures) c.no_pictures = true;
         if (r.user_limit) c.user_limit = Number(r.user_limit);
         if (r.afk_after) c.afk_after = Number(r.afk_after);
+        if (r.slowmode) c.slowmode = Number(r.slowmode);
         return c;
       });
   }
@@ -513,6 +529,20 @@ export class StromServer extends DurableObject<Env> {
     const peers = others.filter(([, o]) => o.endpoint).map(([, o]) => ({ session_id: o.user!.session_id, ...o.endpoint }));
     this.send(ws, { type: "voice_session", channel: ch.id, key, peers });
     return null;
+  }
+
+  /** Timed out right now? (An old timeout that ran out is cleared on the way.) */
+  private timedOut(s: Session): boolean {
+    const until = s.user?.timed_out_until ?? 0;
+    if (until > Date.now()) return true;
+    if (until) delete s.user!.timed_out_until;
+    return false;
+  }
+
+  /** A line in the audit log; the newest 500 are kept. */
+  private audit(actor: string, action: string, target: string | null, detail: string | null) {
+    this.sql.exec("INSERT INTO audit (at, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)", Date.now(), actor, action, target, detail);
+    this.sql.exec("DELETE FROM audit WHERE id <= (SELECT id FROM audit ORDER BY id DESC LIMIT 1 OFFSET 500)");
   }
 
   private voiceMembers(channel: number): [WebSocket, Session][] {
@@ -679,7 +709,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools"],
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
@@ -706,6 +736,7 @@ export class StromServer extends DurableObject<Env> {
       case "join_voice": {
         const ch = this.channel(Number(msg.channel));
         if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't join voice right now.");
         // The channel's own limit (moderators moving someone in aren't held to it).
         const limit = Number(this.channels().find((c) => c.id === ch.id)?.user_limit ?? 0);
         if (limit && this.voiceMembers(ch.id).filter(([o]) => o !== ws).length >= limit) return this.error(ws, `${ch.name} is full (${limit} people).`);
@@ -788,6 +819,15 @@ export class StromServer extends DurableObject<Env> {
         if (ch?.kind !== "text" && ch?.kind !== "voice") return this.error(ws, "That channel doesn't exist.");
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const now = Date.now();
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't write right now.");
+        // Slowmode: a pause between each person's messages here (moderators are free).
+        const slow = Number(this.channels().find((c) => c.id === ch.id)?.slowmode ?? 0);
+        if (slow && myRank < RANK.mod) {
+          const last = s.lastSent?.[ch.id] ?? 0;
+          const wait = Math.ceil((last + slow * 1000 - now) / 1000);
+          if (wait > 0) return this.error(ws, `Slowmode is on here. Wait ${wait} s.`);
+          s.lastSent = { ...(s.lastSent ?? {}), [ch.id]: now };
+        }
         s.tokens = Math.min(CHAT_BURST, (s.tokens ?? CHAT_BURST) + ((now - (s.refilled ?? now)) / 1000) * CHAT_PER_SECOND);
         s.refilled = now;
         if (s.tokens < 1) {
@@ -845,6 +885,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcast({ type: "message_edited", channel, id, text, edited_at: at });
       }
       case "react": {
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't react right now.");
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         const emoji = String(msg.emoji ?? "");
@@ -957,6 +998,11 @@ export class StromServer extends DurableObject<Env> {
           const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
           this.sql.exec("UPDATE channels SET user_limit = ? WHERE id = ?", limit || null, ch.id);
         }
+        if (msg.slowmode != null) {
+          const allowedSteps = [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600];
+          const seconds = allowedSteps.reduce((best, x) => (Math.abs(x - Number(msg.slowmode)) < Math.abs(best - Number(msg.slowmode)) ? x : best), 0);
+          this.sql.exec("UPDATE channels SET slowmode = ? WHERE id = ?", seconds || null, ch.id);
+        }
         if (ch.kind === "voice" && msg.afk_after != null) {
           // One AFK channel at most.
           const minutes = Math.max(0, Math.min(240, Math.floor(Number(msg.afk_after)) || 0));
@@ -997,13 +1043,26 @@ export class StromServer extends DurableObject<Env> {
         if (!victim) return this.error(ws, "That person isn't connected anymore.");
         const [vws, vs] = victim;
         if (rank(this.roleOf(vs.key!)) >= myRank) return this.error(ws, `You can't ${banned ? "ban" : "kick"} someone with the same role as you or higher.`);
+        let removed = 0;
         if (banned) {
           this.sql.exec(
             "INSERT INTO bans (key, name, banned_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING",
             vs.key!, vs.user!.name, Date.now(),
           );
           this.send(ws, { type: "bans", bans: this.bans() });
+          // Their messages from the last hours go too, if asked.
+          const hours = [1, 24, 168].includes(Number(msg.delete_hours)) ? Number(msg.delete_hours) : 0;
+          if (hours) {
+            const rows = this.sql.exec("SELECT id, channel FROM messages WHERE author_key = ? AND sent_at > ? LIMIT 1000", vs.key!, Date.now() - hours * 3_600_000).toArray();
+            for (const r of rows) {
+              this.dropPicture(Number(r.id));
+              this.sql.exec("DELETE FROM messages WHERE id = ?", Number(r.id));
+              this.broadcast({ type: "message_deleted", channel: Number(r.channel), id: Number(r.id) });
+            }
+            removed = rows.length;
+          }
         }
+        this.audit(user.name, banned ? "ban" : "kick", vs.user!.name, removed ? `deleted ${removed} messages` : null);
         // Every device of theirs goes.
         for (const [ows, os] of this.members().filter(([, m]) => m.key === vs.key)) {
           this.send(ows, { type: "kicked", banned });
@@ -1013,8 +1072,41 @@ export class StromServer extends DurableObject<Env> {
         }
         return;
       }
+      case "timeout": {
+        if (!allowed("mod")) return;
+        const target = Number(msg.session_id);
+        const found = this.members().find(([, m]) => m.user!.session_id === target);
+        if (!found) return this.error(ws, "That person isn't connected anymore.");
+        const [, ts] = found;
+        if (target === user.session_id) return this.error(ws, "You can't time yourself out.");
+        if (rank(this.roleOf(ts.key!)) >= myRank) return this.error(ws, "You can't time out someone with the same role as you or higher.");
+        const minutes = Math.max(0, Math.min(10080, Math.floor(Number(msg.minutes)) || 0));
+        const until = minutes ? Date.now() + minutes * 60_000 : 0;
+        if (until) this.sql.exec("INSERT INTO timeouts (key, until) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET until = excluded.until", ts.key!, until);
+        else this.sql.exec("DELETE FROM timeouts WHERE key = ?", ts.key!);
+        // Every device of theirs: marked, and out of voice.
+        for (const [ows, os] of this.members().filter(([, m]) => m.key === ts.key)) {
+          if (until) delete os.endpoint;
+          this.updateUser(ows, os, (u) => {
+            if (until) {
+              u.timed_out_until = until;
+              u.voice_channel = null;
+              u.sharing = false;
+            } else delete u.timed_out_until;
+          });
+        }
+        this.audit(user.name, until ? "timeout" : "untimeout", ts.user!.name, until ? durationText(minutes) : null);
+        return;
+      }
+      case "get_audit_log": {
+        if (!allowed("admin")) return;
+        const entries = this.sql.exec("SELECT at, actor, action, target, detail FROM audit ORDER BY id DESC LIMIT 200").toArray()
+          .map((r) => ({ at: Number(r.at), actor: String(r.actor), action: String(r.action), target: r.target === null ? null : String(r.target), detail: r.detail === null ? null : String(r.detail) }));
+        return this.send(ws, { type: "audit_log", entries });
+      }
       case "unban":
         if (!allowed("admin")) return;
+        this.audit(user.name, "unban", String(this.sql.exec("SELECT name FROM bans WHERE key = ?", String(msg.public_key ?? "")).toArray()[0]?.name ?? "someone"), null);
         this.sql.exec("DELETE FROM bans WHERE key = ?", String(msg.public_key ?? ""));
         return this.send(ws, { type: "bans", bans: this.bans() });
       case "create_invite": {
