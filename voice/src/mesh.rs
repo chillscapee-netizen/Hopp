@@ -317,6 +317,11 @@ impl Mesh {
         ips
     }
 
+    /// Whether anyone's voice goes through our relay right now.
+    pub fn uses_relay(&self) -> bool {
+        self.links.lock().unwrap().values().any(|l| l.path.is_some() && l.relayed)
+    }
+
     /// Whether anyone has been out of reach long enough that a relay would help.
     pub fn wants_relay(&self) -> bool {
         self.links.lock().unwrap().values().any(|l| l.path.is_none() && l.searching_since.elapsed() > RELAY_PROBE_AFTER)

@@ -90,6 +90,8 @@ pub struct Turn {
     state: State,
     lifetime: Duration,
     allocated_at: Instant,
+    /// When we got the login; logins last 4 hours, so a fresh one is fetched after 3.
+    pub login_at: Instant,
     pending: HashMap<[u8; 12], Pending>,
     permissions: HashMap<IpAddr, Instant>,
     /// Peer address -> (channel number, bound yet, when bound).
@@ -110,6 +112,7 @@ impl Turn {
             state: State::Allocating,
             lifetime: Duration::from_secs(600),
             allocated_at: Instant::now(),
+            login_at: Instant::now(),
             pending: HashMap::new(),
             permissions: HashMap::new(),
             channels: HashMap::new(),

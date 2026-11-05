@@ -2133,7 +2133,7 @@ function userRow(u, className, size, sub) {
     row.append(warn);
   }
   const flags = member ? null : flagsFor(u);
-  const vol = prefs.userVolumes[u.name];
+  const vol = userVolume(u);
   if (flags) row.append(flags);
   else if (!member && !isSelf && vol !== undefined && vol !== 100) row.append(el("span", "vol-tag", vol === 0 ? "Muted" : `${vol}%`));
   if (!isSelf) row.addEventListener("click", () => openUserCard(u, row));
@@ -2229,7 +2229,14 @@ $("members-toggle").addEventListener("click", () => {
 });
 
 function renderMembers() {
-  const users = [...state.roster.users].sort(byName);
+  // Someone connected from two computers is one person: shown once (the one in voice, if any).
+  const byKey = new Map();
+  for (const u of state.roster.users) {
+    const id = keyOf(u) ?? `session:${u.session_id}`;
+    const seen = byKey.get(id);
+    if (!seen || (seen.voice_channel === null && u.voice_channel !== null)) byKey.set(id, u);
+  }
+  const users = [...byKey.values()].sort(byName);
   const groups = [
     ["Owner", users.filter((u) => roleOf(u) === "owner")],
     ["Admins", users.filter((u) => roleOf(u) === "admin")],
@@ -2453,7 +2460,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     const day = dayLabel(m.sent_at);
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
-    const grouped = !newDay && !m.reply && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const grouped = !newDay && !m.reply && prev.author_key === m.author_key && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
     if (newSince !== null && m.id > newSince && m.author_key !== state.account?.publicKey) {
       const line = el("li", "new-divider");
       line.append(el("span", "", "New"));
@@ -2537,11 +2544,11 @@ function renderMessages(keepScrollUnlessAtBottom) {
   // Messages on their way look exactly as they will once sent (grouped under yours),
   // so nothing changes height when the server confirms them.
   const myName = me()?.name ?? state.account?.name ?? "";
-  let last = prev && !prev.blocked ? { sender_name: prev.sender_name, sent_at: prev.sent_at } : null;
+  let last = prev && !prev.blocked ? { author_key: prev.author_key, sender_name: prev.sender_name, sent_at: prev.sent_at } : null;
   for (const o of state.outbox.filter((x) => x.channel === state.view)) {
-    const grouped = !!last && !o.reply && !o.failed && last.sender_name === myName && o.at - last.sent_at < GROUP_WINDOW_MS && dayLabel(last.sent_at) === dayLabel(o.at);
+    const grouped = !!last && !o.reply && !o.failed && last.author_key === state.account?.publicKey && last.sender_name === myName && o.at - last.sent_at < GROUP_WINDOW_MS && dayLabel(last.sent_at) === dayLabel(o.at);
     items.push(outboxItem(o, grouped));
-    last = { sender_name: myName, sent_at: o.at };
+    last = { author_key: state.account?.publicKey, sender_name: myName, sent_at: o.at };
   }
   reconcile($("messages"), items);
   if (!keepScrollUnlessAtBottom || atBottom) scroller.scrollTop = scroller.scrollHeight;
@@ -3960,7 +3967,7 @@ function placePopover(pop, x, y) {
 function applyUserVolumes() {
   if (!state.roster) return;
   for (const u of state.roster.users) {
-    const vol = isBlocked(keyOf(u)) ? 0 : prefs.userVolumes[u.name];
+    const vol = isBlocked(keyOf(u)) ? 0 : userVolume(u);
     if (u.session_id === state.roster.me || vol === undefined) continue;
     if (state.appliedVolumes.get(u.session_id) !== vol) {
       state.appliedVolumes.set(u.session_id, vol);
@@ -3993,7 +4000,7 @@ function openUserCard(user, anchor) {
 }
 
 function syncUserCard() {
-  const vol = prefs.userVolumes[cardUser.name] ?? 100;
+  const vol = userVolume(cardUser) ?? 100;
   $("user-volume").value = vol;
   $("user-volume-value").textContent = `${vol}%`;
   const btn = $("user-mute");
@@ -4001,8 +4008,11 @@ function syncUserCard() {
 }
 
 function setUserVolume(vol) {
-  if (vol === 100) delete prefs.userVolumes[cardUser.name];
-  else prefs.userVolumes[cardUser.name] = vol;
+  // Kept by Hopp ID, so two people with the same name have their own volume.
+  delete prefs.userVolumes[cardUser.name];
+  const id = keyOf(cardUser) ?? cardUser.name;
+  if (vol === 100) delete prefs.userVolumes[id];
+  else prefs.userVolumes[id] = vol;
   save("userVolumes", JSON.stringify(prefs.userVolumes));
   state.appliedVolumes.set(cardUser.session_id, vol);
   call("set_user_volume", { sessionId: cardUser.session_id, volume: vol / 100 });
@@ -4023,7 +4033,7 @@ async function removeUser(ban) {
 }
 
 $("user-volume").addEventListener("input", (e) => setUserVolume(Number(e.target.value)));
-$("user-mute").addEventListener("click", () => setUserVolume((prefs.userVolumes[cardUser.name] ?? 100) === 0 ? 100 : 0));
+$("user-mute").addEventListener("click", () => setUserVolume((userVolume(cardUser) ?? 100) === 0 ? 100 : 0));
 $("user-kick").addEventListener("click", () => removeUser(false));
 $("user-role").addEventListener("change", (e) => {
   const user = cardUser;
@@ -7345,7 +7355,7 @@ function blockChanged() {
   state.appliedVolumes.clear();
   // Unblocked people get their own volume back (or full volume).
   for (const u of state.roster?.users ?? []) {
-    if (u.session_id !== state.roster.me && !isBlocked(keyOf(u)) && prefs.userVolumes[u.name] === undefined) call("set_user_volume", { sessionId: u.session_id, volume: 1 });
+    if (u.session_id !== state.roster.me && !isBlocked(keyOf(u)) && userVolume(u) === undefined) call("set_user_volume", { sessionId: u.session_id, volume: 1 });
   }
   applyUserVolumes();
   if (online()) renderMessages(true);
@@ -8292,7 +8302,7 @@ async function onFileSignal(m) {
 
 async function startSending(transfer, out) {
   out.pc?.close();
-  const pc = new RTCPeerConnection({ iceServers: FILE_ICE });
+  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
   out.pc = pc;
   out.status = "connecting";
   out.sent = 0;
@@ -8369,7 +8379,7 @@ async function downloadFile(transfer, peer, name, size) {
 }
 
 async function startReceiving(transfer, inc, sdp) {
-  const pc = new RTCPeerConnection({ iceServers: FILE_ICE });
+  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
   inc.pc = pc;
   pc.addEventListener("datachannel", (e) => receive(transfer, inc, e.channel));
   try {
@@ -8527,15 +8537,19 @@ function useRelay() {
 
 function onRelayLogin(m) {
   relayState.waiting = false;
+  const waiters = relayState.waiters ?? [];
+  relayState.waiters = [];
   if (m.type === "error") {
     relayState.unavailable = true;
+    for (const done of waiters) done(null);
     return;
   }
+  for (const done of waiters) done(m.login);
   relayState.login = m.login;
   relayState.unavailable = false;
   invoke("set_relay", { login: m.login }).catch(() => {});
   // A day-long login: forget it well before, so a fresh one is fetched next time.
-  setTimeout(() => (relayState.login = null), 6 * 3600 * 1000);
+  setTimeout(() => (relayState.login = null), 2 * 3600 * 1000);
 }
 
 /** Opens a server (instantly if already connected) and then does something there. */
@@ -8551,7 +8565,7 @@ function openUserMenu(u, row, e) {
   const key = keyOf(u);
   const isSelf = u.session_id === state.roster?.me;
   const friend = key ? state.friends?.get(key) : null;
-  const vol = prefs.userVolumes[u.name] ?? 100;
+  const vol = userVolume(u) ?? 100;
   const items = [{ label: "Profile", icon: "user", action: () => openUserCard(u, row) }];
   if (!isSelf) {
     items.push({ label: "Mention", icon: "at", action: () => mentionUser(u) });
@@ -8653,6 +8667,8 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || e.isComposing) return;
   const t = e.target;
   if (t.closest?.("input, textarea, select, [contenteditable]") || document.querySelector("dialog[open]")) return;
+  // A space on a focused button presses the button.
+  if (e.key === " " && t.closest?.("button, a, [role=button], summary")) return;
   const box = online() ? (state.view !== null && !$("composer").hidden ? chatInput : null) : $("dm-input");
   if (box && box.offsetParent !== null) box.focus();
 });
@@ -8772,3 +8788,30 @@ document.addEventListener("keydown", (e) => {
     toBottom(scroller);
   }
 });
+
+/** Someone's own volume (0–200), by Hopp ID; older settings were kept by name. */
+function userVolume(u) {
+  const id = keyOf(u);
+  return (id && prefs.userVolumes[id]) ?? prefs.userVolumes[u.name];
+}
+
+/** The relay login, fetching one if needed; null if there's none within a few seconds. */
+function relayLogin() {
+  if (relayState.login) return Promise.resolve(relayState.login);
+  if (relayState.unavailable || !state.accountConnected) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    relayState.waiters = [...(relayState.waiters ?? []), resolve];
+    if (!relayState.waiting) {
+      relayState.waiting = true;
+      invoke("account_send", { msg: { type: "turn_login" } }).catch(() => (relayState.waiting = false));
+    }
+    setTimeout(() => resolve(relayState.login), 4000);
+  });
+}
+
+/** Where a file connection may go: straight across, or through the relay when that's blocked. */
+async function fileIce() {
+  const login = await relayLogin();
+  if (!login) return FILE_ICE;
+  return [...FILE_ICE, { urls: [`turn:${login.server}?transport=udp`, `turn:${login.server}?transport=tcp`], username: login.username, credential: login.credential }];
+}

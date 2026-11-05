@@ -828,6 +828,12 @@ export class StromAccount extends DurableObject<Env> {
     const row = this.sql.exec("SELECT from_key FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
     if (!row) return error("That message is gone.");
     if (row.from_key !== myKey) return error("You can only change your own messages.");
+    // Edits and deletes share the sending speed limit (each reaches everyone in the conversation).
+    const now = Date.now();
+    const bucket = (this.meta("dm_bucket") ?? `${DM_BURST}:${now}`).split(":").map(Number);
+    const tokens = Math.min(DM_BURST, bucket[0] + ((now - bucket[1]) / 1000) * DM_PER_SECOND);
+    if (tokens < 1) return error("You're changing messages too fast. Slow down a little.");
+    this.setMeta("dm_bucket", `${tokens - 1}:${now}`);
     const group = this.group(peer);
     const others = group ? group.members.filter((k) => k !== myKey) : [peer];
     if (msg.type === "dm_delete") {

@@ -157,11 +157,14 @@ test("invites run out", async () => {
   owner.close();
 });
 
-test("names belong to their Ström ID", async () => {
+test("two friends can share a name; their Hopp IDs tell them apart", async () => {
   const { id, owner, invite } = await newServer();
-  (await join(id, "alice", { invite })).close();
-  assert.match(await loginError(id, "ALICE", { invite }), /already taken/);
-  owner.close();
+  const first = await join(id, "Alex", { invite });
+  const second = await join(id, "alex", { invite });
+  const both = second.welcome.users.filter((u) => u.name.toLowerCase() === "alex");
+  assert.equal(both.length, 2);
+  assert.notEqual(both[0].public_key, both[1].public_key);
+  for (const c of [first, second, owner]) c.close();
 });
 
 test("leaving frees the account to come back", async () => {
@@ -174,14 +177,30 @@ test("leaving frees the account to come back", async () => {
   owner.close();
 });
 
-test("reconnecting replaces a session that never closed", async () => {
+test("the same Hopp ID on two computers: both stay, and a kick reaches both", async () => {
+  const { id, owner, invite } = await newServer();
+  const key = newKey();
+  const laptop = await join(id, "bob", { key, invite });
+  const desktop = await join(id, "bob", { key });
+  await sleep(300);
+  assert.ok(!laptop.inbox.some((m) => m.type === "error"), "the first computer isn't thrown out");
+  assert.equal(desktop.welcome.users.filter((u) => u.public_key === key.pub).length, 2);
+  owner.send({ type: "kick", session_id: laptop.id });
+  await laptop.waitFor((m) => m.type === "kicked");
+  await desktop.waitFor((m) => m.type === "kicked");
+  owner.close();
+});
+
+test("a connection that went silent is let go when its owner comes back", async () => {
   const { id, owner, invite } = await newServer();
   const key = newKey();
   const stale = await join(id, "bob", { key, invite });
+  // It never pings (a crashed app). After half a minute it counts as gone.
+  await sleep(31_000);
   const fresh = await join(id, "bob", { key });
-  assert.match(await errorOf(stale), /somewhere else/);
   await owner.waitFor((m) => m.type === "user_left" && m.session_id === stale.id);
-  assert.ok(fresh.welcome.users.some((u) => u.session_id === fresh.id));
+  assert.equal(fresh.welcome.users.filter((u) => u.public_key === key.pub).length, 1);
+  stale.close();
   fresh.close();
   owner.close();
 });

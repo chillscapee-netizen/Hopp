@@ -42,6 +42,10 @@ const MUTED_SPEECH_FRAMES: u32 = 60;
 const MUTED_REMINDER_EVERY: Duration = Duration::from_secs(45);
 /// Speakers we have not heard from in this long are forgotten.
 const PEER_TIMEOUT: Duration = Duration::from_secs(10);
+/// Relay logins last 4 hours: a fresh relay is set up after 3.
+const RELAY_RENEW_AFTER: Duration = Duration::from_secs(3 * 3600);
+/// While a relay is needed but missing, it is asked for again this often.
+const RELAY_ASK_AGAIN: Duration = Duration::from_secs(30);
 /// About 200 ms of mic-test audio; older audio is dropped so the echo stays close.
 const MONITOR_MAX: usize = SAMPLE_RATE as usize / 5;
 /// The mic test in voice starts playing once 30 ms are buffered.
@@ -226,12 +230,18 @@ impl VoiceEngine {
     }
 
     /// Peer-to-peer voice only: a relay to reach people no direct path gets to.
-    /// Harmless to call again; a working relay is kept.
+    /// Harmless to call again: a working relay with a fresh login is kept; a failed
+    /// one, or one whose login is getting old, is replaced (peers learn the new address).
     pub fn set_relay(&self, login: &crate::turn::TurnLogin) -> anyhow::Result<()> {
         let Route::Mesh(m) = &self.route else { return Ok(()) };
         let mut turn = m.turn.lock().unwrap();
-        if turn.as_ref().is_some_and(|t| t.state() != crate::turn::State::Failed) {
+        if turn.as_ref().is_some_and(|t| t.state() != crate::turn::State::Failed && t.login_at.elapsed() < RELAY_RENEW_AFTER) {
             return Ok(());
+        }
+        if let Some(old) = turn.as_mut() {
+            if let Some(bye) = old.release() {
+                let _ = self.socket.send_to(&bye, mesh::wire(old.server, mesh::is_dual(&self.socket)));
+            }
         }
         let dual = mesh::is_dual(&self.socket);
         let server = std::net::ToSocketAddrs::to_socket_addrs(login.server.as_str())?
@@ -785,8 +795,8 @@ impl Net {
     }
 
     /// The relay's upkeep: retries, refreshes, and letting every peer's IP through.
-    /// Returns our relay address the first time it's ready.
-    fn relay_upkeep(&mut self, m: &Mesh, announced: &mut bool) -> Option<SocketAddr> {
+    /// Returns our relay address when it's newly ready (the first, or a replacement).
+    fn relay_upkeep(&mut self, m: &Mesh, announced: &mut Option<SocketAddr>) -> Option<SocketAddr> {
         let mut turn = m.turn.lock().unwrap();
         let t = turn.as_mut()?;
         let server = mesh::wire(t.server, self.dual);
@@ -798,8 +808,8 @@ impl Net {
             let _ = self.socket.send_to(&msg, server);
         }
         match t.state() {
-            crate::turn::State::Ready(addr) if !*announced => {
-                *announced = true;
+            crate::turn::State::Ready(addr) if *announced != Some(addr) => {
+                *announced = Some(addr);
                 Some(addr)
             }
             _ => None,
@@ -845,8 +855,8 @@ impl Encoder {
         let mut last_reminder: Option<Instant> = None;
         let settings = self.settings.clone();
 
-        let mut relay_announced = false;
-        let mut relay_asked = false;
+        let mut relay_announced: Option<SocketAddr> = None;
+        let mut relay_asked: Option<Instant> = None;
         while !stop.load(Ordering::Relaxed) {
             self.net.tick();
             if let Route::Mesh(m) = &self.net.route {
@@ -854,13 +864,30 @@ impl Encoder {
                 for (session_id, reachable) in m.reach_changes() {
                     let _ = self.events.send(EngineEvent::PeerReach { session_id, reachable });
                 }
-                if !relay_asked && m.wants_relay() && m.turn.lock().unwrap().is_none() {
-                    relay_asked = true;
+                // Ask for a relay when someone needs one and ours is missing, failed or
+                // getting old; again every half minute until it works.
+                let relay_due = {
+                    let turn = m.turn.lock().unwrap();
+                    match turn.as_ref() {
+                        None => m.wants_relay(),
+                        Some(t) if t.state() == crate::turn::State::Failed => m.wants_relay(),
+                        Some(t) => t.login_at.elapsed() > RELAY_RENEW_AFTER && (m.wants_relay() || m.uses_relay()),
+                    }
+                };
+                if relay_due && relay_asked.is_none_or(|t| t.elapsed() > RELAY_ASK_AGAIN) {
+                    relay_asked = Some(Instant::now());
                     let _ = self.events.send(EngineEvent::NeedRelay);
                 }
+                let previous = relay_announced;
                 if let Some(relay) = self.net.relay_upkeep(&m, &mut relay_announced) {
+                    // Working: the next request (a renewal) needn't wait.
+                    relay_asked = None;
                     let mut endpoint = m.endpoint.lock().unwrap();
                     if let Some(e) = endpoint.as_mut() {
+                        // A replacement takes the old relay address's place.
+                        if let Some(old) = previous {
+                            e.local.retain(|a| *a != old.to_string());
+                        }
                         e.local.push(relay.to_string());
                         let _ = self.events.send(EngineEvent::Endpoint { endpoint: e.clone() });
                     }
@@ -1285,6 +1312,21 @@ mod tests {
         let connected = |rx: &Receiver<EngineEvent>| wait_for(rx, 8, &|e| matches!(e, EngineEvent::Latency { .. })).is_some();
         assert!(connected(&b_events), "engine 2 never reached engine 1 through the relay");
         assert!(connected(&a_events), "engine 1 never heard back through the relay");
+
+        // Hours later the login is getting old: a fresh relay is set up and announced in its place.
+        if let Route::Mesh(m) = &a.route {
+            m.turn.lock().unwrap().as_mut().unwrap().login_at = Instant::now() - RELAY_RENEW_AFTER - Duration::from_secs(1);
+        }
+        assert!(wait_for(&a_events, 5, &|e| matches!(e, EngineEvent::NeedRelay)).is_some(), "asks for a fresh relay");
+        a.set_relay(&relay.login).unwrap();
+        let Some(EngineEvent::Endpoint { endpoint: renewed }) = wait_for(&a_events, 5, &|e| matches!(e, EngineEvent::Endpoint { .. })) else {
+            panic!("never announced the new relay");
+        };
+        let new_addr = renewed.local.last().unwrap().clone();
+        assert_ne!(new_addr, endpoint.local.last().unwrap().clone(), "a new relay address");
+        assert!(!renewed.local.contains(endpoint.local.last().unwrap()), "the old address is gone");
+        b.set_peer(&PeerEndpoint { session_id: 1, public: None, local: vec![new_addr] });
+        assert!(connected(&b_events), "engine 2 reaches engine 1 through the new relay");
     }
 
     #[test]

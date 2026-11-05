@@ -15,6 +15,8 @@ const MAX_ICON_LEN = 200_000;
 const MAX_CHAT_LEN = 2000;
 const MAX_CHANNELS = 50;
 const MAX_MEMBERS_ONLINE = 500;
+/** Apps ping every 10 seconds; a connection silent this long is gone. */
+const STALE_SESSION_MS = 30_000;
 /** Messages per channel replayed at login, and kept in storage. */
 const CHAT_HISTORY = 100;
 const CHAT_KEEP = 1000;
@@ -102,6 +104,8 @@ interface Endpoint { public: string | null; local: string[] }
 /** What we remember about each socket; survives hibernation (max 2 KB). */
 interface Session {
   stage: "hello" | "auth" | "joined" | "removed";
+  /** When it joined: a new session isn't mistaken for a silent one before its first ping. */
+  joinedAt?: number;
   nonce?: string;
   key?: string;
   name?: string;
@@ -577,12 +581,11 @@ export class StromServer extends DurableObject<Env> {
     if (this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length) {
       return this.reject(ws, "You are banned from this server.");
     }
-    // The newest connection wins: an old one may be a crashed app or a dropped network
-    // whose socket never closed properly.
-    const previous = this.members().find(([, m]) => m.key === key);
-    if (previous) {
-      const [oldWs, old] = previous;
-      this.error(oldWs, "You connected to this server from somewhere else.");
+    // The same Hopp ID on another computer stays connected too. A connection that has
+    // stopped pinging (a crashed app, a dropped network) is let go, so it doesn't linger.
+    for (const [oldWs, old] of this.members().filter(([, m]) => m.key === key)) {
+      const pinged = this.ctx.getWebSocketAutoResponseTimestamp(oldWs)?.getTime() ?? 0;
+      if (Date.now() - Math.max(pinged, old.joinedAt ?? 0) < STALE_SESSION_MS) continue;
       oldWs.serializeAttachment({ stage: "removed" } satisfies Session);
       try {
         oldWs.close(4002, "replaced");
@@ -592,10 +595,7 @@ export class StromServer extends DurableObject<Env> {
       this.broadcast({ type: "user_left", session_id: old.user!.session_id });
     }
     if (this.members().length >= MAX_MEMBERS_ONLINE) return this.reject(ws, "The server is full.");
-    const taken = this.sql
-      .exec("SELECT 1 FROM accounts WHERE key != ? AND lower(name) = lower(?)", key, name)
-      .toArray().length;
-    if (taken) return this.reject(ws, `The name "${name}" is already taken on this server.`);
+    // Display names needn't be unique (two friends can both be "Alex"); the Hopp ID tells them apart.
 
     const isOwner = this.meta("owner") === key;
     const known = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
@@ -623,7 +623,7 @@ export class StromServer extends DurableObject<Env> {
     };
     const role = this.roleOf(key);
     if (role) user.role = role;
-    const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now };
+    const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now, joinedAt: now };
     this.broadcast({ type: "user_joined", user });
     ws.serializeAttachment(joined);
     const channels = this.channels();
@@ -808,10 +808,12 @@ export class StromServer extends DurableObject<Env> {
         if (owner) return this.error(ws, "You own this server, so you can't leave it.");
         this.sql.exec("DELETE FROM accounts WHERE key = ?", s.key!);
         this.sql.exec("DELETE FROM notified WHERE key = ?", s.key!);
-        this.send(ws, { type: "left" });
-        ws.serializeAttachment({ stage: "removed" } satisfies Session);
-        this.broadcast({ type: "user_left", session_id: user.session_id }, ws);
-        ws.close(1000, "left");
+        for (const [lws, ls] of this.members().filter(([, m]) => m.key === s.key)) {
+          this.send(lws, { type: "left" });
+          lws.serializeAttachment({ stage: "removed" } satisfies Session);
+          this.broadcast({ type: "user_left", session_id: ls.user!.session_id }, lws);
+          lws.close(1000, "left");
+        }
         return;
       }
       case "delete_message": {
@@ -895,10 +897,14 @@ export class StromServer extends DurableObject<Env> {
           );
           this.send(ws, { type: "bans", bans: this.bans() });
         }
-        this.send(vws, { type: "kicked", banned });
-        vws.serializeAttachment({ stage: "removed" } satisfies Session);
-        vws.close(4001, banned ? "banned" : "kicked");
-        return this.broadcast({ type: "user_left", session_id: target });
+        // Every device of theirs goes.
+        for (const [ows, os] of this.members().filter(([, m]) => m.key === vs.key)) {
+          this.send(ows, { type: "kicked", banned });
+          ows.serializeAttachment({ stage: "removed" } satisfies Session);
+          ows.close(4001, banned ? "banned" : "kicked");
+          this.broadcast({ type: "user_left", session_id: os.user!.session_id });
+        }
+        return;
       }
       case "unban":
         if (!allowed("admin")) return;
