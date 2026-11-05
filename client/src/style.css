@@ -2946,3 +2946,16 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
    the chat lighter still. No lines anywhere, only steps of grey. */
 .frame { background: var(--main); border: none; border-top-left-radius: 12px; }
 .sidebar, .members { background: var(--side-2); }
+
+/* ---------- connection bars: shown only when a connection isn't good ---------- */
+.signal-bars { flex: none; display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; margin-left: auto; }
+.signal-bars i { width: 3px; border-radius: 1px; background: currentColor; opacity: 0.25; }
+.signal-bars i:nth-child(1) { height: 5px; }
+.signal-bars i:nth-child(2) { height: 8px; }
+.signal-bars i:nth-child(3) { height: 11px; }
+.signal-bars i.on { opacity: 1; }
+.signal-bars.good { color: var(--green); }
+.signal-bars.fair { color: var(--yellow); }
+.signal-bars.poor { color: var(--red); }
+.user-card-connection { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.user-card-connection .signal-bars { margin-left: 0; }

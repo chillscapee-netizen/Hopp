@@ -282,6 +282,11 @@ impl LossMeter {
         }
     }
 
+    /// The smoothed loss so far, without closing the window.
+    fn current(&self) -> Option<u8> {
+        self.measured.then(|| self.percent.round().min(100.0) as u8)
+    }
+
     /// Closes the window once it spans enough; the smoothed loss, once there's any measurement.
     fn report(&mut self) -> Option<u8> {
         if let Some(first) = self.first {
@@ -518,6 +523,20 @@ impl Mesh {
         }
     }
 
+    /// How the connection to each reachable peer is: round trip, and the worse of how much of
+    /// their voice reaches us and how much of ours reaches them (percent lost).
+    pub fn quality(&self) -> Vec<(SessionId, Option<u32>, u8)> {
+        let links = self.links.lock().unwrap();
+        links
+            .iter()
+            .filter(|(_, l)| l.path.is_some())
+            .map(|(&id, l)| {
+                let out = l.loss_out.filter(|(_, at)| at.elapsed() < LOSS_REPORT_FRESH).map(|(loss, _)| loss);
+                (id, l.rtt_ms, l.loss_in.current().unwrap_or(0).max(out.unwrap_or(0)))
+            })
+            .collect()
+    }
+
     /// The worst loss anyone reports for our voice lately, in percent.
     pub fn worst_loss(&self) -> u8 {
         let links = self.links.lock().unwrap();
@@ -709,6 +728,8 @@ pub(crate) mod tests {
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)], "not yet known to understand repeats");
         a.ping_heard(2, &ping);
         assert_eq!(a.worst_loss(), 24, "half lost, and the first window moves halfway");
+        assert_eq!(a.quality(), vec![(2, None, 24)], "the connection shows the loss either way");
+        assert_eq!(b.quality(), vec![(1, None, 24)]);
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, true)]);
         // An old-style ping (the nonce alone) is understood as before and teaches nothing.
         let c = Mesh::new(3, &[1; 32]);

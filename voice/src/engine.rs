@@ -83,6 +83,9 @@ pub enum EngineEvent {
     InputLevel { db: f32, voice: bool },
     /// We seem to be talking while muted.
     SpeakingWhileMuted,
+    /// Peer-to-peer voice, once a second: how the connection to someone is. The loss is the
+    /// worse direction, in percent; the round trip comes once it's measured.
+    PeerQuality { session_id: SessionId, rtt_ms: Option<u32>, loss: u8 },
     /// A device was unplugged, failed, or the system default changed while we follow it.
     /// Reopen the devices (`set_devices` with the same choice) to carry on.
     DevicesChanged,
@@ -1017,6 +1020,9 @@ impl Encoder {
             if let Route::Mesh(m) = &self.net.route {
                 if adapted.elapsed() >= ADAPT_EVERY {
                     adapted = Instant::now();
+                    for (session_id, rtt_ms, loss) in m.quality() {
+                        let _ = self.events.send(EngineEvent::PeerQuality { session_id, rtt_ms, loss });
+                    }
                     let loss = m.worst_loss();
                     let next = voice_policy(loss);
                     if next != policy {

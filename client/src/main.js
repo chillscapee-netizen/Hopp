@@ -1640,6 +1640,7 @@ listen("roster", (e) => {
   }
   if (before !== null && myVoice() === null) {
     state.unreachable.clear();
+    state.quality.clear();
     state.speaking.clear();
     state.latency = null;
   }
@@ -1677,6 +1678,12 @@ listen("voice", (e) => {
     toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
   } else if (ev.type === "need_relay") {
     useRelay();
+  } else if (ev.type === "peer_quality") {
+    const before = connectionGrade(state.quality.get(ev.session_id));
+    state.quality.set(ev.session_id, { rtt: ev.rtt_ms, loss: ev.loss });
+    // Only a change you'd see redraws: the bars appear, change colour, or go.
+    if (connectionGrade(state.quality.get(ev.session_id)) !== before) renderSidebar();
+    if (cardUser?.session_id === ev.session_id && !$("user-card").hidden) syncUserCard();
   } else if (ev.type === "peer_reach") {
     if (ev.reachable) state.unreachable.delete(ev.session_id);
     else {
@@ -2131,6 +2138,12 @@ function userRow(u, className, size, sub) {
     const warn = icon("signal", "xs unreachable");
     warn.dataset.tip = "Can't connect directly: you can't hear each other";
     row.append(warn);
+  } else if (className === "voice-user" && !isSelf && connectionGrade(state.quality.get(u.session_id)) !== "good") {
+    // Nothing shows while it's fine; weak bars only when it isn't.
+    const q = state.quality.get(u.session_id);
+    const bars = signalBars(connectionGrade(q));
+    bars.dataset.tip = connectionText(q);
+    row.append(bars);
   }
   const flags = member ? null : flagsFor(u);
   const vol = userVolume(u);
@@ -4000,6 +4013,14 @@ function openUserCard(user, anchor) {
 }
 
 function syncUserCard() {
+  // In voice with us: how the connection to them is.
+  const q = cardUser.voice_channel !== null && cardUser.voice_channel === myVoice() ? state.quality.get(cardUser.session_id) : undefined;
+  const line = $("user-card-connection");
+  line.hidden = !q;
+  if (q) {
+    line.className = "user-card-connection " + connectionGrade(q);
+    line.replaceChildren(signalBars(connectionGrade(q)), el("span", "", connectionText(q)));
+  }
   const vol = userVolume(cardUser) ?? 100;
   $("user-volume").value = vol;
   $("user-volume-value").textContent = `${vol}%`;
@@ -7079,6 +7100,25 @@ listen("server-deleted", () => {
 
 /** People in our voice channel we can't reach peer to peer. */
 state.unreachable = new Set();
+/** How the voice connection to each person in our channel is: { rtt, loss }. */
+state.quality = new Map();
+
+/** "good", "fair" or "poor": what a person's voice connection is like, from its numbers. */
+function connectionGrade(q) {
+  if (!q) return "good";
+  const rtt = q.rtt ?? 0;
+  if (q.loss >= 10 || rtt >= 300) return "poor";
+  if (q.loss >= 3 || rtt >= 150) return "fair";
+  return "good";
+}
+
+/** The connection in words, for a tooltip or the profile card. */
+function connectionText(q) {
+  const grade = connectionGrade(q);
+  const parts = [q.rtt != null ? q.rtt + " ms" : null, q.loss > 0 ? q.loss + "% lost" : null].filter(Boolean);
+  const word = grade === "good" ? "Good connection" : grade === "fair" ? "Okay connection" : "Weak connection";
+  return parts.length ? word + ": " + parts.join(", ") : word;
+}
 
 // ---------- updates ----------
 //
@@ -8814,4 +8854,12 @@ async function fileIce() {
   const login = await relayLogin();
   if (!login) return FILE_ICE;
   return [...FILE_ICE, { urls: [`turn:${login.server}?transport=udp`, `turn:${login.server}?transport=tcp`], username: login.username, credential: login.credential }];
+}
+
+/** Three small signal bars: all lit when good, two when okay, one when weak. */
+function signalBars(grade) {
+  const lit = grade === "good" ? 3 : grade === "fair" ? 2 : 1;
+  const wrap = el("span", `signal-bars ${grade}`);
+  for (let i = 1; i <= 3; i++) wrap.append(el("i", i <= lit ? "on" : ""));
+  return wrap;
 }
