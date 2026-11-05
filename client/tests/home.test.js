@@ -18,6 +18,7 @@
   $("home-btn").click();
   await wait(100);
   check("Home is on screen", !online() && $("home-btn").classList.contains("active") && !document.querySelector(".rail-item.active:not(#home-btn)"));
+  check("switching is instant, nothing slides", ![...document.querySelectorAll(".home-layout, .home-main, #messages, .channel-view")].some((e) => getComputedStyle(e).animationName !== "none"));
   check("still connected, nothing hung up", connected() && disconnects === 0);
   check("still in voice, panel showing", myVoice() === 1 && !$("voice-panel").hidden);
 

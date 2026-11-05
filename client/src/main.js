@@ -2390,9 +2390,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
   // Messages newer than the last drawing of this channel arrive with a little motion.
   const drawnBefore = renderedChannel === state.view ? drawnUpTo.get(state.view) ?? Infinity : Infinity;
-  const switched = renderedChannel !== state.view;
   renderedChannel = state.view;
-  $("messages").classList.toggle("switching", switched);
   if (state.view === null) {
     const empty = el("li", "welcome");
     const badge = el("div", "welcome-icon");
