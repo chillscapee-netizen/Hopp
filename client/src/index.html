@@ -248,7 +248,7 @@
 
       <main class="channel-view">
         <header class="main-head">
-          <svg class="i head-icon"><use href="#i-hash"/></svg>
+          <svg id="chat-head-icon" class="i head-icon"><use href="#i-hash"/></svg>
           <span id="chat-channel" class="head-title"></span>
           <span class="head-sep"></span>
           <span id="chat-topic" class="head-topic ellipsis"></span>
@@ -273,6 +273,7 @@
                 <span id="screen-wait" class="screen-wait">Connecting…</span>
               </div>
             </div>
+            <div id="voice-stage" class="voice-stage" hidden></div>
             <div id="scroller" class="scroller">
               <ol id="messages" class="messages"></ol>
             </div>

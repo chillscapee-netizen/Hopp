@@ -224,6 +224,7 @@ kbd { font: 600 12px "Inter", sans-serif; background: var(--elev-2); border: 1px
 .avatar.s24 { width: 24px; height: 24px; font-size: 10px; }
 .avatar.s40 { width: 40px; height: 40px; font-size: 15px; }
 .avatar.s80 { width: 80px; height: 80px; font-size: 28px; }
+.avatar.s64 { width: 64px; height: 64px; font-size: 22px; }
 .speaking .avatar { box-shadow: 0 0 0 2px var(--speak-gap, var(--side)), 0 0 0 4px var(--green); }
 .status-dot {
   position: absolute;
@@ -3085,3 +3086,16 @@ body { background: var(--frame-bg, var(--frame)); }
 .msg-text { font-size: var(--chat-size, 15px); }
 .msg.first { margin-top: var(--chat-space, 16px); }
 .theme-mode { width: 220px; }
+
+/* ---------- a voice channel's stage ---------- */
+.voice-stage { flex: none; display: grid; justify-items: center; gap: 14px; padding: 22px 16px 14px; }
+.voice-tiles { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; max-width: 760px; }
+.voice-tile { position: relative; display: grid; justify-items: center; gap: 8px; width: 132px; padding: 16px 10px 12px; background: var(--side-2); border: none; border-radius: 14px; color: var(--text-2); font: inherit; cursor: pointer; transition: background 120ms; }
+.voice-tile:hover { background: var(--hover); }
+.voice-tile .avatar { transition: box-shadow 80ms; }
+.voice-tile.speaking .avatar { box-shadow: 0 0 0 3px var(--side-2), 0 0 0 5px var(--green); }
+.voice-tile-name { max-width: 100%; font-size: 13.5px; font-weight: 600; }
+.voice-tile-marks { display: flex; align-items: center; gap: 6px; min-height: 16px; color: var(--red); }
+.voice-tile-marks .live-pill { margin-left: 0; }
+.voice-stage-foot { display: flex; align-items: center; gap: 10px; min-height: 8px; }
+.voice-stage-hint, .voice-stage-empty { margin: 0; color: var(--muted); font-size: 13.5px; }

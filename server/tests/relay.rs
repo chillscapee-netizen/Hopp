@@ -409,7 +409,7 @@ async fn rejects_bad_chat() {
     let mut alice = FakeClient::connect(&server, "alice").await;
     alice.send(ClientMsg::SendChat { channel: GENERAL, text: "x".repeat(MAX_CHAT_LEN + 1), reply_to: None }).await;
     alice.error().await;
-    alice.send(ClientMsg::SendChat { channel: LOBBY, text: "voice channels have no chat".into(), reply_to: None }).await;
+    alice.send(ClientMsg::SendChat { channel: 99, text: "no such channel".into(), reply_to: None }).await;
     alice.error().await;
 }
 
@@ -739,4 +739,17 @@ async fn screen_sharing_is_passed_on_within_a_voice_channel_only() {
     // Leaving voice stops the sharing.
     alice.send(ClientMsg::LeaveVoice).await;
     bob.wait_for(|m| matches!(m, ServerMsg::UserUpdated { user } if user.session_id == a && !user.sharing && user.voice_channel.is_none())).await;
+}
+
+#[tokio::test]
+async fn voice_channels_have_their_own_chat() {
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    alice.send(ClientMsg::SendChat { channel: LOBBY, text: "anyone hear me?".into(), reply_to: None }).await;
+    let ServerMsg::Chat { message } = alice.wait_for(|m| matches!(m, ServerMsg::Chat { .. })).await else { unreachable!() };
+    assert_eq!((message.channel, message.text.as_str()), (LOBBY, "anyone hear me?"));
+    // Someone arriving later gets it with the rest of the history.
+    let mut bob = FakeClient::connect(&server, "bob").await;
+    let ServerMsg::ChatHistory { messages, .. } = bob.wait_for(|m| matches!(m, ServerMsg::ChatHistory { channel, .. } if *channel == LOBBY)).await else { unreachable!() };
+    assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["anyone hear me?"]);
 }

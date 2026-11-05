@@ -648,9 +648,9 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen"],
+      features: ["search", "screen", "voice-chat"],
     });
-    for (const ch of channels.filter((c) => c.kind === "text")) {
+    for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
     }
   }
@@ -735,7 +735,8 @@ export class StromServer extends DurableObject<Env> {
       case "send_chat": {
         const ch = this.channel(Number(msg.channel));
         const text = String(msg.text ?? "").trim();
-        if (ch?.kind !== "text") return this.error(ws, "That text channel doesn't exist.");
+        // Voice channels have a chat too, for the people in them.
+        if (ch?.kind !== "text" && ch?.kind !== "voice") return this.error(ws, "That channel doesn't exist.");
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const now = Date.now();
         s.tokens = Math.min(CHAT_BURST, (s.tokens ?? CHAT_BURST) + ((now - (s.refilled ?? now)) / 1000) * CHAT_PER_SECOND);
@@ -778,6 +779,8 @@ export class StromServer extends DurableObject<Env> {
         };
         if (reply) message.reply = reply;
         this.broadcast({ type: "chat", message });
+        // Voice chat is for the people in the channel: no unread marks for everyone else.
+        if (ch.kind === "voice") return;
         return this.tellAccounts(message, ch.name);
       }
       case "edit_message": {

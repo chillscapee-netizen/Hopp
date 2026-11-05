@@ -707,3 +707,17 @@ test("screen sharing: a flag for the voice channel, handshakes passed on within 
   await bob.waitFor((m) => m.type === "user_updated" && m.user.session_id === me && m.user.sharing === false && m.user.voice_channel === null);
   for (const c of [owner, bob, carol]) c.close();
 });
+
+test("voice channels have their own chat, without unread marks for everyone", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("voice-chat"));
+  const lobby = channelId(owner, "Lobby");
+  owner.send({ type: "send_chat", channel: lobby, text: "anyone hear me?" });
+  const got = await owner.waitFor((m) => m.type === "chat");
+  assert.equal(got.message.channel, lobby);
+  const bob = await join(id, "bob", { invite });
+  const history = await bob.waitFor((m) => m.type === "chat_history" && m.channel === lobby);
+  assert.deepEqual(history.messages.map((m) => m.text), ["anyone hear me?"]);
+  owner.close();
+  bob.close();
+});

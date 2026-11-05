@@ -178,7 +178,8 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
     };
     let mut history = HashMap::new();
     let mut next_message_id = 1;
-    for c in config.channels.iter().filter(|c| c.kind == ChannelKind::Text) {
+    // Text channels, and voice channels' own chat.
+    for c in &config.channels {
         storage.compact_chat(c.id);
         let (messages, max_id) = storage.load_chat(c.id, CHAT_HISTORY);
         next_message_id = next_message_id.max(max_id + 1);
@@ -416,14 +417,14 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
-                features: vec!["search".into(), "screen".into()],
+                features: vec!["search".into(), "screen".into(), "voice-chat".into()],
                 session_id,
                 udp_token: token,
                 udp_port,
                 channels: st.config.channels.clone(),
                 users: st.clients.values().map(|c| c.user.clone()).collect(),
             });
-            for ch in st.config.channels.iter().filter(|c| c.kind == ChannelKind::Text) {
+            for ch in &st.config.channels {
                 let messages = st.history.get(&ch.id).map(|h| h.iter().cloned().collect()).unwrap_or_default();
                 let _ = tx.send(ServerMsg::ChatHistory { channel: ch.id, messages });
             }
@@ -494,8 +495,8 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 }
                 ClientMsg::SendChat { channel, text, reply_to } => {
                     let text = text.trim();
-                    if !st.channel(channel).is_some_and(|c| c.kind == ChannelKind::Text) {
-                        error("That text channel doesn't exist.");
+                    if st.channel(channel).is_none() {
+                        error("That channel doesn't exist.");
                     } else if text.is_empty() || text.chars().count() > MAX_CHAT_LEN {
                         error(&format!("Messages must be 1–{MAX_CHAT_LEN} characters."));
                     } else if !st.clients.get_mut(&session_id).expect("checked above").chat.take() {
@@ -604,7 +605,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     let needle = query.trim().to_lowercase();
                     let mut messages = Vec::new();
                     if (2..=100).contains(&needle.chars().count()) {
-                        let text: Vec<ChannelId> = st.config.channels.iter().filter(|c| c.kind == ChannelKind::Text).map(|c| c.id).collect();
+                        let text: Vec<ChannelId> = st.config.channels.iter().map(|c| c.id).collect();
                         for channel in text {
                             let all = st.storage.load_before(channel, u64::MAX, 100_000).unwrap_or_else(|| st.history.get(&channel).map(|h| h.iter().cloned().collect()).unwrap_or_default());
                             messages.extend(all.into_iter().filter(|m| m.text.to_lowercase().contains(&needle)));

@@ -412,6 +412,16 @@ function textChannels() {
 function voiceChannels() {
   return state.roster?.channels.filter((c) => c.kind === "voice") ?? [];
 }
+/** Channels with a chat to open: text channels, and voice channels where the server has voice chat. */
+function chatChannels() {
+  return state.roster?.channels.filter((c) => c.kind === "text" || (c.kind === "voice" && voiceChat())) ?? [];
+}
+function voiceChat() {
+  return !!state.roster?.features?.includes("voice-chat");
+}
+function isVoiceChannel(id) {
+  return channel(id)?.kind === "voice";
+}
 function userName(sessionId) {
   return state.roster?.users.find((u) => u.session_id === sessionId)?.name;
 }
@@ -1540,7 +1550,7 @@ async function connectTo(server, create, reconnecting) {
     // We're a member now; the invite has done its job.
     delete server.invite;
     saveServers();
-    if (!textChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
+    if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
     renderedChannel = undefined;
     applyUserVolumes();
     return true;
@@ -1646,9 +1656,9 @@ listen("roster", (e) => {
     state.speaking.clear();
     state.latency = null;
   }
-  if (state.pendingView !== undefined && textChannels().some((c) => c.id === state.pendingView)) state.view = state.pendingView;
+  if (state.pendingView !== undefined && chatChannels().some((c) => c.id === state.pendingView)) state.view = state.pendingView;
   state.pendingView = undefined;
-  if (!textChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
+  if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
   forgetDeletedChannels();
   const pending = state.pendingCategory;
   const made = pending && state.roster.channels.find((c) => !pending.known.has(c.id));
@@ -1667,7 +1677,7 @@ listen("voice", (e) => {
   if (ev.type === "speaking") {
     ev.speaking ? state.speaking.add(ev.session_id) : state.speaking.delete(ev.session_id);
     // Who is talking shows in the voice channel (and on your own panel); not in the member list.
-    document.querySelectorAll(`.voice-user[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
+    document.querySelectorAll(`.voice-user[data-user="${ev.session_id}"], .voice-tile[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
     if (state.roster && ev.session_id === state.roster.me) renderUserPanel();
   } else if (ev.type === "latency") {
     state.latency = ev.ms;
@@ -2022,9 +2032,14 @@ function renderSidebar() {
     const wrap = el("div");
     const row = el("button", "channel-row");
     row.classList.toggle("in-voice", ch.id === mine);
+    row.classList.toggle("current", ch.id === state.view && voiceChat());
     row.dataset.tip = ch.id === mine ? "You're here" : `Join ${ch.name}`;
     row.append(icon("volume"), el("span", "ellipsis", ch.name));
-    row.addEventListener("click", () => joinVoice(ch.id));
+    row.addEventListener("click", () => {
+      joinVoice(ch.id);
+      // Its own chat and who's there open alongside.
+      if (voiceChat()) openTextChannel(ch.id);
+    });
     row.addEventListener("contextmenu", (e) => openChannelMenu(ch, e));
     if (owner) {
       draggableChannel(row, ch);
@@ -2097,7 +2112,10 @@ function openChannelMenu(ch, e) {
   openMenu(
     [
       ...(ch.kind === "voice"
-        ? [inThis ? { label: "Leave voice", icon: "phone-off", action: () => call("leave_voice") } : { label: "Join voice", icon: "volume", action: () => joinVoice(ch.id) }]
+        ? [
+            inThis ? { label: "Leave voice", icon: "phone-off", action: () => call("leave_voice") } : { label: "Join voice", icon: "volume", action: () => joinVoice(ch.id) },
+            ...(voiceChat() ? [{ label: "Open chat", icon: "message", action: () => openTextChannel(ch.id) }] : []),
+          ]
         : []),
       { label: "Invite people", icon: "user-plus", action: openInvite },
       ...(ch.kind === "text" && (channelUnread(address, ch.id) || channelMentions(address, ch.id))
@@ -2261,7 +2279,9 @@ function renderChannelView() {
   $("chat-topic").textContent = topic || `${r.users.length} online`;
   $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
-  $("chat-input").placeholder = `Message #${channelName(view)}`;
+  $("chat-input").placeholder = isVoiceChannel(view) ? `Message ${channelName(view)}` : `Message #${channelName(view)}`;
+  $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : '<use href="#i-hash"/>';
+  renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed();
   if (typeof renderAttachment === "function") renderAttachment();
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
@@ -2499,8 +2519,13 @@ function renderMessages(keepScrollUnlessAtBottom) {
 
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
-  badge.append(icon("hash"));
-  welcome.append(badge, el("h1", "", `Welcome to #${name}!`), el("p", "", channel(state.view)?.topic || `This is the start of the #${name} channel.`));
+  const inVoiceChannel = isVoiceChannel(state.view);
+  badge.append(icon(inVoiceChannel ? "volume" : "hash"));
+  welcome.append(
+    badge,
+    el("h1", "", inVoiceChannel ? `${name}` : `Welcome to #${name}!`),
+    el("p", "", channel(state.view)?.topic || (inVoiceChannel ? "The chat for this voice channel: links, clips and anything you'd rather type." : `This is the start of the #${name} channel.`)),
+  );
   if (msgs.length === 0 && can("manage")) {
     const actions = el("div", "welcome-actions");
     const invite = el("button", "btn primary sm", "Invite people");
@@ -5491,6 +5516,7 @@ function mergeRead(row) {
 
 /** A message that arrived on the server we're in. True when it's new to us. */
 function noteMessage(address, m) {
+  if (isVoiceChannel(m.channel)) return false;
   const k = readKey(address, m.channel);
   const cur = state.reads.get(k) ?? { server: address, channel: m.channel, read_id: 0, last_id: 0, mentions: 0 };
   state.reads.set(k, cur);
@@ -5507,6 +5533,7 @@ function noteMessage(address, m) {
 
 /** A channel's recent messages, on joining: catch up with what the read marks know. */
 function noteHistory(server, channel, messages) {
+  if (isVoiceChannel(channel)) return;
   const last = messages.at(-1)?.id;
   if (!last) return;
   const k = readKey(server.address, channel);
@@ -5542,7 +5569,7 @@ function setRead(address, channel, id) {
 
 /** The channel on screen counts as read while the window is in front. */
 function markViewedRead() {
-  if (!online() || state.view === null || !document.hasFocus()) return;
+  if (!online() || state.view === null || !document.hasFocus() || isVoiceChannel(state.view)) return;
   if (state.unreadHold && state.unreadHold.channel === state.view && state.unreadHold.address === activeServer()?.address) return;
   const address = activeServer()?.address;
   const last = state.chats.get(state.view)?.at(-1)?.id;
@@ -10083,4 +10110,45 @@ function showMoreAbove() {
   scroller.scrollTop = scroller.scrollHeight - fromBottom;
   if (state.jumpTo) jumpToMessage(state.jumpTo);
   return true;
+}
+
+// ---------- a voice channel's own view ----------
+//
+// Open a voice channel and its people are on a stage at the top (lit while they talk, LIVE to
+// watch a screen), with the channel's own chat below.
+
+function renderVoiceStage() {
+  const stage = $("voice-stage");
+  const view = state.view;
+  const show = online() && view !== null && isVoiceChannel(view);
+  stage.hidden = !show;
+  if (!show) return;
+  const here = state.roster.users.filter((u) => u.voice_channel === view).sort(byName);
+  const mine = myVoice() === view;
+  const tiles = el("div", "voice-tiles");
+  for (const u of here) {
+    const tile = el("button", "voice-tile" + (state.speaking.has(u.session_id) ? " speaking" : ""));
+    tile.type = "button";
+    tile.dataset.user = u.session_id;
+    tile.append(avatar(u.name, "s64", undefined, pictureFor(keyOf(u))));
+    const name = el("span", "voice-tile-name ellipsis", u.name);
+    tile.append(name);
+    const marks = el("span", "voice-tile-marks");
+    if (u.muted) marks.append(icon("mic-off", "xs"));
+    if (u.deafened) marks.append(icon("headphones-off", "xs"));
+    if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
+    tile.append(marks);
+    tile.addEventListener("click", () => (u.sharing ? watchScreen(u.session_id) : u.session_id !== state.roster.me && openUserCard(u, tile)));
+    tiles.append(tile);
+  }
+  const foot = el("div", "voice-stage-foot");
+  if (!mine) {
+    const join = el("button", "btn primary sm", here.length ? "Join voice" : "Join, and be the first");
+    join.type = "button";
+    join.addEventListener("click", () => joinVoice(view));
+    foot.append(join);
+  } else if (here.length === 1) {
+    foot.append(el("span", "voice-stage-hint", "Nobody else is here yet. Invite someone, or wait for a friend to join."));
+  }
+  stage.replaceChildren(...(here.length ? [tiles] : [el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now.")]), foot);
 }
