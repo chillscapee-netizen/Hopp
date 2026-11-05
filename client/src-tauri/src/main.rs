@@ -1429,6 +1429,7 @@ fn main() {
             account::seal_private,
             account::open_private,
             account::dm_seal,
+            account::phrase_leak,
             account::dm_open,
             account::notify,
             debug_info,

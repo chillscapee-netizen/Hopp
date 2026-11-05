@@ -2539,6 +2539,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
         body.append(tag);
       }
       li.append(body);
+      if (looksLikeBait(m.text, m.author_key === state.account?.publicKey)) li.append(baitWarning());
     }
     for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) {
       li.append(inviteEmbed(link));
@@ -3195,7 +3196,8 @@ function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
   $("confirm-title").textContent = title;
   $("confirm-text").textContent = text;
   $("confirm-ok").textContent = ok;
-  $("confirm-cancel").textContent = cancel;
+  $("confirm-cancel").textContent = cancel ?? "";
+  $("confirm-cancel").hidden = cancel === null;
   $("confirm-ok").classList.toggle("danger", danger);
   $("confirm-ok").classList.toggle("primary", !danger);
   openModal(dialog);
@@ -3215,7 +3217,7 @@ function confirmDialog({ title, text, ok, cancel = "Cancel", danger = true }) {
 
 const chatInput = $("chat-input");
 let lastTypingSent = 0;
-chatInput.addEventListener("keydown", (e) => {
+chatInput.addEventListener("keydown", async (e) => {
   if (mentionKeydown(e)) return;
   if (e.key === "Escape" && state.replyTo) {
     e.preventDefault();
@@ -3245,6 +3247,7 @@ chatInput.addEventListener("keydown", (e) => {
     }
     const text = withMentions(chatInput.value.trim());
     if (!text || state.view === null) return;
+    if (await phraseBlocked(text)) return;
     const replyTo = state.replyTo?.channel === state.view ? state.replyTo.id : null;
     setReply(null);
     chatInput.value = "";
@@ -5230,6 +5233,7 @@ function renderDmView(keepScroll) {
       li.append(m.text === null ? el("div", "msg-text unreadable", "This message can't be read.") : messageText(m.text));
     }
     if (m.text) {
+      if (looksLikeBait(m.text, m.from_key === state.me?.key)) li.append(baitWarning());
       for (const link of new Set([...m.text.matchAll(INVITE_LINK), ...m.text.matchAll(URL_PATTERN)].map((x) => x[0]).filter((l) => inviteTarget(l)).slice(0, 3))) li.append(inviteEmbed(link));
       li.append(...youtubeEmbeds(m.text));
     }
@@ -5281,6 +5285,7 @@ function loadOlderDms(peer) {
 async function sendDm(peer, input) {
   const text = input.value.trim();
   if (!text) return;
+  if (await phraseBlocked(text)) return;
   input.value = "";
   input.style.height = "auto";
   const nonce = Math.random().toString(36).slice(2);
@@ -5809,11 +5814,14 @@ function messageEditor(m) {
   };
   requestAnimationFrame(fit);
   box.addEventListener("input", fit);
-  const save = () => {
+  const save = async () => {
     let text = box.value.trim();
     for (const [label, key] of [...labels].sort((a, b) => b[0].length - a[0].length)) text = text.split(label).join(`<@${key}>`);
     if (!text) return deleteMessage(m).then(stopEdit);
-    if (text !== m.text) invoke("edit_message", { channel: m.channel, id: m.id, text }).catch((err) => toast(friendlyError(err), true));
+    if (text !== m.text) {
+      if (await phraseBlocked(text)) return;
+      invoke("edit_message", { channel: m.channel, id: m.id, text }).catch((err) => toast(friendlyError(err), true));
+    }
     stopEdit();
   };
   box.addEventListener("keydown", (e) => {
@@ -8316,6 +8324,7 @@ function dmEditor(peer, m) {
 }
 
 async function saveDmEdit(peer, m, text) {
+  if (await phraseBlocked(text)) return;
   const before = { text: m.text, edited_at: m.edited_at };
   m.text = text;
   m.edited_at = Date.now();
@@ -9021,4 +9030,50 @@ function signalBars(grade) {
   const wrap = el("span", `signal-bars ${grade}`);
   for (let i = 1; i <= 3; i++) wrap.append(el("i", i <= lit ? "on" : ""));
   return wrap;
+}
+
+// ---------- protecting accounts ----------
+//
+// Accounts are taken over by talking people into giving away their recovery phrase, and
+// by "free gift" links sent from friends whose accounts were already taken.
+
+/** Stops a message that would give away a recovery phrase. True when it mustn't be sent. */
+async function phraseBlocked(text) {
+  // A phrase is twelve words or more; shorter messages can't be one (and skip the check).
+  if ((text.match(/[a-z]+/gi) ?? []).length < 6) return false;
+  const leak = await invoke("phrase_leak", { text }).catch(() => null);
+  if (leak === "mine") {
+    await confirmDialog({
+      title: "That's your recovery phrase",
+      text: "Anyone who has these words owns your Hopp ID: your friends, servers and messages. Nobody ever needs them, not a friend, not a server owner, not Hopp. The message wasn't sent.",
+      ok: "Got it",
+      cancel: null,
+      danger: false,
+    });
+    return true;
+  }
+  if (leak === "phrase") {
+    const go = await confirmDialog({
+      title: "This looks like a recovery phrase",
+      text: "Whoever gets a recovery phrase can take over that account. If someone asked you for one, it's a scam. Send it anyway?",
+      ok: "Send anyway",
+      cancel: "Don't send",
+    });
+    return !go;
+  }
+  return false;
+}
+
+/** "Free gift" bait with a link: the usual way accounts get stolen, often from a friend's taken account. */
+var BAIT = /\b(free|gift(ed)?|giveaway|nitro|airdrop|claim|robux|v-?bucks|crypto|nft|prize)\b/i;
+
+function looksLikeBait(text, fromMe) {
+  return !fromMe && /https?:\/\//i.test(text) && BAIT.test(text);
+}
+
+/** The quiet warning under such a message. */
+function baitWarning() {
+  const note = el("div", "bait-warning");
+  note.append(icon("shield", "xs"), el("span", "", "Careful: links promising free stuff are how accounts get stolen, even when they come from a friend."));
+  return note;
 }

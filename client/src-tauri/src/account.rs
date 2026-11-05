@@ -123,6 +123,12 @@ pub fn open_private(state: State<'_, AppState>, sealed: String) -> CmdResult<Str
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
+/// Before sending: would this give away a recovery phrase? ("mine", "phrase" or nothing.)
+#[tauri::command]
+pub fn phrase_leak(state: State<'_, AppState>, text: String) -> Option<strom_voice::identity::PhraseLeak> {
+    state.identity.lock().unwrap().as_ref()?.phrase_leak(&text)
+}
+
 /** Encrypts a direct message so only we and `peer` can read it. */
 #[tauri::command]
 pub fn dm_seal(state: State<'_, AppState>, peer: String, text: String) -> CmdResult<String> {

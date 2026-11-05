@@ -2964,3 +2964,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .call-people { flex-wrap: wrap; justify-content: center; max-width: 560px; }
 .call-people.many { gap: 18px; }
 .call-people.many .avatar.s80 { width: 64px; height: 64px; font-size: 22px; }
+
+/* A quiet warning under messages that bait with free stuff. */
+.bait-warning { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--yellow); font-size: 12.5px; }
+.bait-warning .i { flex: none; }

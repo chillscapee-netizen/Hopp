@@ -146,6 +146,23 @@ impl Identity {
         Mnemonic::from_entropy(&self.key.to_bytes()).expect("32 bytes is valid BIP-39 entropy").to_string()
     }
 
+    /// What sending `text` would give away: this account's own recovery words (six or more
+    /// of them in order), or what looks like a recovery phrase (twelve or more recovery words
+    /// in a row; ordinary sentences never manage that, since words like "the" aren't in the list).
+    pub fn phrase_leak(&self, text: &str) -> Option<PhraseLeak> {
+        let runs = recovery_word_runs(text);
+        let phrase = self.recovery_phrase();
+        let mine: Vec<&str> = phrase.split(' ').collect();
+        let leaks_mine = runs.iter().any(|run| run.windows(MINE_RUN).any(|w| mine.windows(MINE_RUN).any(|m| m.iter().zip(w).all(|(a, b)| a == b))));
+        if leaks_mine {
+            Some(PhraseLeak::Mine)
+        } else if runs.iter().any(|run| run.len() >= PHRASE_RUN) {
+            Some(PhraseLeak::Phrase)
+        } else {
+            None
+        }
+    }
+
     /// Signs a server's login challenge.
     pub fn sign_challenge(&self, nonce: &[u8]) -> String {
         hex::encode(self.key.sign(&strom_shared::auth_message(nonce)).to_bytes())
@@ -222,6 +239,37 @@ impl Identity {
             .decrypt(Nonce::from_slice(&bytes[..12]), &bytes[12..])
             .map_err(|_| anyhow::anyhow!("this data belongs to another Hopp ID or is damaged"))
     }
+}
+
+/// Six of your own recovery words in order can't happen by chance.
+const MINE_RUN: usize = 6;
+/// Twelve recovery words in a row is a phrase, or half of one.
+const PHRASE_RUN: usize = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhraseLeak {
+    /// Words from this account's own recovery phrase.
+    Mine,
+    /// Something that looks like a recovery phrase (someone else's, or ours mistyped).
+    Phrase,
+}
+
+/// The stretches of recovery-list words in a text, however they're written down
+/// (numbered, with commas, on several lines, in capitals).
+fn recovery_word_runs(text: &str) -> Vec<Vec<String>> {
+    let english = bip39::Language::English;
+    let mut runs = vec![Vec::new()];
+    for word in text.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| !w.is_empty()) {
+        let word = word.to_ascii_lowercase();
+        if english.find_word(&word).is_some() {
+            runs.last_mut().unwrap().push(word);
+        } else if !runs.last().unwrap().is_empty() {
+            runs.push(Vec::new());
+        }
+    }
+    runs.retain(|r| !r.is_empty());
+    runs
 }
 
 /// The public key a recovery phrase belongs to, to check it before overwriting anything.
@@ -311,6 +359,31 @@ mod tests {
         wrong.swap(0, 1);
         assert!(public_key_of_phrase(&wrong.join(" ")).is_err(), "the checksum must catch swapped words");
         assert!(public_key_of_phrase(&words[..23].join(" ")).is_err());
+    }
+
+    #[test]
+    fn recovery_phrases_are_caught_before_they_are_sent() {
+        let (id, _) = Identity::create("a", "password1").unwrap();
+        let phrase = id.recovery_phrase();
+        let words: Vec<&str> = phrase.split(' ').collect();
+        // Our own, whole or in part, however it's written.
+        assert_eq!(id.phrase_leak(&phrase), Some(PhraseLeak::Mine));
+        let numbered: String = words.iter().enumerate().map(|(i, w)| format!("{}) {}\n", i + 1, w.to_uppercase())).collect();
+        assert_eq!(id.phrase_leak(&numbered), Some(PhraseLeak::Mine));
+        assert_eq!(id.phrase_leak(&format!("here you go: {}", words[8..14].join(", "))), Some(PhraseLeak::Mine));
+        // Someone else's phrase.
+        let (other, _) = Identity::create("b", "password1").unwrap();
+        assert_eq!(id.phrase_leak(&other.recovery_phrase()), Some(PhraseLeak::Phrase));
+        // Ordinary chat, even full of words that happen to be on the list.
+        for text in [
+            "Ready for tonight? Join the lobby in five",
+            "good game, that was a great match, see you tomorrow at the usual time",
+            "I think the best way to win is to stay together and push the middle",
+            "apple banana orange", // three list words in a row is nothing
+            "",
+        ] {
+            assert_eq!(id.phrase_leak(text), None, "{text}");
+        }
     }
 
     #[test]

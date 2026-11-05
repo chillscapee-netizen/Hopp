@@ -139,6 +139,8 @@ const commands = {
   set_relay: ({ login }) => { sent.push({ type: "set_relay", login }); },
   react: (a) => { sent.push({ type: "react", ...a }); },
   gif_search: () => ({ gifs: [], next: null }),
+  // Stands in for the real check: these marker words play our phrase and someone else's.
+  phrase_leak: ({ text }) => (/abandon ability able about above absent/.test(text) ? "mine" : /zoo zone zero youth young yellow/.test(text) ? "phrase" : null),
   start_call: (a) => { sent.push({ type: "start_call", ...a }); return { session_id: a.me, public: "203.0.113.1:5000", local: [] }; },
   call_peer: (a) => { sent.push({ type: "call_peer", ...a }); },
   call_drop_peer: (a) => { sent.push({ type: "call_drop_peer", ...a }); },
