@@ -1767,6 +1767,7 @@ listen("older-history", (e) => {
   const list = state.chats.get(ch) ?? [];
   const known = new Set(list.map((m) => m.id));
   state.chats.set(ch, [...messages.filter((m) => !known.has(m.id)), ...list]);
+  if (messages.length) state.drawFrom.set(ch, Math.min(state.drawFrom.get(ch) ?? Infinity, messages[0].id));
   if (ch !== state.view) return;
   // Keep what you were looking at in place while older messages appear above it.
   const scroller = $("scroller");
@@ -2482,7 +2483,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     return;
   }
   const name = channelName(state.view);
-  const msgs = state.chats.get(state.view) || [];
+  const allMsgs = state.chats.get(state.view) || [];
   // Opening a channel: remember where reading stopped, for the "New" line.
   const address = activeServer()?.address;
   if (!keepScrollUnlessAtBottom) {
@@ -2493,6 +2494,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
   }
   let newSince = state.newSince?.channel === state.view ? state.newSince.id : null;
   const unreadFrom = newSince;
+  const msgs = drawWindow(allMsgs, !keepScrollUnlessAtBottom, unreadFrom, atBottom);
+  const hiddenAbove = msgs.length < allMsgs.length;
 
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
@@ -2506,7 +2509,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     welcome.append(actions);
   }
 
-  const items = [state.olderDone.has(state.view) ? welcome : olderLoader()];
+  const items = [state.olderDone.has(state.view) && !hiddenAbove ? welcome : olderLoader()];
   let prev = null;
   for (const m of msgs) {
     const day = dayLabel(m.sent_at);
@@ -5833,6 +5836,13 @@ function replyLine(r) {
 
 /** Scrolls to a message, loading older ones until it's there. */
 function jumpToMessage(id) {
+  if (online() && id < (state.drawFrom.get(state.view) ?? 0) && state.chats.get(state.view)?.some((m) => m.id === id)) {
+    state.drawFrom.set(state.view, id);
+    const scroller = $("scroller");
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+    renderMessages(true);
+    scroller.scrollTop = scroller.scrollHeight - fromBottom;
+  }
   const node = document.querySelector(`#messages .msg[data-id="${id}"]`);
   if (node) {
     state.jumpTo = null;
@@ -6150,7 +6160,10 @@ function olderLoader() {
 }
 
 function loadOlder() {
-  if (!online() || state.view === null || state.loadingOlder || state.olderDone.has(state.view)) return;
+  if (!online() || state.view === null || state.loadingOlder) return;
+  // Older messages already here: draw more of them, keeping your place.
+  if (showMoreAbove()) return;
+  if (state.olderDone.has(state.view)) return;
   const first = state.chats.get(state.view)?.[0];
   if (!first) return state.olderDone.add(state.view);
   state.loadingOlder = true;
@@ -9904,4 +9917,47 @@ function rememberServerView() {
 /** Connected again: the remembered view gives way to the real one. */
 function freshView() {
   for (const n of [$("sidebar-body"), $("messages"), $("member-list")]) n.classList.remove("stale");
+}
+
+// ---------- long channels stay fast ----------
+//
+// Only a window of a channel is drawn: the newest DRAW_WINDOW messages (and back to the first
+// unread). Scrolling up draws more from memory before asking the server; new messages join
+// the window, and at the bottom it's trimmed back, out of sight.
+
+var DRAW_WINDOW = 150;
+var DRAW_MORE = 100;
+/** The oldest message drawn in each channel. */
+state.drawFrom = new Map();
+
+function drawWindow(all, opening, unreadFrom, atBottom) {
+  const view = state.view;
+  if (!all.length) return all;
+  let from = state.drawFrom.get(view);
+  const newest = all[Math.max(0, all.length - DRAW_WINDOW)].id;
+  if (opening || from === undefined) {
+    from = newest;
+    // Back to the first unread, so the "New" line is there.
+    if (unreadFrom !== null && unreadFrom !== undefined) from = Math.min(from, all.find((m) => m.id > unreadFrom)?.id ?? from);
+  } else if (atBottom && all.length - all.findIndex((m) => m.id >= from) > DRAW_WINDOW * 2) {
+    // At the bottom with a long tail drawn above: let the old part go.
+    from = newest;
+  }
+  state.drawFrom.set(view, from);
+  return all.filter((m) => m.id >= from);
+}
+
+/** Draws older messages that are already here, keeping what you see in place. False if none. */
+function showMoreAbove() {
+  const all = state.chats.get(state.view) ?? [];
+  const from = state.drawFrom.get(state.view);
+  const at = all.findIndex((m) => m.id >= from);
+  if (from === undefined || at <= 0) return false;
+  state.drawFrom.set(state.view, all[Math.max(0, at - DRAW_MORE)].id);
+  const scroller = $("scroller");
+  const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+  renderMessages(true);
+  scroller.scrollTop = scroller.scrollHeight - fromBottom;
+  if (state.jumpTo) jumpToMessage(state.jumpTo);
+  return true;
 }
