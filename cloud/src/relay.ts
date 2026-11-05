@@ -23,6 +23,11 @@ export const USAGE_FRESH_MS = 15 * 60_000;
 /** …and an older reading than this isn't trusted to hand out logins. */
 export const USAGE_TRUSTED_MS = 60 * 60_000;
 
+/** A secret as pasted, without stray spaces or line breaks around it. */
+function secret(value: string | undefined): string {
+  return (value ?? "").trim();
+}
+
 export function budgetBytes(env: Env): number {
   const gb = Number(env.RELAY_BUDGET_GB ?? DEFAULT_BUDGET_GB);
   return (Number.isFinite(gb) && gb > 0 ? Math.min(gb, 950) : DEFAULT_BUDGET_GB) * 1e9;
@@ -43,8 +48,8 @@ export async function monthUsage(env: Env, now = new Date()): Promise<number> {
   }`;
   const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
     method: "POST",
-    headers: { authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify({ query, variables: { accountId: env.CF_ACCOUNT_ID, from, to: day(now) } }),
+    headers: { authorization: `Bearer ${secret(env.CF_ANALYTICS_TOKEN)}`, "content-type": "application/json" },
+    body: JSON.stringify({ query, variables: { accountId: secret(env.CF_ACCOUNT_ID), from, to: day(now) } }),
   });
   if (!res.ok) throw new Error(`analytics answered ${res.status}`);
   const body = (await res.json()) as {
@@ -60,12 +65,15 @@ export async function monthUsage(env: Env, now = new Date()): Promise<number> {
 
 /** A login for the relay from Cloudflare (UDP), or null. */
 export async function newLogin(env: Env): Promise<TurnLogin | null> {
-  const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+  const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${secret(env.TURN_KEY_ID)}/credentials/generate-ice-servers`, {
     method: "POST",
-    headers: { authorization: `Bearer ${env.TURN_KEY_TOKEN}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${secret(env.TURN_KEY_TOKEN)}`, "content-type": "application/json" },
     body: JSON.stringify({ ttl: LOGIN_TTL_S }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.error("relay login refused by Cloudflare:", res.status, (await res.text()).slice(0, 200));
+    return null;
+  }
   const body = (await res.json()) as { iceServers?: unknown };
   const servers = (Array.isArray(body.iceServers) ? body.iceServers : [body.iceServers]) as { urls?: string | string[]; username?: string; credential?: string }[];
   for (const s of servers) {
@@ -79,8 +87,8 @@ export async function newLogin(env: Env): Promise<TurnLogin | null> {
 }
 
 export async function revoke(env: Env, username: string): Promise<void> {
-  await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/${encodeURIComponent(username)}/revoke`, {
+  await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${secret(env.TURN_KEY_ID)}/credentials/${encodeURIComponent(username)}/revoke`, {
     method: "POST",
-    headers: { authorization: `Bearer ${env.TURN_KEY_TOKEN}` },
+    headers: { authorization: `Bearer ${secret(env.TURN_KEY_TOKEN)}` },
   }).catch(() => {});
 }
