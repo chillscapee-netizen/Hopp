@@ -2524,7 +2524,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.append(...youtubeEmbeds(m.text));
     if (m.reactions?.length) li.append(reactionRow(m));
     li.append(messageActions(m));
-    li.addEventListener("contextmenu", (e) => openMessageMenu(m, e));
+    li.msg = m;
+    li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
     li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id)]);
@@ -2552,6 +2553,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
 function inviteEmbed(link) {
   const target = inviteTarget(link);
   const slot = el("div", "invite-embed");
+  slot.dataset.keep = `invite|${link}`;
   const loading = el("div", "invite-card loading");
   loading.append(el("span", "skeleton invite-skel-icon"), el("span", "skeleton invite-skel-text"));
   slot.append(loading);
@@ -5188,12 +5190,14 @@ function renderDmView(keepScroll) {
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
     if (m.from_key === state.me?.key && !m.pending && !m.failed && m.text !== null) {
       li.append(dmActions(peer, m));
+      li.msg = m;
       li.addEventListener("contextmenu", (e) => {
         e.preventDefault();
+        const current = e.currentTarget.msg;
         openMenu(
           [
-            ...(dmEditable(m) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, m) }] : []),
-            { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, m) },
+            ...(dmEditable(current) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, current) }] : []),
+            { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, current) },
           ],
           e.clientX,
           e.clientY,
@@ -7621,6 +7625,7 @@ async function sendPicture() {
 function pictureView(id, width, height) {
   const fit = Math.min(1, 400 / width, 320 / height);
   const box = el("button", "msg-picture");
+  box.dataset.keep = `pic|${id}`;
   box.type = "button";
   box.style.width = `${Math.max(48, Math.round(width * fit))}px`;
   box.style.aspectRatio = `${width} / ${height}`;
@@ -7775,6 +7780,7 @@ function dmPictureUrl(owner, id, key) {
 function dmPictureView(owner, id, key, width, height) {
   const fit = Math.min(1, 400 / width, 320 / height);
   const box = el("button", "msg-picture loading");
+  box.dataset.keep = `dmpic|${id}`;
   box.type = "button";
   box.style.width = `${Math.max(48, Math.round(width * fit))}px`;
   box.style.aspectRatio = `${width} / ${height}`;
@@ -7935,6 +7941,7 @@ function youtubeEmbeds(text) {
 
 function youtubeCard(id, start, link) {
   const card = el("div", "yt-card");
+  card.dataset.keep = `yt|${id}|${start}`;
   const head = el("div", "yt-head");
   const site = el("span", "yt-site", "YouTube");
   const title = el("a", "yt-title", "YouTube video");
@@ -8567,16 +8574,38 @@ function reconcile(list, items) {
   for (const node of list.children) if (node.dataset.key) old.set(node.dataset.key, node);
   const wanted = items.map((node) => {
     const kept = node.dataset.key ? old.get(node.dataset.key) : null;
-    return kept && kept.dataset.sig === node.dataset.sig ? kept : node;
+    if (!kept) return node;
+    // Changed (a reaction, an edit): updated in place, keeping what's loaded inside it.
+    if (kept.dataset.sig !== node.dataset.sig) morph(kept, node);
+    return kept;
   });
-  const keep = new Set(wanted);
-  for (const node of [...list.children]) if (!keep.has(node)) node.remove();
-  let cursor = list.firstChild;
-  for (const node of wanted) {
+  place(list, wanted);
+}
+
+/** Puts `nodes` into `parent` in order, moving as little as possible (moving reloads videos). */
+function place(parent, nodes) {
+  const keep = new Set(nodes);
+  for (const node of [...parent.childNodes]) if (!keep.has(node)) node.remove();
+  let cursor = parent.firstChild;
+  for (const node of nodes) {
     if (node === cursor) {
       cursor = cursor.nextSibling;
       continue;
     }
-    list.insertBefore(node, cursor);
+    parent.insertBefore(node, cursor);
   }
+}
+
+/**
+ * Turns `old` into `fresh` in place: its attributes and content become fresh's, except
+ * children marked data-keep (a video, a picture, an invite card) that exist in both,
+ * which stay exactly where they are.
+ */
+function morph(old, fresh) {
+  for (const a of [...old.attributes]) if (!fresh.hasAttribute(a.name)) old.removeAttribute(a.name);
+  for (const a of fresh.attributes) if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+  old.msg = fresh.msg;
+  const kept = new Map();
+  for (const child of old.children) if (child.dataset.keep) kept.set(child.dataset.keep, child);
+  place(old, [...fresh.childNodes].map((child) => (child.dataset?.keep && kept.get(child.dataset.keep)) || child));
 }

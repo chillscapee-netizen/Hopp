@@ -24,9 +24,24 @@
   check("its row was never rebuilt", document.querySelector('.msg[data-id="960"]') === row);
   check("the changes still show", document.querySelector('.msg[data-id="961"]') && document.body.textContent.includes("🔥"));
 
-  // Reacting to the video's own message redraws only that row.
+  // Reactions on the video's own message, from someone else and from me: it keeps playing.
   emit("reactions", { channel: 0, id: 960, reactions: [{ emoji: "👍", keys: [KEYS.sara] }] });
   await wait(100);
-  check("a change to that message itself does redraw it", document.querySelector('.msg[data-id="960"] .reaction') !== null);
+  check("someone's reaction shows, video keeps playing", document.querySelector('.msg[data-id="960"] .reaction') && document.querySelector('.msg[data-id="960"] iframe') === player && player.isConnected);
+  emit("reactions", { channel: 0, id: 960, reactions: [{ emoji: "👍", keys: [KEYS.sara, ME] }, { emoji: "🔥", keys: [ME] }] });
+  await wait(100);
+  check("my reaction too", document.querySelectorAll('.msg[data-id="960"] .reaction:not(.add)').length === 2 && document.querySelector('.msg[data-id="960"] iframe') === player);
+
+  // The message is edited: new text, same player.
+  emit("message-edited", { channel: 0, id: 960, text: "WATCH THIS https://www.youtube.com/watch?v=dQw4w9WgXcQ", edited_at: Date.now() });
+  await wait(100);
+  check("edited text shows, video keeps playing", document.querySelector('.msg[data-id="960"]').textContent.includes("WATCH THIS") && document.querySelector('.msg[data-id="960"] iframe') === player && player.isConnected);
+  check("the row's menu knows the new text", document.querySelector('.msg[data-id="960"]').msg.text.startsWith("WATCH THIS"));
+
+  // Hovering and opening the message menu doesn't touch it either.
+  document.querySelector('.msg[data-id="960"]').dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  document.querySelector('.msg[data-id="960"]').dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+  closePopovers();
+  check("hover and menu leave it playing", document.querySelector('.msg[data-id="960"] iframe') === player && player.isConnected);
   report();
 })();
