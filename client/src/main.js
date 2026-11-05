@@ -122,6 +122,7 @@ function saveServers() {
 }
 
 const state = {
+  atHome: false, // Home on screen while still connected to a server
   account: null, // { name, publicKey }
   activeId: null,
   connectingId: null,
@@ -278,8 +279,13 @@ function activeServer() {
   return prefs.servers.find((s) => s.id === state.activeId);
 }
 
-function online() {
+/** Connected to a server (voice and chat keep going even while Home is on screen). */
+function connected() {
   return state.activeId !== null && state.roster !== null;
+}
+/** A server is on screen: connected, and not looking at Home. */
+function online() {
+  return connected() && !state.atHome;
 }
 
 const SHORT_INVITE = /^(?:(?:hopp|strom):\/\/)?([A-Za-z0-9]{6,16})\/?$/i;
@@ -714,6 +720,7 @@ async function logout() {
   state.account = null;
   renderBackupState();
   state.activeId = null;
+  state.atHome = false;
   state.roster = null;
   state.notice = null;
   // Nothing of this account stays for the next one.
@@ -1002,7 +1009,7 @@ function serverById(id) {
 }
 
 function isActiveServer(id) {
-  return id === state.activeId || id === state.connectingId;
+  return !state.atHome && (id === state.activeId || id === state.connectingId);
 }
 
 function railServer(s, folder) {
@@ -1069,7 +1076,7 @@ function railFolder(f) {
 }
 
 function renderRail() {
-  $("home-btn").classList.toggle("active", !state.activeId && !state.connectingId);
+  $("home-btn").classList.toggle("active", state.atHome || (!state.activeId && !state.connectingId));
   normalizeRail();
   if (typeof renderHomeBadge === "function" && state.conversations) renderHomeBadge();
   $("server-list").replaceChildren(
@@ -1341,9 +1348,18 @@ $("folder-form").addEventListener("submit", () => {
 });
 
 $("home-btn").addEventListener("click", () => {
-  if (state.activeId || state.connectingId) disconnect();
-  else if (state.openDm) closeDm();
+  if (state.connectingId) return disconnect();
+  if (state.activeId && !state.atHome) return goHome();
+  if (state.openDm) closeDm();
 });
+
+/** Home on screen while the server stays connected: going back is instant, voice goes on. */
+function goHome() {
+  saveDraft();
+  closePopovers();
+  state.atHome = true;
+  renderAll();
+}
 
 function removeServer(server) {
   if (server.id === state.activeId) disconnect();
@@ -1461,6 +1477,18 @@ window.addEventListener("online", () => {
 });
 
 async function connectTo(server, create, reconnecting) {
+  if (!reconnecting && !create && server.id === state.activeId && state.roster) {
+    if (state.atHome) {
+      state.atHome = false;
+      // Messages may have come in meanwhile: draw the channel afresh.
+      renderedChannel = undefined;
+      renderAll();
+      restoreDraft();
+    }
+    return true;
+  }
+  // Coming back after a dropped connection doesn't pull you away from Home.
+  if (!reconnecting) state.atHome = false;
   saveDraft();
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
@@ -1529,6 +1557,7 @@ async function disconnect() {
   state.attempt++;
   await call("disconnect");
   state.activeId = null;
+  state.atHome = false;
   state.connectingId = null;
   state.roster = null;
   state.notice = null;
@@ -1762,6 +1791,7 @@ listen("disconnected", () => {
     startReconnect(server, voice);
     return;
   }
+  state.atHome = false;
   const text = state.replaced
     ? "You connected to this server from another device, so this one was signed out."
     : state.kicked
@@ -2090,7 +2120,7 @@ function userRow(u, className, size, sub) {
 
 function renderVoicePanel() {
   const panel = $("voice-panel");
-  const voice = online() ? myVoice() : null;
+  const voice = connected() ? myVoice() : null;
   panel.hidden = voice === null;
   if (panel.hidden) return;
   const status = panel.querySelector(".voice-status");
@@ -2111,7 +2141,7 @@ function renderVoicePanel() {
 }
 
 function renderUserPanel() {
-  const on = online();
+  const on = connected();
   const name = state.account?.name ?? "";
   const myStatus = state.accountConnected ? state.me?.status ?? "online" : on ? "online" : "offline";
   $("me-avatar-slot").replaceChildren(avatar(name, "", statusDot(myStatus), state.me?.avatar));
@@ -2226,7 +2256,6 @@ async function followInvite(link) {
     return;
   }
   const known = prefs.servers.find((s) => s.address === address);
-  if (known && known.id === state.activeId) return;
   if (known) connectTo(known);
   else {
     const error = await joinInvite(link);
@@ -3310,7 +3339,7 @@ $("settings").addEventListener("close", () => editName(false));
 
 // The mic check: outside voice it opens the microphone just for the settings screen.
 function inVoice() {
-  return online() && myVoice() !== null;
+  return connected() && myVoice() !== null;
 }
 function renderMicTest() {
   const btn = $("mic-check");
@@ -4012,7 +4041,7 @@ window.addEventListener("keydown", (e) => {
     return $("quick").hidden ? openQuick() : closeQuick();
   }
   if (e.key === "Escape") closePopovers();
-  if (!online()) return;
+  if (!connected()) return;
   if (e.ctrlKey && e.key.toLowerCase() === "m") { e.preventDefault(); $("mute-btn").click(); return; }
   if (e.ctrlKey && e.key.toLowerCase() === "d") { e.preventDefault(); setDeafened(!state.deafened); }
 });
@@ -4850,14 +4879,18 @@ listen("notification-click", (e) => {
     const [, id, ch] = action.split(":");
     const server = serverById(id);
     if (!server) return;
-    if (server.id === state.activeId) openTextChannel(Number(ch));
+    if (server.id === state.activeId) {
+      if (state.atHome) connectTo(server);
+      openTextChannel(Number(ch));
+    }
     else {
       state.pendingView = Number(ch);
       connectTo(server);
     }
   }
   else if (action === "friend-requests") {
-    if (state.activeId || state.connectingId) disconnect();
+    if (state.connectingId) disconnect();
+    else if (state.activeId) state.atHome = true;
     state.openDm = null;
     state.friendTab = "pending";
     renderAll();
@@ -4891,7 +4924,8 @@ function renderHomeBadge() {
 
 function openDm(peer) {
   state.openDm = peer;
-  if (state.activeId || state.connectingId) disconnect();
+  if (state.connectingId) disconnect();
+  else if (state.activeId) state.atHome = true;
   if (!state.dmMessages.has(peer)) {
     state.dmMessages.set(peer, []);
     invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
@@ -5398,7 +5432,7 @@ function notifyMention({ server, channel, author_key, author_name, channel_name,
   if (!s || state.me?.status === "dnd") return;
   const level = serverLevel(s);
   if (level === "none" || channelMuted(server, channel) || (!mention && level !== "all")) return;
-  const looking = s.id === state.activeId && state.view === channel && document.hasFocus();
+  const looking = online() && s.id === state.activeId && state.view === channel && document.hasFocus();
   if (looking) return;
   playSound("message");
   const person = { display_name: author_name, avatar: pictureFor(author_key) };
@@ -6060,7 +6094,7 @@ function quickTargets() {
   for (const s of prefs.servers) {
     out.push({
       kind: "*", name: s.label, sub: displayAddress(s), unread: serverUnread(s), mentions: serverMentions(s),
-      node: () => serverChip(s), go: () => (s.id === state.activeId ? null : connectTo(s)),
+      node: () => serverChip(s), go: () => connectTo(s),
     });
   }
   if (online()) {
