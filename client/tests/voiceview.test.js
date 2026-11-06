@@ -32,9 +32,10 @@
   [...document.querySelectorAll(".channel-row")].find((n) => n.textContent.includes("general")).click();
   await wait(100);
   const jonas = state.roster.users.find((u) => u.name === "Jonas");
+  commands.join_voice = ({ channel }) => { const j = structuredClone(state.roster); j.users.find((u) => u.session_id === j.me).voice_channel = channel; setTimeout(() => emit("roster", j), 10); };
   watchScreen(jonas.session_id);
-  await wait(100);
-  check("watching opens their voice channel", state.view === 1);
+  await wait(600);
+  check("watching from outside joins their voice channel and opens it", state.view === 1 && myVoice() === 1);
   check("the screen is in the middle, everyone in a row below", !!document.querySelector(".stage-main #screen-stage") && !!document.querySelector(".voice-tiles.strip"));
   check("with its own buttons only (no second full screen)", !document.querySelector(".stage-bar"));
   stopWatching();

@@ -1428,6 +1428,11 @@ function menuItems(items, inSub = false) {
       return row;
     }
     const b = el("button", "menu-item" + (item.danger ? " danger" : "") + (item.checked ? " checked" : "") + (item.submenu ? " has-sub" : ""));
+    if (item.swatch) {
+      const dot = el("span", "status-swatch");
+      dot.style.background = item.swatch;
+      b.append(dot);
+    }
     const text = el("span", "menu-text");
     text.append(el("span", "", item.label));
     if (item.sub) text.append(el("small", "ellipsis", item.sub));
@@ -1536,6 +1541,7 @@ function scheduleReconnect() {
   const r = state.reconnect;
   if (!r) return;
   const seconds = RECONNECT_DELAYS[Math.min(r.tries, RECONNECT_DELAYS.length - 1)];
+  r.at = Date.now() + seconds * 1000;
   state.notice = { kind: "error", server: r.server, text: `${r.server.label}: Lost the connection. Reconnecting in ${seconds} s…`, reconnecting: true };
   renderAll();
   r.timer = setTimeout(() => reconnectNow(), seconds * 1000);
@@ -1764,6 +1770,13 @@ listen("roster", (e) => {
   syncScreen();
   syncMedia();
   renderAll();
+  roleLookChanged();
+  // Joined to watch someone: start once we're in (within a while of asking).
+  const pw = state.pendingWatch;
+  if (pw && myVoice() === pw.channel) {
+    state.pendingWatch = null;
+    if (Date.now() - pw.at < 30_000) setTimeout(() => watchScreen(pw.session), 300);
+  }
   // The Roles tab follows changes as they come.
   if ($("server-settings").open && !document.querySelector('[data-spanel="roles"]').hidden) renderRolesTab();
 });
@@ -1922,6 +1935,8 @@ listen("disconnected", () => {
   }
   const voice = myVoice();
   playSound("disconnect");
+  // What was on screen stays while Hopp reconnects.
+  rememberServerView();
   state.activeId = null;
   state.roster = null;
   if (server && !state.kicked && !state.replaced) {
@@ -1957,7 +1972,9 @@ listen("voice-state", (e) => {
 // ---------- rendering ----------
 
 function connectingServer() {
-  return state.connectingId ? prefs.servers.find((s) => s.id === state.connectingId) : null;
+  // Reconnecting keeps you in the server (its last view, quiet) unless you went elsewhere.
+  const id = state.connectingId ?? (state.reconnect && !state.atHome ? state.reconnect.server.id : null);
+  return id ? prefs.servers.find((s) => s.id === id) : null;
 }
 
 function renderAll() {
@@ -1976,6 +1993,7 @@ function renderAll() {
   if (on) renderChannelView();
   else if (loading) renderLoading();
   else renderHome();
+  renderReconnectBar();
 }
 
 /** Grey placeholder bars of varying width, standing in for content that is on its way. */
@@ -1990,6 +2008,17 @@ function skeleton(className, widths) {
 }
 
 /** The server view while connecting: its name right away, the rest as placeholders. */
+function renderReconnectBar() {
+  const r = state.reconnect;
+  const show = !!r && !online() && connectingServer()?.id === r.server.id;
+  $("reconnect-bar").hidden = !show;
+  if (!show) return;
+  const left = Math.max(0, Math.ceil((r.at - Date.now()) / 1000));
+  $("reconnect-text").textContent = state.connectingId ? "Reconnecting to " + r.server.label + "…" : "Lost the connection. Trying again in " + left + " s…";
+}
+setInterval(() => state.reconnect && renderReconnectBar(), 1000);
+$("reconnect-now").addEventListener("click", () => reconnectNow());
+
 function renderLoading() {
   const server = connectingServer();
   const view = document.querySelector(".channel-view");
@@ -4653,6 +4682,7 @@ function openStatusMenu(x, y) {
   const item = (status, sub) => ({
     label: STATUS_LABEL[status],
     sub,
+    swatch: { online: "var(--green)", idle: "var(--yellow)", dnd: "var(--red)", invisible: "var(--faint)" }[status],
     checked: current === status,
     action: () => accountSend({ type: "set_status", status }).catch(() => {}),
   });
@@ -9733,7 +9763,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
       frame: at(-9), "side-2": at(-6), side: at(-4), main: at(0), elev: at(-7), "elev-2": at(-11), "elev-3": at(-15), deep: at(-5),
       border: at(-11), "border-strong": at(-17), "border-active": at(-25), "border-focus": at(-32), "focus-ring": at(-35),
       hover: "rgb(0 0 0 / 0.05)", active: "rgb(0 0 0 / 0.08)", "msg-hover": "rgb(0 0 0 / 0.03)",
-      layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", "app-solid": at(-6),
+      layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", tile: "rgb(0 0 0 / 0.07)", "app-solid": at(-6),
       text: tint(12), "text-2": tint(22), muted: tint(38), faint: tint(53),
       link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#1f9d63", yellow: "#b7791f", red: "#d93a40", scheme: "light",
     };
@@ -9742,7 +9772,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
     frame: at(-6.7), "side-2": at(-3.9), side: at(-2.1), main: at(0), elev: at(4.3), "elev-2": at(8.2), "elev-3": at(12.4), deep: at(-7.8),
     border: at(4.3), "border-strong": at(10.4), "border-active": at(16.3), "border-focus": at(20.4), "focus-ring": at(21.5),
     hover: "rgb(255 255 255 / 0.05)", active: "rgb(255 255 255 / 0.09)", "msg-hover": "rgb(0 0 0 / 0.06)",
-    layer: "rgb(255 255 255 / 0.045)", "layer-2": "rgb(255 255 255 / 0.065)", sink: "rgb(0 0 0 / 0.16)", "app-solid": at(-4.5),
+    layer: "rgb(255 255 255 / 0.045)", "layer-2": "rgb(255 255 255 / 0.065)", sink: "rgb(0 0 0 / 0.16)", tile: "rgb(255 255 255 / 0.065)", "app-solid": at(-4.5),
     text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(57),
     link: "#8ab4f8", "primary-hover": "#ffffff", "name-s": "22%", "name-l": "80%", green: "#3ccf8e", yellow: "#f0b232", red: "#f2555a", scheme: "dark",
   };
@@ -10038,6 +10068,12 @@ function watchScreen(session) {
   // Like Discord: watching takes you to their voice channel, where the stream shows big.
   const where = state.roster?.users.find((u) => u.session_id === session)?.voice_channel;
   if (where != null && voiceChat() && state.view !== where) openTextChannel(where);
+  // Not in their voice channel: join it, then the stream starts (streams are for who's there).
+  if (where != null && session !== state.roster?.me && myVoice() !== where) {
+    state.pendingWatch = { session, channel: where, at: Date.now() };
+    joinVoice(where);
+    return;
+  }
   if (watching?.from === session) return;
   stopWatching();
   if (session === state.roster?.me) {
@@ -10448,6 +10484,8 @@ function renderVoiceStage() {
   $("members-toggle").hidden = show;
   stage.hidden = !show;
   const screen = $("screen-stage");
+  // Leaving the voice view in full screen would leave an empty black screen.
+  if (!show && document.fullscreenElement === stage) document.exitFullscreen().catch(() => {});
   if (!show) {
     // Watching from a text channel: the screen sits above that chat, where it always did.
     if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
@@ -10551,12 +10589,15 @@ function fitTiles() {
   const h = box.clientHeight;
   if (!n || !w || !h) return;
   const gap = 8;
-  let best = 0;
+  const sizes = [];
   for (let cols = 1; cols <= n; cols++) {
     const rows = Math.ceil(n / cols);
-    const tw = Math.min((w - gap * (cols - 1)) / cols, ((h - gap * (rows - 1)) / rows) * (16 / 9));
-    best = Math.max(best, tw);
+    sizes.push(Math.min((w - gap * (cols - 1)) / cols, ((h - gap * (rows - 1)) / rows) * (16 / 9)));
   }
+  // Side by side reads better than a tall stack: the most columns within a tenth of the biggest size.
+  const top = Math.max(...sizes);
+  let best = top;
+  for (let i = sizes.length - 1; i >= 0; i--) if (sizes[i] >= top * 0.9) { best = sizes[i]; break; }
   box.style.setProperty("--tile-w", Math.floor(Math.max(120, Math.min(best, 720))) + "px");
 }
 new ResizeObserver(() => fitTiles()).observe($("voice-stage"));
@@ -11377,3 +11418,24 @@ document.addEventListener("mousedown", (e) => {
   if (!view || e.target.closest(".members, #members-toggle, .popover, .menu")) return;
   view.classList.remove("members-over");
 });
+
+// Roles (or who has them) changed: names in the chat take their new colour at once. Only
+// the rows whose look changed are rebuilt.
+var lastRoleLook = "";
+function roleLookChanged() {
+  const look = JSON.stringify([state.roster?.roles ?? [], (state.roster?.users ?? []).map((u) => [u.public_key, u.roles ?? [], u.role ?? null])]);
+  if (look === lastRoleLook) return;
+  lastRoleLook = look;
+  if (online() && state.view !== null && renderedChannel === state.view) renderMessages(true);
+}
+
+// A list waiting for the server's answer never says "Loading…" forever: an older server, or a
+// lost answer, gets a plain message instead.
+setInterval(() => {
+  for (const n of document.querySelectorAll(".admin-empty, .pins-empty")) {
+    if (n.textContent !== "Loading…") continue;
+    const since = Number(n.dataset.since || 0);
+    if (!since) n.dataset.since = String(Date.now());
+    else if (Date.now() - since > 8000) n.textContent = "Couldn't load this. Close it and try again.";
+  }
+}, 1000);

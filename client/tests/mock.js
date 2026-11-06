@@ -90,6 +90,8 @@ const commands = {
       emit("chat-history", { channel: 0, messages: chatHistory });
       emit("chat-history", { channel: 3, messages: [] });
       emit("chat-history", { channel: 4, messages: [msg(4, "Sara", KEYS.sara, "lfg ranked?", 3, 4)] });
+      emit("chat-history", { channel: 1, messages: [] });
+      emit("chat-history", { channel: 2, messages: [] });
     }, 30);
     return structuredClone(roster);
   },
@@ -168,7 +170,9 @@ window.__TAURI__ = {
   },
   event: {
     listen: async (name, fn) => {
-      handlers[name] = fn;
+      // Like Tauri: any number of listeners per event.
+      const prev = handlers[name];
+      handlers[name] = prev ? (e) => { prev(e); fn(e); } : fn;
       return () => {};
     },
   },
