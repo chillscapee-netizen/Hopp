@@ -45,10 +45,11 @@
   check("the others' cameras arrive over a real connection", theirs?.videoWidth === 320, String(theirs?.videoWidth));
   document.querySelector(`.voice-tile[data-user="${elin.session_id}"]`).click();
   await wait(50);
-  check("clicking a camera focuses it", document.querySelector(".voice-tiles.focused .voice-tile.focus")?.dataset.user === String(elin.session_id));
+  check("clicking a camera focuses it", document.querySelector(".stage-main .voice-tile.focus")?.dataset.user === String(elin.session_id) && !!document.querySelector(".voice-tiles.strip"));
+  check("with pop out and back-to-everyone buttons", document.querySelectorAll(".stage-bar .stage-btn").length === 3);
   document.querySelector(`.voice-tile[data-user="${elin.session_id}"]`).click();
   await wait(50);
-  check("and again shows everyone", !document.querySelector(".voice-tiles.focused"));
+  check("and again shows everyone", !document.querySelector(".stage-main") && !document.querySelector(".voice-tiles.strip"));
   cam.click();
   await wait(300);
   check("turning it off stops it for everyone", !media.out.cam && !document.querySelector(`.voice-tile[data-user="${elin.session_id}"] video`));

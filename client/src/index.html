@@ -31,6 +31,8 @@
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
     <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
@@ -268,6 +270,7 @@
           <span class="head-spacer"></span>
           <label class="head-search" id="search-input-box"><svg class="i"><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
           <button id="invite-head-btn" class="icon-btn" data-tip="Invite people"><svg class="i"><use href="#i-user-plus"/></svg></button>
+          <button id="voice-chat-btn" class="icon-btn voice-chat-btn" data-tip="Chat" aria-label="Chat" hidden><svg class="i"><use href="#i-message"/></svg><span id="voice-chat-dot" class="head-dot" hidden></span></button>
           <button id="pins-btn" class="icon-btn" data-tip="Pinned messages"><svg class="i"><use href="#i-pin"/></svg></button>
           <button id="members-toggle" class="icon-btn" data-tip="Member list"><svg class="i"><use href="#i-users"/></svg></button>
         </header>

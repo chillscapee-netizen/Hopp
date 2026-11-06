@@ -3346,3 +3346,49 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 /* Inviting friends: a taller list that shows it goes on. */
 .invite-friend-list { max-height: min(340px, 42vh); mask-image: linear-gradient(#000 calc(100% - 24px), transparent); padding-bottom: 16px; }
 #dm-video-btn { margin-left: 2px; }
+
+/* ---------- a voice channel's own view ---------- */
+.channel-view.voice-view .members { display: none !important; }
+.chat.voice-mode { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+.chat.voice-mode > * { grid-column: 1; }
+.chat.voice-mode > .voice-stage { grid-row: 1 / span 2; }
+.chat.voice-mode:not(.chat-open) > .scroller, .chat.voice-mode:not(.chat-open) > .composer, .chat.voice-mode:not(.chat-open) > .jump-bar { display: none; }
+.chat.voice-mode.chat-open { grid-template-columns: minmax(0, 1fr) min(340px, 42%); }
+.chat.voice-mode.chat-open > .scroller { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line); }
+.chat.voice-mode.chat-open > .composer { grid-column: 2; grid-row: 2; border-left: 1px solid var(--line); }
+.chat.voice-mode.chat-open > .jump-bar { grid-column: 2; grid-row: 1; align-self: end; }
+.chat.voice-mode .welcome h1 { font-size: 22px; }
+.voice-chat-btn { position: relative; }
+.head-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+
+.chat.voice-mode .voice-stage { position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: none; padding: 14px 16px 16px; }
+.voice-stage:fullscreen { background: var(--app-bg, var(--app-solid)); padding: 20px; }
+.stage-bar { position: absolute; top: 10px; right: 14px; z-index: 3; display: flex; gap: 4px; }
+.stage-btn { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: none; border-radius: 10px; background: rgb(0 0 0 / 0.35); color: #fff; cursor: pointer; opacity: 0.75; transition: opacity 120ms, background 120ms; }
+.stage-btn:hover { opacity: 1; background: rgb(0 0 0 / 0.55); }
+.stage-btn .i { width: 18px; height: 18px; }
+
+/* Everyone: tiles fill the space, sized by fitTiles(). */
+.chat.voice-mode .voice-tiles { flex: 1; min-height: 0; max-height: none; max-width: none; display: flex; flex-wrap: wrap; align-content: safe center; justify-content: center; gap: 8px; overflow-y: auto; padding: 0; }
+.chat.voice-mode .voice-tile { position: relative; display: grid; place-items: center; width: var(--tile-w, 220px); aspect-ratio: 16 / 9; padding: 0; overflow: hidden; border-radius: 12px; background: var(--layer-2); }
+.chat.voice-mode .voice-tile .avatar { width: clamp(40px, calc(var(--tile-w, 220px) * 0.2), 104px); height: clamp(40px, calc(var(--tile-w, 220px) * 0.2), 104px); font-size: clamp(15px, calc(var(--tile-w, 220px) * 0.07), 36px); }
+.chat.voice-mode .voice-tile .voice-tile-name { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 70px); padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.45); color: #fff; font-size: 13px; }
+.chat.voice-mode .voice-tile .voice-tile-marks { position: absolute; right: 8px; bottom: 8px; min-height: 0; padding: 2px 6px; border-radius: 6px; background: rgb(0 0 0 / 0.45); }
+.chat.voice-mode .voice-tile .voice-tile-marks:empty { display: none; }
+.chat.voice-mode .voice-tile.speaking { box-shadow: inset 0 0 0 2px var(--green); }
+.chat.voice-mode .voice-tile.speaking .avatar { box-shadow: none; }
+.chat.voice-mode .voice-tile.video video, .chat.voice-mode .voice-tile.video .tile-video { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; object-fit: cover; border-radius: 0; box-shadow: none; }
+
+/* One in the middle (a screen, or a camera you picked), the others in a row below. */
+.stage-main { flex: 1; min-height: 0; display: grid; place-items: center; }
+.stage-main .voice-tile.focus { width: 100%; height: 100%; aspect-ratio: auto; background: #000; }
+.stage-main .voice-tile.focus video { object-fit: contain !important; }
+.stage-main .screen-stage { width: 100%; height: 100%; max-height: none; padding: 0; }
+.stage-main .screen-frame { width: 100%; height: 100%; aspect-ratio: auto; }
+.chat.voice-mode .voice-tiles.strip { flex: none; flex-wrap: nowrap; align-content: normal; justify-content: center; overflow-x: auto; overflow-y: hidden; --tile-w: 176px; }
+.chat.voice-mode .voice-tiles.strip .voice-tile { flex: none; }
+.chat.voice-mode .voice-stage-foot { flex: none; justify-content: center; }
+.chat.voice-mode .voice-stage-foot:empty { display: none; }
+.chat.voice-mode .voice-stage-empty { flex: 1; display: grid; place-items: center; }
+#chat-input::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat.voice-mode .voice-tile:not(.video) .avatar { width: clamp(32px, calc(var(--tile-w, 220px) * 0.18), 104px); height: clamp(32px, calc(var(--tile-w, 220px) * 0.18), 104px); margin-bottom: 14px; }

@@ -1822,6 +1822,7 @@ listen("chat", (e) => {
   if (m.channel === state.view) {
     renderMessages(true);
     renderTyping();
+    if (isVoiceChannel(m.channel) && !voiceChatOpen() && m.author_key !== state.account?.publicKey) $("voice-chat-dot").hidden = false;
   }
   if (fresh && server) {
     if (m.author_key !== state.account?.publicKey) {
@@ -10034,6 +10035,9 @@ function tuneScreenSender(pc) {
 }
 
 function watchScreen(session) {
+  // Like Discord: watching takes you to their voice channel, where the stream shows big.
+  const where = state.roster?.users.find((u) => u.session_id === session)?.voice_channel;
+  if (where != null && voiceChat() && state.view !== where) openTextChannel(where);
   if (watching?.from === session) return;
   stopWatching();
   if (session === state.roster?.me) {
@@ -10147,9 +10151,11 @@ function renderScreenStage() {
   const video = $("screen-video");
   if (!watching) {
     video.srcObject = null;
+    if (state.view !== null && isVoiceChannel(state.view)) renderVoiceStage();
     return;
   }
   $("screen-who").textContent = watching.local ? "Your screen · what the others see" : (userName(watching.from) ?? "Someone") + "'s screen";
+  if (isVoiceChannel(state.view)) renderVoiceStage();
   $("screen-wait").hidden = !!video.srcObject && !video.paused;
 }
 
@@ -10423,48 +10429,101 @@ function showMoreAbove() {
 // Open a voice channel and its people are on a stage at the top (lit while they talk, LIVE to
 // watch a screen), with the channel's own chat below.
 
+/**
+ * A voice channel is its own view, like Discord's: everyone's tile fills the space (sized so
+ * all fit), cameras play in their tiles, and a screen you watch or a camera you pick takes the
+ * middle with the others in a row below. The channel's chat opens beside it from the header.
+ * The whole view can go full screen; a focused video can pop out.
+ */
 function renderVoiceStage() {
   const stage = $("voice-stage");
   const view = state.view;
   const show = online() && view !== null && isVoiceChannel(view);
+  const chat = stage.closest(".chat");
+  chat.classList.toggle("voice-mode", show);
+  chat.classList.toggle("chat-open", show && voiceChatOpen());
+  document.querySelector(".channel-view").classList.toggle("voice-view", show);
+  $("voice-chat-btn").hidden = !show;
+  $("voice-chat-btn").classList.toggle("selected", show && voiceChatOpen());
+  $("members-toggle").hidden = show;
   stage.hidden = !show;
-  if (!show) return;
+  const screen = $("screen-stage");
+  if (!show) {
+    // Watching from a text channel: the screen sits above that chat, where it always did.
+    if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
+    return;
+  }
   const here = state.roster.users.filter((u) => u.voice_channel === view).sort(byName);
   const mine = myVoice() === view;
-  const tiles = el("div", "voice-tiles");
-  tiles.classList.toggle("focused", focusTile !== null && here.some((u) => u.session_id === focusTile));
+  const camOf = (u) => mediaStream("cam", u.session_id === state.roster.me ? "me" : u.session_id);
+  const screenFocus = !!watching && here.some((u) => u.session_id === watching.from);
+  const camFocus = !screenFocus && focusTile !== null && here.some((u) => u.session_id === focusTile && camOf(u));
+  const focused = screenFocus || camFocus;
+  const tiles = el("div", "voice-tiles" + (focused ? " strip" : ""));
+  const main = focused ? el("div", "stage-main") : null;
   for (const u of here) {
     const tile = el("button", "voice-tile" + (state.speaking.has(u.session_id) ? " speaking" : ""));
     tile.type = "button";
     tile.dataset.user = u.session_id;
     const isMe = u.session_id === state.roster.me;
-    const cam = mediaStream("cam", isMe ? "me" : u.session_id);
+    const cam = camOf(u);
     tile.classList.toggle("video", !!cam);
-    tile.classList.toggle("focus", focusTile === u.session_id);
     if (cam) tile.append(videoEl("cam|" + (isMe ? "me" : u.session_id), cam, isMe));
     else tile.append(avatar(u.name, "s64", undefined, pictureFor(keyOf(u))));
-    const name = el("span", "voice-tile-name ellipsis", u.name);
-    tile.append(name);
     const marks = el("span", "voice-tile-marks");
-    if (u.muted) marks.append(icon("mic-off", "xs"));
-    if (u.deafened) marks.append(icon("headphones-off", "xs"));
+    if (u.muted || u.server_muted) marks.append(icon("mic-off", "xs"));
+    if (u.deafened || u.server_deafened) marks.append(icon("headphones-off", "xs"));
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
-    tile.append(marks);
+    tile.append(el("span", "voice-tile-name ellipsis", u.name), marks);
     tile.addEventListener("click", (e) => {
       if (e.target.closest(".live-pill")) return watchScreen(u.session_id);
-      // A camera: focus on it (click again for everyone).
+      // A camera: in the middle, big (click it again for everyone).
       if (cam) {
         focusTile = focusTile === u.session_id ? null : u.session_id;
         return renderVoiceStage();
       }
       if (u.sharing) return watchScreen(u.session_id);
-      if (u.session_id !== state.roster.me) openUserCard(u, tile);
+      if (!isMe) openUserCard(u, tile);
     });
-    tiles.append(tile);
+    if (camFocus && u.session_id === focusTile) {
+      tile.classList.add("focus");
+      main.append(tile);
+    } else tiles.append(tile);
   }
+  if (screenFocus) {
+    main.append(screen);
+    screen.querySelector("video")?.play?.().catch(() => {});
+  } else if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
+
+  // Top right: back to everyone, pop out, full screen.
+  const bar = el("div", "stage-bar");
+  const button = (iconName, label, onClick) => {
+    const btn = el("button", "stage-btn");
+    btn.type = "button";
+    btn.setAttribute("aria-label", label);
+    btn.append(icon(iconName));
+    btn.addEventListener("click", onClick);
+    bar.append(btn);
+  };
+  if (camFocus) {
+    button("pip", "Pop out", () => {
+      const v = main.querySelector("video");
+      if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+      else v?.requestPictureInPicture?.().catch(() => toast("This video can't pop out right now.", true));
+    });
+    button("grid", "Show everyone", () => {
+      focusTile = null;
+      renderVoiceStage();
+    });
+  }
+  button(document.fullscreenElement === stage ? "minimize" : "maximize", "Full screen", () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else stage.requestFullscreen().catch(() => {});
+  });
+
   const foot = el("div", "voice-stage-foot");
   if (!mine) {
-    const join = el("button", "btn primary sm", here.length ? "Join voice" : "Join, and be the first");
+    const join = el("button", "btn primary", here.length ? "Join voice" : "Join, and be the first");
     join.type = "button";
     join.addEventListener("click", () => joinVoice(view));
     foot.append(join);
@@ -10478,8 +10537,49 @@ function renderVoiceStage() {
     foot.append(invite);
   }
   if (channel(view)?.afk_after) foot.prepend(el("span", "voice-stage-hint", "This is the AFK channel: people away for " + channel(view).afk_after + " minutes end up here."));
-  stage.replaceChildren(...(here.length ? [tiles] : [el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now.")]), foot);
+  // A screen in the middle brings its own buttons (pop out, full screen, stop watching).
+  stage.replaceChildren(...(screenFocus ? [] : [bar]), ...(main ? [main] : []), here.length ? tiles : el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now."), foot);
+  fitTiles();
 }
+
+/** Sizes the tiles so everyone fits the space as big as possible (16:9 each). */
+function fitTiles() {
+  const box = document.querySelector("#voice-stage .voice-tiles");
+  if (!box || box.classList.contains("strip")) return;
+  const n = box.children.length;
+  const w = box.clientWidth;
+  const h = box.clientHeight;
+  if (!n || !w || !h) return;
+  const gap = 8;
+  let best = 0;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const tw = Math.min((w - gap * (cols - 1)) / cols, ((h - gap * (rows - 1)) / rows) * (16 / 9));
+    best = Math.max(best, tw);
+  }
+  box.style.setProperty("--tile-w", Math.floor(Math.max(120, Math.min(best, 720))) + "px");
+}
+new ResizeObserver(() => fitTiles()).observe($("voice-stage"));
+document.addEventListener("fullscreenchange", () => {
+  if (document.fullscreenElement === $("voice-stage") || !document.fullscreenElement) renderVoiceStage();
+});
+
+/** The chat beside a voice channel: open unless you closed it. */
+function voiceChatOpen() {
+  // Until you choose, it opens when there is room for it beside everyone.
+  return prefs.voiceChatOpen ?? window.innerWidth >= 1100;
+}
+prefs.voiceChatOpen = loadJson("voiceChatOpen", null);
+$("voice-chat-btn").addEventListener("click", () => {
+  prefs.voiceChatOpen = !voiceChatOpen();
+  save("voiceChatOpen", JSON.stringify(prefs.voiceChatOpen));
+  $("voice-chat-dot").hidden = true;
+  renderVoiceStage();
+  if (prefs.voiceChatOpen) {
+    renderMessages(false);
+    $("chat-input").focus();
+  }
+});
 
 // ---------- moderating voice ----------
 //
