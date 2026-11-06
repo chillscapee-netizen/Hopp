@@ -3601,7 +3601,13 @@ function renderProfilePreview() {
   const name = state.account?.name ?? "?";
   const picture = state.me?.avatar ?? null;
   $("profile-banner").style.setProperty("--hue", hue(name));
-  bannerFrom(picture);
+  if (state.me?.banner) paintBanner($("profile-banner"), state.me.banner, name);
+  else {
+    $("profile-banner").style.removeProperty("background-image");
+    bannerFor = undefined;
+    bannerFrom(picture);
+  }
+  renderBannerColors();
   $("profile-avatar-slot").replaceChildren(avatar(name, "s80", undefined, picture));
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
@@ -4282,7 +4288,11 @@ let cardUser = null;
 
 function openUserCard(user, anchor) {
   cardUser = user;
-  $("user-card-banner").style.setProperty("--hue", hue(user.name));
+  paintBanner($("user-card-banner"), bannerOf(keyOf(user)), user.name);
+  const k = keyOf(user);
+  if (k && k !== state.account?.publicKey && (!profiles.get(k) || Date.now() - profiles.get(k).at > 30_000)) {
+    Promise.resolve(loadProfile(k)).then(() => cardUser === user && !$("user-card").hidden && openUserCard(user, anchor));
+  }
   $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80", undefined, pictureFor(keyOf(user))));
   $("user-card-name").textContent = user.name;
   const sub = $("user-card-sub");
@@ -5928,17 +5938,18 @@ function pictureFor(key) {
 
 function loadProfile(key) {
   const p = profiles.get(key);
-  if (p?.loading || !/^[0-9a-f]{64}$/.test(key)) return;
-  profiles.set(key, { ...(p ?? { avatar: null }), loading: true, at: Date.now() });
-  invoke("fetch_profile", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), key }).then(
+  if (p?.loading || !/^[0-9a-f]{64}$/.test(key)) return p?.loading || null;
+  const loading = invoke("fetch_profile", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), key }).then(
     (r) => {
       const changed = (p?.avatar ?? null) !== (r.avatar ?? null) || p?.display_name !== r.display_name;
       const statusChanged = JSON.stringify(p?.custom_status ?? null) !== JSON.stringify(r.custom_status ?? null);
-      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, bio: r.bio ?? "", custom_status: r.custom_status ?? null, at: Date.now() });
+      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, bio: r.bio ?? "", custom_status: r.custom_status ?? null, banner: r.banner ?? null, at: Date.now() });
       if (changed || statusChanged) renderPictures();
     },
     () => profiles.set(key, { ...(p ?? { avatar: null }), loading: false, at: Date.now() }),
   );
+  profiles.set(key, { ...(p ?? { avatar: null }), loading, at: Date.now() });
+  return loading;
 }
 
 var picturesTimer = 0;
@@ -11963,3 +11974,93 @@ async function changeNickname(u) {
     toast(friendlyError(err), true);
   }
 }
+
+// ---------- profile banner ----------
+//
+// The top of your profile card: one of a few colours, or a picture of your own.
+
+var BANNER_COLORS = ["#5b6ee1", "#2f9e7a", "#d9534f", "#e6883a", "#c9a227", "#9b59b6", "#d6409f", "#4a4a52"];
+
+function bannerOf(key) {
+  if (!key) return null;
+  if (key === state.account?.publicKey) return state.me?.banner ?? null;
+  return profiles.get(key)?.banner ?? null;
+}
+
+/** Paints a banner: its picture, its colour, or (none) a soft colour from the name. */
+function paintBanner(node, banner, name) {
+  node.style.setProperty("--hue", hue(name ?? ""));
+  for (const p of ["background", "background-image", "background-color", "--banner"]) node.style.removeProperty(p);
+  if (!banner) return;
+  if (banner.startsWith("#")) node.style.backgroundColor = banner;
+  else {
+    node.style.backgroundColor = "var(--elev)";
+    node.style.backgroundImage = 'url("' + banner + '")';
+    node.style.backgroundSize = "cover";
+    node.style.backgroundPosition = "center";
+  }
+}
+
+function renderBannerColors() {
+  const current = state.me?.banner ?? null;
+  $("banner-colors").replaceChildren(...BANNER_COLORS.map((c) => {
+    const b = el("button", "banner-swatch" + (c === current ? " active" : ""));
+    b.type = "button";
+    b.style.background = c;
+    b.setAttribute("aria-label", "Banner colour " + c);
+    b.addEventListener("click", () => setBanner(c));
+    return b;
+  }));
+  $("banner-remove").hidden = !current;
+}
+
+async function setBanner(banner) {
+  try {
+    await accountSend({ type: "set_profile", banner });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+/** A banner picture: cropped to a wide strip and made small. */
+function shrinkBanner(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      for (const [w, q] of [[600, 0.82], [600, 0.68], [480, 0.65], [360, 0.6]]) {
+        const h = Math.round(w * 0.35);
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        // Crop the middle to the strip's shape.
+        const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+        const sw = w / scale;
+        const sh = h / scale;
+        c.getContext("2d").drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, 0, 0, w, h);
+        let data = c.toDataURL("image/webp", q);
+        if (!data.startsWith("data:image/webp")) data = c.toDataURL("image/jpeg", q);
+        if (data.length <= 78_000) return resolve(data);
+      }
+      reject(new Error("That picture is too large. Try a smaller one."));
+    };
+    const unreadable = () => reject(new Error("That file isn't a picture Hopp can read. Use PNG, JPEG or WebP."));
+    img.onerror = unreadable;
+    const reader = new FileReader();
+    reader.onload = () => (img.src = reader.result);
+    reader.onerror = unreadable;
+    reader.readAsDataURL(file);
+  });
+}
+
+$("banner-upload").addEventListener("click", () => $("banner-file").click());
+$("banner-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    await setBanner(await shrinkBanner(file));
+  } catch (err) {
+    if (err instanceof Error) toast(err.message, true);
+  }
+});
+$("banner-remove").addEventListener("click", () => setBanner(null));

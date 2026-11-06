@@ -254,6 +254,12 @@ test("profiles: name, bio and picture reach friends", async () => {
   assert.equal(pub.custom_status.text, "Playing Valorant");
   a.d.send({ type: "set_profile", custom_status: { text: "x".repeat(81), emoji: null, until: null } });
   assert.match((await a.d.waitFor((m) => m.type === "error")).message, /status/);
+  // A banner: a colour or a small picture, in the public profile; anything else refused.
+  a.d.send({ type: "set_profile", banner: "#2f9e7a" });
+  await a.d.waitFor((m) => m.type === "profile" && m.me.banner === "#2f9e7a");
+  assert.equal((await (await fetch(`${HTTP}/profiles/${a.key.pub}`)).json()).banner, "#2f9e7a");
+  a.d.send({ type: "set_profile", banner: "url(javascript:alert(1))" });
+  assert.match((await a.d.waitFor((m) => m.type === "error" && /banner/.test(m.message))).message, /banner/);
   a.d.send({ type: "set_profile", custom_status: null });
   await b.d.waitFor((m) => m.type === "friend" && !m.friend.custom_status);
   a.d.close();

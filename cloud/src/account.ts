@@ -22,6 +22,7 @@ const MAX_ACTIVITY = 80;
 const MAX_STATUS = 80;
 /** Small pictures only: 128 px WebP is about 10 KB. */
 const MAX_AVATAR = 40_000;
+const MAX_BANNER = 80_000;
 const MAX_SYNC = 262_144;
 const FRIEND_REQUESTS_PER_DAY = 30;
 /** A username given up stays reserved for its old owner this long, so it can't be hijacked. */
@@ -63,6 +64,8 @@ export interface PublicProfile {
   avatar: string | null;
   bio: string;
   custom_status?: CustomStatus | null;
+  /** The top of your profile card: a colour ("#rrggbb") or a small picture. */
+  banner?: string | null;
 }
 
 /** What a friend sees of you right now. "offline" also covers invisible. */
@@ -332,6 +335,7 @@ export class StromAccount extends DurableObject<Env> {
       avatar: this.meta("avatar"),
       bio: this.meta("bio") ?? "",
       custom_status: this.customStatus(),
+      banner: this.meta("banner"),
     };
   }
 
@@ -527,6 +531,12 @@ export class StromAccount extends DurableObject<Env> {
             if (until !== null && (!Number.isFinite(until) || until < Date.now() || until > Date.now() + 31 * 86_400_000)) return error("That time doesn't work.");
             this.setMeta("custom_status", JSON.stringify({ text, emoji, until }));
           }
+        }
+        if (msg.banner !== undefined) {
+          const b = msg.banner;
+          if (b === null) this.setMeta("banner", null);
+          else if (typeof b === "string" && (/^#[0-9a-f]{6}$/i.test(b) || (b.length <= MAX_BANNER && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(b)))) this.setMeta("banner", b);
+          else return error("That banner can't be used. Try a smaller picture.");
         }
         if (msg.avatar !== undefined) {
           if (msg.avatar === null) this.setMeta("avatar", null);

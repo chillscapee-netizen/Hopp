@@ -3530,3 +3530,11 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .member-sub { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .member-sub > .ellipsis { flex: 1; min-width: 0; }
 .user-card-realname { margin-top: -2px; color: var(--muted); font-size: 13px; }
+
+/* Profile banner. */
+.user-card-banner, .account-card .profile-banner { background-size: cover; background-position: center; }
+.banner-colors { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.banner-swatch { width: 26px; height: 26px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; transition: transform 100ms; }
+.banner-swatch:hover { transform: scale(1.08); }
+.banner-swatch.active { border-color: var(--text); }
+.banner-row { align-items: flex-start; }
