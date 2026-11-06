@@ -1377,6 +1377,7 @@ function goHome() {
 
 function removeServer(server) {
   if (server.id === state.activeId) disconnect();
+  invoke("forget_server", { address: endpoint(server) }).catch(() => {});
   // Remembered, so another device doesn't bring it back.
   prefs.removedServers[server.address] = Date.now();
   save("removedServers", JSON.stringify(prefs.removedServers));
@@ -1580,7 +1581,7 @@ async function connectTo(server, create, reconnecting) {
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
   rememberServerView();
-  if (state.activeId) await call("disconnect");
+  // The server we leave stays connected in the background (connect parks it), so no disconnect here.
   state.activeId = null;
   state.roster = null;
   state.kicked = null;
@@ -4491,6 +4492,7 @@ listen("account", (e) => {
   if (onDmEvent(m)) return;
   switch (m.type) {
     case "welcome":
+      warmServersSoon();
       state.me = m.me;
       state.friends = new Map(m.friends.map((f) => [f.key, f]));
       state.conversations = new Map((m.conversations ?? []).map((c) => [c.peer, { last_at: c.last_at, last_read: c.last_read }]));
@@ -11180,4 +11182,49 @@ $("bio-edit").addEventListener("click", async () => {
   const text = await askText({ title: "About me", label: "About me", value: state.me?.bio ?? "", hint: "Up to 190 characters. Friends and people in your servers see it on your card." });
   if (text === null || text === undefined) return;
   accountSend({ type: "set_profile", bio: text.trim() }).catch((err) => toast(friendlyError(err), true));
+});
+
+// ---------- servers kept connected ----------
+//
+// Like Discord, Hopp stays connected to your servers while you look at another one, so
+// switching is instant: no logging in again, just the server's channels sent once more. A
+// server waiting in the background still marks channels unread and pings you.
+
+var warmStarted = false;
+
+/** A moment after login, connects to your other servers in the background, one at a time. */
+function warmServersSoon() {
+  if (warmStarted) return;
+  warmStarted = true;
+  setTimeout(async () => {
+    for (const s of [...prefs.servers]) {
+      if (!state.account || s.invite || s.id === state.activeId || s.id === state.connectingId) continue;
+      await invoke("warm", { address: endpoint(s) }).catch(() => {});
+    }
+  }, 2500);
+}
+
+listen("background-chat", (e) => {
+  const { address, message: m, channel_name, voice, roles, pings } = e.payload;
+  const server = prefs.servers.find((s) => endpoint(s) === address);
+  if (!server || voice || server.id === state.activeId) return;
+  const me = state.account?.publicKey;
+  const mention =
+    m.text.includes("<@" + me + ">") ||
+    m.reply?.author_key === me ||
+    [...m.text.matchAll(/<@&(\d+)>/g)].some(([, id]) => (roles ?? []).includes(Number(id))) ||
+    (!!pings && CROWD_WORD.test(m.text) && !crowdQuiet(server.address));
+  const k = readKey(server.address, m.channel);
+  const cur = state.reads.get(k) ?? { server: server.address, channel: m.channel, read_id: 0, last_id: 0, mentions: 0 };
+  state.reads.set(k, cur);
+  if (m.id <= cur.last_id) return;
+  cur.last_id = m.id;
+  if (m.author_key === me) {
+    cur.read_id = m.id;
+    cur.mentions = 0;
+  } else {
+    if (mention && m.id > cur.read_id) cur.mentions += 1;
+    notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channel_name ?? "", text: previewText(m.text), mention });
+  }
+  renderUnread();
 });

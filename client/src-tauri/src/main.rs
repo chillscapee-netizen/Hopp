@@ -17,11 +17,17 @@ mod shell;
 
 const HELLO_VALID_FOR: Duration = Duration::from_secs(180);
 use strom_shared::{ChannelId, ChannelKind, ClientMsg, PeerEndpoint, ServerMsg, SessionId};
-use strom_voice::{AudioSettings, Control, DeviceChoice, DeviceList, Identity, MicTest, Roster, StoredIdentity, TransmitMode, VoiceEngine};
+use strom_voice::{AudioSettings, Control, DeviceChoice, DeviceList, Identity, MicTest, Roster, Session, StoredIdentity, TransmitMode, VoiceEngine};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct Connection {
     generation: u64,
+    /// The server's address, as the app connects to it.
+    address: String,
+    /// Kept up to date by the connection's task, also while it waits in the background.
+    roster: Arc<Mutex<Roster>>,
+    /// The server can send its channels again when we come back (so it can wait in the background).
+    resync: bool,
     control: Control,
     task: tauri::async_runtime::JoinHandle<()>,
     /// `None` on cloud servers, which have no UDP voice relay; voice goes peer to peer there.
@@ -43,6 +49,8 @@ pub struct AppState {
     identity_path: OnceLock<PathBuf>,
     pub identity: Mutex<Option<Identity>>,
     conn: Mutex<Option<Connection>>,
+    /// Servers we're not looking at, still connected, so switching to them is instant.
+    parked: Mutex<HashMap<String, Connection>>,
     generation: Mutex<u64>,
     devices: Mutex<DeviceChoice>,
     /// Shared with the voice engine and the mic test; changes apply at once, in or out of voice.
@@ -194,6 +202,9 @@ async fn login(state: State<'_, AppState>, password: String, remember_me: bool) 
 #[tauri::command]
 fn logout(app: AppHandle, state: State<'_, AppState>) {
     disconnect(state.clone());
+    for (_, c) in state.parked.lock().unwrap().drain() {
+        c.task.abort();
+    }
     app.state::<account::Account>().stop();
     if let Some(identity) = state.identity.lock().unwrap().take() {
         remember(&identity, false);
@@ -405,23 +416,58 @@ async fn connect(
     invite: Option<String>,
     create: Option<String>,
 ) -> CmdResult<Roster> {
-    // Taking a generation number first means a newer connect, or a disconnect,
-    // started while this one is still logging in makes it give up.
-    disconnect(state.clone());
+    // The server we're leaving stays connected in the background (when it can), so coming
+    // back is instant. Taking a generation number after means a newer connect, or a
+    // disconnect, started while this one is still logging in makes it give up.
+    park_current(&state);
     let generation = *state.generation.lock().unwrap();
+    if invite.is_none() && create.is_none() {
+        let waiting = state.parked.lock().unwrap().remove(&address);
+        if let Some(c) = waiting {
+            // Back in view: no login, just this server's channels sent again.
+            state.audio.clear_user_volumes();
+            c.control.send(ClientMsg::Resync);
+            c.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
+            // In view first, then the roster: nothing that arrives in between is missed.
+            let shared = c.roster.clone();
+            *state.conn.lock().unwrap() = Some(c);
+            let roster = shared.lock().unwrap().clone();
+            return Ok(roster);
+        }
+    }
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
-    let mut session = strom_voice::connect(&address, &identity, invite.as_deref(), create.as_deref()).await.map_err(|e| e.to_string())?;
+    let session = strom_voice::connect(&address, &identity, invite.as_deref(), create.as_deref()).await.map_err(|e| e.to_string())?;
     if *state.generation.lock().unwrap() != generation {
         return Err("superseded".into());
     }
     state.audio.clear_user_volumes();
-
+    // Warmed up meanwhile in the background: this one wins.
+    if let Some(old) = state.parked.lock().unwrap().remove(&address) {
+        old.task.abort();
+    }
+    session.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
     let initial = session.roster.clone();
+    let c = start_connection(&app, session, address, generation);
+    *state.conn.lock().unwrap() = Some(c);
+    Ok(initial)
+}
+
+/// Starts a connection's task: it shows the server while it's the one in view, and keeps its
+/// roster (and unread news) going while it waits in the background.
+fn start_connection(app: &AppHandle, mut session: Session, address: String, generation: u64) -> Connection {
     let me = session.roster.me;
+    let resync = session.roster.features.iter().any(|f| f == "resync");
+    let shared = Arc::new(Mutex::new(session.roster.clone()));
+    let roster = shared.clone();
     let ui = app.clone();
+    let here = address.clone();
     let task = tauri::async_runtime::spawn(async move {
-        let mut roster = session.roster;
         while let Some(msg) = session.events.recv().await {
+            let active = ui.state::<AppState>().conn.lock().unwrap().as_ref().is_some_and(|c| c.generation == generation);
+            if !active {
+                background(&ui, &here, &roster, &msg);
+                continue;
+            }
             match &msg {
                 ServerMsg::Error { message } => {
                     let _ = ui.emit("server-error", message);
@@ -521,14 +567,19 @@ async fn connect(
                             }
                         }
                     }
-                    roster.apply(&msg);
-                    forget_departed_peers(&ui, generation, &roster);
-                    let _ = ui.emit("roster", &roster);
+                    let snapshot = {
+                        let mut r = roster.lock().unwrap();
+                        r.apply(&msg);
+                        r.clone()
+                    };
+                    forget_departed_peers(&ui, generation, &snapshot);
+                    let _ = ui.emit("roster", &snapshot);
                 }
             }
         }
         // The server went away: tear down this connection unless it was already replaced.
         let state = ui.state::<AppState>();
+        state.parked.lock().unwrap().retain(|_, c| c.generation != generation);
         let mut conn = state.conn.lock().unwrap();
         if conn.as_ref().is_some_and(|c| c.generation == generation) {
             *conn = None;
@@ -536,9 +587,11 @@ async fn connect(
         }
     });
 
-    session.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
-    *state.conn.lock().unwrap() = Some(Connection {
+    Connection {
         generation,
+        address,
+        roster: shared,
+        resync,
         control: session.control,
         task,
         udp_addr: session.udp_addr,
@@ -547,8 +600,92 @@ async fn connect(
         engine: None,
         voice_peers: HashMap::new(),
         voice_attempt: 0,
-    });
-    Ok(initial)
+    }
+}
+
+/// A server waiting in the background: its roster stays current, and new messages still
+/// mark it unread (and ping you), as if you were looking.
+fn background(ui: &AppHandle, address: &str, roster: &Arc<Mutex<Roster>>, msg: &ServerMsg) {
+    match msg {
+        ServerMsg::Chat { message } => {
+            let r = roster.lock().unwrap();
+            let channel = r.channels.iter().find(|c| c.id == message.channel);
+            let my_roles = r.users.iter().find(|u| u.session_id == r.me).map(|u| u.roles.clone()).unwrap_or_default();
+            let _ = ui.emit(
+                "background-chat",
+                serde_json::json!({
+                    "address": address,
+                    "message": message,
+                    "channel_name": channel.map(|c| c.name.clone()),
+                    "voice": channel.is_some_and(|c| c.kind == ChannelKind::Voice),
+                    "roles": my_roles,
+                    "pings": r.features.iter().any(|f| f == "pings"),
+                }),
+            );
+        }
+        // Voice, typing, screens and answers are for the server in view.
+        ServerMsg::VoiceSession { .. } | ServerMsg::VoicePeer { .. } | ServerMsg::Typing { .. } | ServerMsg::ScreenSignal { .. } => {}
+        _ => roster.lock().unwrap().apply(msg),
+    }
+}
+
+/// Moves the server in view to the background, connected, so coming back is instant. Voice
+/// there ends, as leaving a server always did. Servers that can't resend their channels
+/// (older ones) are simply disconnected.
+fn park_current(state: &AppState) {
+    *state.generation.lock().unwrap() += 1;
+    let Some(mut c) = state.conn.lock().unwrap().take() else { return };
+    if !c.resync {
+        c.task.abort();
+        return;
+    }
+    let in_voice = {
+        let r = c.roster.lock().unwrap();
+        r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some())
+    };
+    if in_voice || c.engine.is_some() {
+        c.control.send(ClientMsg::LeaveVoice);
+        c.engine = None;
+        c.voice_peers.clear();
+        c.voice_attempt += 1;
+    }
+    let old = state.parked.lock().unwrap().insert(c.address.clone(), c);
+    if let Some(old) = old {
+        old.task.abort();
+    }
+}
+
+/// Connects to a server in the background, so the first visit is instant too.
+#[tauri::command]
+async fn warm(app: AppHandle, state: State<'_, AppState>, address: String) -> CmdResult {
+    let known = |state: &AppState| {
+        state.parked.lock().unwrap().contains_key(&address) || state.conn.lock().unwrap().as_ref().is_some_and(|c| c.address == address)
+    };
+    if known(&state) {
+        return Ok(());
+    }
+    let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
+    let session = strom_voice::connect(&address, &identity, None, None).await.map_err(|e| e.to_string())?;
+    // Older servers can't resend their channels; and maybe you opened it meanwhile.
+    if !session.roster.features.iter().any(|f| f == "resync") || known(&state) {
+        return Ok(());
+    }
+    session.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
+    // Its own number, never one a connect in view uses.
+    let generation = WARM_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let c = start_connection(&app, session, address.clone(), generation);
+    state.parked.lock().unwrap().insert(address, c);
+    Ok(())
+}
+
+static WARM_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 48);
+
+/// A server left, deleted or removed from the list: close its background connection.
+#[tauri::command]
+fn forget_server(state: State<'_, AppState>, address: String) {
+    if let Some(c) = state.parked.lock().unwrap().remove(&address) {
+        c.task.abort();
+    }
 }
 
 #[tauri::command]
@@ -1474,6 +1611,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            warm,
+            forget_server,
             account_status,
             create_account,
             login,

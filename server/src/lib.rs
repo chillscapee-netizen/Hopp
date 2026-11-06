@@ -417,7 +417,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 server_name: st.config.name.clone(),
                 server_icon: st.config.icon.clone(),
                 pictures_off: false,
-                features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into(), "voice-settings".into()],
+                features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into(), "voice-settings".into(), "resync".into()],
                 roles: vec![],
                 session_id,
                 udp_token: token,
@@ -854,6 +854,12 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 }
                 ClientMsg::Ping => {
                     let _ = tx.send(ServerMsg::Pong);
+                }
+                ClientMsg::Resync => {
+                    for ch in &st.config.channels {
+                        let messages = st.history.get(&ch.id).map(|h| h.iter().cloned().collect()).unwrap_or_default();
+                        let _ = tx.send(ServerMsg::ChatHistory { channel: ch.id, messages });
+                    }
                 }
                 // Voice goes through our UDP relay; direct endpoints are for cloud servers.
                 ClientMsg::VoiceEndpoint { .. } => {}

@@ -795,3 +795,18 @@ test("roles: colours and levels, and private channels nobody else sees", async (
   assert.deepEqual((await carol.waitFor((m) => m.type === "search_results")).messages, []);
   for (const c of [owner, bob, carol]) c.close();
 });
+
+test("resync: a connection kept in the background gets its channels again", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("resync"));
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+  owner.send({ type: "send_chat", channel: general, text: "while you were away" });
+  await bob.waitFor((m) => m.type === "chat" && m.message.text === "while you were away");
+  bob.inbox = [];
+  bob.send({ type: "resync" });
+  const again = await bob.waitFor((m) => m.type === "chat_history" && m.channel === general);
+  assert.ok(again.messages.some((m) => m.text === "while you were away"));
+  owner.close();
+  bob.close();
+});

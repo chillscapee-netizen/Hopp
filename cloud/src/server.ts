@@ -744,7 +744,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync"],
       roles: this.customRoles(),
     });
     for (const ch of channels) {
@@ -1316,6 +1316,11 @@ export class StromServer extends DurableObject<Env> {
           });
         }
         this.audit(user.name, until ? "timeout" : "untimeout", ts.user!.name, until ? durationText(minutes) : null);
+        return;
+      }
+      case "resync": {
+        // A connection kept open in the background comes back into view: its channels' news.
+        for (const ch of this.channelsFor(s.key)) this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
         return;
       }
       case "get_audit_log": {

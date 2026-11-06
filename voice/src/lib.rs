@@ -13,7 +13,7 @@ pub mod settings;
 pub mod soundboard;
 
 pub use account::{connect_account, AccountLink};
-pub use control::{connect, parse_invite, Control, Roster, INVITE_SCHEME};
+pub use control::{connect, parse_invite, Control, Roster, Session, INVITE_SCHEME};
 pub use engine::{list_devices, play_test_sound, DeviceChoice, DeviceList, EngineEvent, MicTest, VoiceEngine};
 pub use settings::{AudioSettings, TransmitMode};
 pub use identity::{Identity, StoredIdentity};

@@ -426,6 +426,9 @@ pub enum ClientMsg {
     TransferOwnership { public_key: String },
     /// Admins: answered with `Members`.
     GetMembers,
+    /// A connection kept open in the background comes back into view: send the channels'
+    /// recent messages again (answered with `ChatHistory` for each channel you can see).
+    Resync,
     Ping,
 }
 
