@@ -8081,8 +8081,18 @@ invoke("app_version").then((v) => {
   updates.version = v ?? "";
   renderUpdates();
 }).catch(() => {});
-setTimeout(checkForUpdate, 8000);
-setInterval(checkForUpdate, 4 * 3600 * 1000);
+// Looked for often, so the green arrow shows by itself: soon after start, every 15 minutes,
+// and when you come back to Hopp (at most every 2 minutes). The update file is a plain
+// static file on Hopp Cloud, so this costs nothing against its daily limit.
+var lastUpdateCheck = 0;
+function checkSoon() {
+  if (Date.now() - lastUpdateCheck < 2 * 60_000) return;
+  lastUpdateCheck = Date.now();
+  checkForUpdate();
+}
+setTimeout(checkSoon, 8000);
+setInterval(checkSoon, 15 * 60_000);
+window.addEventListener("focus", checkSoon);
 
 /** A message that is nothing but one invite link. */
 function isInviteOnly(text) {

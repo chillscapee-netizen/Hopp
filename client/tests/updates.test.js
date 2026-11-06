@@ -45,5 +45,13 @@
   commands.check_update = () => { throw "network down"; };
   await checkForUpdate(true);
   check("a failed check you asked for says so", $("version-sub").textContent.length > 0 && updates.status === "failed");
+  // Coming back to Hopp looks for one by itself (not more than every couple of minutes).
+  let looked = 0;
+  commands.check_update = () => { looked++; return null; };
+  lastUpdateCheck = 0;
+  window.dispatchEvent(new Event("focus"));
+  window.dispatchEvent(new Event("focus"));
+  await wait(50);
+  check("coming back to Hopp looks for an update, once", looked === 1);
   report();
 })();
