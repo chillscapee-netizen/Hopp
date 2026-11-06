@@ -15,7 +15,7 @@ function el(tag, cls, text) {
 (async () => {
   let notes = {};
   try {
-    notes = await (await fetch("/whats-new.json")).json();
+    notes = await (await fetch("whats-new.json")).json();
   } catch {
     return;
   }

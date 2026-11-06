@@ -5,12 +5,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 const out = fileURLToPath(new URL("../public/", import.meta.url));
 const parts = fileURLToPath(new URL("../site/", import.meta.url));
-const DL = "/download/Hopp-setup.exe";
+const DL = "download/Hopp-setup.exe";
 const ARROW = `<svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>`;
 const PAGES = [["features", "Features"], ["limits", "Limits"], ["hopp-id", "Hopp ID"], ["about", "About"], ["privacy", "Privacy"], ["help", "Help"], ["whats-new", "What's new"]];
 
 function page(file, current, title, description, body) {
-  const nav = PAGES.map(([f, label]) => `<a href="/${f}.html"${f === current ? ' class="here"' : ""}>${label}</a>`).join("");
+  const nav = PAGES.map(([f, label]) => `<a href="${f}.html"${f === current ? ' class="here"' : ""}>${label}</a>`).join("");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -21,14 +21,14 @@ function page(file, current, title, description, body) {
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
 <meta name="theme-color" content="#0e0e10">
-<link rel="icon" href="/site/logo.svg">
-<link rel="stylesheet" href="/site/site.css">
-<link rel="stylesheet" href="/site/pages.css">
+<link rel="icon" href="site/logo.svg">
+<link rel="stylesheet" href="site/site.css">
+<link rel="stylesheet" href="site/pages.css">
 </head>
 <body>
 <div class="sky"></div>
 <header class="nav">
-  <a class="brand" href="/"><img src="/site/logo.svg" alt=""><span>Hopp</span><span class="beta">Beta</span></a>
+  <a class="brand" href="index.html"><img src="site/logo.svg" alt=""><span>Hopp</span><span class="beta">Beta</span></a>
   <nav>${nav}</nav>
   <a class="btn small" href="${DL}">Download</a>
 </header>
@@ -36,11 +36,11 @@ function page(file, current, title, description, body) {
 ${body}
 </main>
 <footer class="foot">
-  <div class="foot-brand"><a class="brand" href="/"><img src="/site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
-  <div><h4>Hopp</h4><a href="/features.html">Features</a><a href="/whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
-  <div><h4>Learn more</h4><a href="/about.html">About Hopp</a><a href="/limits.html">Limits</a><a href="/hopp-id.html">Your Hopp ID</a><a href="/privacy.html">Privacy &amp; safety</a><a href="/help.html">Help</a></div>
+  <div class="foot-brand"><a class="brand" href="index.html"><img src="site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
+  <div><h4>Hopp</h4><a href="features.html">Features</a><a href="whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
+  <div><h4>Learn more</h4><a href="about.html">About Hopp</a><a href="limits.html">Limits</a><a href="hopp-id.html">Your Hopp ID</a><a href="privacy.html">Privacy &amp; safety</a><a href="help.html">Help</a></div>
 </footer>
-<script src="/site/site.js"></script>
+<script src="site/site.js"></script>
 </body>
 </html>
 `;
@@ -66,12 +66,12 @@ const limitRows = () => LIMITS.map(([v, w, why]) => `<div class="limit"><span cl
 const home = `
 <section class="hero">
   <div class="hero-words">
-    <a class="beta-pill" href="/about.html#beta"><span class="dot"></span>Hopp is in beta: free to use, still growing. <b>What that means</b></a>
+    <a class="beta-pill" href="about.html#beta"><span class="dot"></span>Hopp is in beta: free to use, still growing. <b>What that means</b></a>
     <h1>Hang out with your friends.</h1>
     <p class="lead">Talk in voice channels, call each other, share your screen and keep the chat going. Hopp is free, all of it, with no ads and no tracking.</p>
     <div class="actions">
       <a class="btn" href="${DL}">${ARROW}Download for Windows</a>
-      <span class="meta"><span class="version-line">Free</span><br>About 5 MB · Windows 10 and 11 · <a href="/limits.html">Limits</a></span>
+      <span class="meta"><span class="version-line">Free</span><br>About 5 MB · Windows 10 and 11 · <a href="limits.html">Limits</a></span>
     </div>
   </div>
   ${APP}
@@ -80,14 +80,14 @@ const home = `
 <section class="overview">
   <h2 class="section-title">Everything you need to hang out</h2>
   <div class="blocks">
-    <a href="/features.html#servers" class="block"><span class="shape s-servers"><i></i><i></i><i></i></span><h3>Servers</h3><p>A place for your group, with text channels to write in and voice channels to talk in.</p></a>
-    <a href="/features.html#voice" class="block"><span class="shape s-voice"><i></i><i></i><i></i><i></i></span><h3>Voice channels</h3><p>One click and you're talking. Everyone's a tile, cameras play right in them.</p></a>
-    <a href="/features.html#calls" class="block"><span class="shape s-call"><i></i><i></i></span><h3>Calls</h3><p>Call a friend or a whole group, with your camera on if you like.</p></a>
-    <a href="/features.html#screen" class="block"><span class="shape s-screen"><i></i></span><h3>Screen sharing</h3><p>Show a game or a video in full quality. Free, no catch.</p></a>
-    <a href="/features.html#chat" class="block"><span class="shape s-chat"><i></i><i></i><i></i></span><h3>Chat</h3><p>Replies, reactions, GIFs, pictures, link previews, pins and search.</p></a>
-    <a href="/features.html#friends" class="block"><span class="shape s-friends"><i></i><i></i></span><h3>Friends</h3><p>Messages and groups between friends, end-to-end encrypted.</p></a>
-    <a href="/features.html#roles" class="block"><span class="shape s-roles"><i></i><i></i><i></i></span><h3>Roles and moderation</h3><p>Colours, private channels, timeouts, slowmode and an audit log.</p></a>
-    <a href="/features.html#yours" class="block"><span class="shape s-yours"><i></i><i></i><i></i></span><h3>Make it yours</h3><p>Themes, a banner, a custom status, nicknames and Hopp's own sounds.</p></a>
+    <a href="features.html#servers" class="block"><span class="shape s-servers"><i></i><i></i><i></i></span><h3>Servers</h3><p>A place for your group, with text channels to write in and voice channels to talk in.</p></a>
+    <a href="features.html#voice" class="block"><span class="shape s-voice"><i></i><i></i><i></i><i></i></span><h3>Voice channels</h3><p>One click and you're talking. Everyone's a tile, cameras play right in them.</p></a>
+    <a href="features.html#calls" class="block"><span class="shape s-call"><i></i><i></i></span><h3>Calls</h3><p>Call a friend or a whole group, with your camera on if you like.</p></a>
+    <a href="features.html#screen" class="block"><span class="shape s-screen"><i></i></span><h3>Screen sharing</h3><p>Show a game or a video in full quality. Free, no catch.</p></a>
+    <a href="features.html#chat" class="block"><span class="shape s-chat"><i></i><i></i><i></i></span><h3>Chat</h3><p>Replies, reactions, GIFs, pictures, link previews, pins and search.</p></a>
+    <a href="features.html#friends" class="block"><span class="shape s-friends"><i></i><i></i></span><h3>Friends</h3><p>Messages and groups between friends, end-to-end encrypted.</p></a>
+    <a href="features.html#roles" class="block"><span class="shape s-roles"><i></i><i></i><i></i></span><h3>Roles and moderation</h3><p>Colours, private channels, timeouts, slowmode and an audit log.</p></a>
+    <a href="features.html#yours" class="block"><span class="shape s-yours"><i></i><i></i><i></i></span><h3>Make it yours</h3><p>Themes, a banner, a custom status, nicknames and Hopp's own sounds.</p></a>
   </div>
 </section>
 
@@ -96,7 +96,7 @@ const home = `
     <span class="kicker">Limits</span>
     <h2 class="section-title">Free, with a few limits</h2>
     <p>Hopp Cloud runs on a free plan. That keeps Hopp free with no ads, but a free plan only does so much. These are the limits, out in the open.</p>
-    <a class="more-link" href="/limits.html">Why each one is there</a>
+    <a class="more-link" href="limits.html">Why each one is there</a>
   </div>
   <div class="limit-chips">
     ${LIMITS.map(([v, w]) => `<div><strong>${v}</strong><span>${w}</span></div>`).join("\n    ")}
@@ -105,15 +105,15 @@ const home = `
 
 <section class="rows">
   <div class="row">
-    <div class="words"><span class="kicker">Voice</span><h2>Jump into a voice channel.</h2><p>One click and you're in. Everyone shows up as a tile, the one talking lights up, and cameras play right in place. Every voice channel has its own chat for links and clips.</p><a class="more-link" href="/features.html#voice">More about voice</a></div>
+    <div class="words"><span class="kicker">Voice</span><h2>Jump into a voice channel.</h2><p>One click and you're in. Everyone shows up as a tile, the one talking lights up, and cameras play right in place. Every voice channel has its own chat for links and clips.</p><a class="more-link" href="features.html#voice">More about voice</a></div>
     <div class="pic voice" aria-hidden="true"><div class="t" data-who="0"><i class="p1"></i></div><div class="t" data-who="1"><i class="p2"></i></div><div class="t" data-who="2"><i class="p3"></i></div><div class="t cam"></div><div class="t" data-who="3"><i class="p4"></i></div><div class="t" data-who="4"><i class="p5"></i></div></div>
   </div>
   <div class="row flip">
-    <div class="words"><span class="kicker">Screen sharing</span><h2>Share your screen. Free.</h2><p>Show a game, a video or whatever you're working on, in full quality, to a voice channel or straight to a friend in a call. Pop it out or watch it full screen.</p><a class="more-link" href="/features.html#screen">More about sharing</a></div>
+    <div class="words"><span class="kicker">Screen sharing</span><h2>Share your screen. Free.</h2><p>Show a game, a video or whatever you're working on, in full quality, to a voice channel or straight to a friend in a call. Pop it out or watch it full screen.</p><a class="more-link" href="features.html#screen">More about sharing</a></div>
     <div class="pic screen" aria-hidden="true"><div class="shared"><div class="fake"><span class="fs"></span><span class="b1"></span><span class="b2"></span><span class="sq"></span></div><svg class="cursor" viewBox="0 0 24 24"><path d="M5 3l13 7-6 1.5L9 18z"/></svg><span class="live">LIVE</span></div><div class="people"><i class="p1"></i><i class="p2 talk"></i><i class="p4"></i></div></div>
   </div>
   <div class="row">
-    <div class="words"><span class="kicker">Your look</span><h2>Make it look like yours.</h2><p>Calm greys or colour themes that flow across the whole window, or mix your own. Add a banner, a status and a nickname for each server.</p><a class="more-link" href="/features.html#yours">More ways to make it yours</a></div>
+    <div class="words"><span class="kicker">Your look</span><h2>Make it look like yours.</h2><p>Calm greys or colour themes that flow across the whole window, or mix your own. Add a banner, a status and a nickname for each server.</p><a class="more-link" href="features.html#yours">More ways to make it yours</a></div>
     <div class="pic themes" aria-hidden="true"><div class="mini th1"><span></span><span></span><span></span></div><div class="mini th2"><span></span><span></span><span></span></div><div class="mini th3"><span></span><span></span><span></span></div></div>
   </div>
 </section>
@@ -122,7 +122,7 @@ const home = `
   <h2 class="section-title">Up and running in a minute</h2>
   <ol>
     <li><span class="num">1</span><h3>Download Hopp</h3><p>A small installer for Windows. It updates itself when you say so.</p></li>
-    <li><span class="num">2</span><h3>Make your Hopp ID</h3><p>Pick a name and a password. No email, no phone number. You'll get 24 words to keep safe. <a href="/hopp-id.html">Why?</a></p></li>
+    <li><span class="num">2</span><h3>Make your Hopp ID</h3><p>Pick a name and a password. No email, no phone number. You'll get 24 words to keep safe. <a href="hopp-id.html">Why?</a></p></li>
     <li><span class="num">3</span><h3>Bring your friends</h3><p>Make a server and send an invite link, or add friends by their username.</p></li>
   </ol>
 </section>
@@ -131,29 +131,29 @@ const home = `
 
 <section class="values">
   <div><h3>Free, all of it</h3><p>Screen sharing, cameras, uploads and every look. Nothing to unlock, ever.</p></div>
-  <div><h3>Private</h3><p>Messages and calls between friends are end-to-end encrypted. <a href="/privacy.html">How it works</a></p></div>
-  <div><h3>Beta</h3><p>Hopp works every day but it's still young: expect bugs and changes. <a href="/about.html#beta">What beta means</a></p></div>
+  <div><h3>Private</h3><p>Messages and calls between friends are end-to-end encrypted. <a href="privacy.html">How it works</a></p></div>
+  <div><h3>Beta</h3><p>Hopp works every day but it's still young: expect bugs and changes. <a href="about.html#beta">What beta means</a></p></div>
 </section>
 
 <section class="split">
   <div class="news">
     <h2 class="section-title">What's new</h2>
     <div class="releases" data-show="3"></div>
-    <a class="more-link" href="/whats-new.html">Every version</a>
+    <a class="more-link" href="whats-new.html">Every version</a>
   </div>
   <div class="faq-short">
     <h2 class="section-title">Questions</h2>
     <details><summary>Is it really free?</summary><p>Yes. Everything in Hopp is free and there's nothing to buy. Hopp Cloud runs on a free plan, which is why it has a few limits.</p></details>
     <details><summary>Windows says it doesn't know Hopp</summary><p>Hopp is new, so Windows hasn't seen it much yet. Choose More info, then Run anyway.</p></details>
     <details><summary>How many people fit in a voice channel?</summary><p>Up to 10 at once. Voice goes straight between you, which keeps it free and private.</p></details>
-    <details><summary>Why do I get 24 words?</summary><p>They're the key to your account, so you can get back in if you forget your password. Hopp has no email reset, because it never holds your password. <a href="/hopp-id.html">How your Hopp ID works</a></p></details>
+    <details><summary>Why do I get 24 words?</summary><p>They're the key to your account, so you can get back in if you forget your password. Hopp has no email reset, because it never holds your password. <a href="hopp-id.html">How your Hopp ID works</a></p></details>
     <details><summary>Is there a Mac or phone version?</summary><p>Not yet. Hopp is for Windows for now.</p></details>
-    <a class="more-link" href="/help.html">All questions</a>
+    <a class="more-link" href="help.html">All questions</a>
   </div>
 </section>
 
 <section class="end">
-  <img src="/site/logo.svg" alt="">
+  <img src="site/logo.svg" alt="">
   <h2>Bring your friends.</h2>
   <a class="btn" href="${DL}">${ARROW}Download for Windows</a>
 </section>`;
@@ -235,6 +235,7 @@ const about = head("About", "What Hopp is", "Hopp is an app for talking, playing
   <h2>Why I made Hopp</h2>
   <p>I wanted a place to hang out with my friends that didn't keep asking for money. In the big chat apps, sharing your screen in good quality, sending bigger files or picking how it all looks sits behind a monthly payment, and more and more of them come with ads, quests and things to buy. Some now even want a photo of your ID or your face.</p>
   <p>So I started making my own. One where everything is free, where messages between friends are actually private, where nobody needs your email, phone number or ID, and where the app stays small and quick instead of eating your computer. Where accounts are hard to steal, and where the look is yours to change.</p>
+  <p>And I wanted it to be fast. A lot of chat apps are a whole web browser in disguise: they take up a big chunk of your memory just sitting there, slow down your games, take ages to start, and voice gets choppy or stuck on "connecting". Hopp is built differently. Its heart is written in Rust, a language made for speed, and it uses the browser engine Windows already has instead of shipping its own. That's why the download is about 5 MB, why it starts in a moment and switches servers at once, and why voice goes straight between you and your friends instead of around the world and back.</p>
   <p>Hopp is made by one person, with friends testing it along the way. It's not a company and it doesn't sell anything.</p>
 </section>
 
@@ -264,14 +265,14 @@ const about = head("About", "What Hopp is", "Hopp is an app for talking, playing
 
 <section class="prose" id="limits">
   <h2>The limits</h2>
-  <p>Every limit Hopp Cloud has, and why it's there, is on its own page: <a href="/limits.html">Limits</a>.</p>
+  <p>Every limit Hopp Cloud has, and why it's there, is on its own page: <a href="limits.html">Limits</a>.</p>
 </section>
 
 <section class="prose">
   <h2>Want no limits?</h2>
   <p>Run your own server. It runs on a computer of yours, keeps what you want, and nothing goes through Hopp Cloud. In the app, press <b>+</b> in the server list and choose <b>Run your own server</b> to see how.</p>
   <h2>Where Hopp is going</h2>
-  <p>Hopp gets better every week. You can follow along on <a href="/whats-new.html">What's new</a>, and the app tells you when a new version is ready.</p>
+  <p>Hopp gets better every week. You can follow along on <a href="whats-new.html">What's new</a>, and the app tells you when a new version is ready.</p>
 </section>`;
 
 // ---------- privacy ----------
@@ -289,7 +290,7 @@ const privacy = head("Privacy & safety", "What stays private", "Plain answers ab
   <p>No ads, no tracking, no selling anything about you. Hopp doesn't need your email or phone number.</p>
 
   <h2>Your Hopp ID</h2>
-  <p>You sign in with a key that's made and kept on your own computer, locked with your password. Your recovery phrase is the only way back in if you forget the password, so write it down somewhere safe. Hopp warns you if you're about to send it to anyone. <a href="/hopp-id.html">Everything about your Hopp ID</a></p>
+  <p>You sign in with a key that's made and kept on your own computer, locked with your password. Your recovery phrase is the only way back in if you forget the password, so write it down somewhere safe. Hopp warns you if you're about to send it to anyone. <a href="hopp-id.html">Everything about your Hopp ID</a></p>
 
   <h2>Staying safe</h2>
   <ul class="ticks">
@@ -308,8 +309,8 @@ const help = head("Help", "Questions and answers", "The most common questions. C
   ${Q("What do I need?", "A computer with Windows 10 or 11. Hopp is about 5 MB.")}
   ${Q("Windows says it doesn't know Hopp", "Hopp is new, so Windows hasn't seen it much yet. Choose <b>More info</b>, then <b>Run anyway</b>.")}
   ${Q("Do I need an email address?", "No. You make a Hopp ID with a name and a password. No email, no phone number.")}
-  ${Q("Why do I need a recovery phrase?", "Your account is a key that lives on your computer, not a password kept on a server. The 24 words are that key written out, so you can get back in if you forget your password or move to a new computer. <a href=\"/hopp-id.html\">Read more</a>")}
-  ${Q("Do I have to save the phrase as a file?", "No. Writing it on paper is safest. Saving it as a file is only there if you'd rather keep it somewhere private on your computer or a USB stick. <a href=\"/hopp-id.html#keep\">Where to keep it</a>")}
+  ${Q("Why do I need a recovery phrase?", "Your account is a key that lives on your computer, not a password kept on a server. The 24 words are that key written out, so you can get back in if you forget your password or move to a new computer. <a href=\"hopp-id.html\">Read more</a>")}
+  ${Q("Do I have to save the phrase as a file?", "No. Writing it on paper is safest. Saving it as a file is only there if you'd rather keep it somewhere private on your computer or a USB stick. <a href=\"hopp-id.html#keep\">Where to keep it</a>")}
   ${Q("Is this some crypto thing?", "No. There's no crypto, no wallet and no money. Hopp uses the same kind of word list to write out your key in words people can copy by hand.")}
   ${Q("I forgot my password", "Use your recovery phrase: on the login screen, choose to recover your account and type it in. Without it, nobody can get the account back, not even Hopp.")}
   ${Q("Is there a Mac or phone version?", "Not yet. Hopp is for Windows for now.")}
@@ -327,10 +328,10 @@ const help = head("Help", "Questions and answers", "The most common questions. C
   ${Q("What is push to talk?", "Your microphone only sends while you hold a key. Turn it on in Settings, then Voice &amp; audio, and pick the key under Keybinds.")}
 
   <h2>Hopp itself</h2>
-  ${Q("What does beta mean?", "Hopp works and you can use it every day, but it's still young: you'll find bugs, and things can change as it gets better. Your account and messages are kept between versions. <a href=\"/about.html#beta\">More about the beta</a>")}
+  ${Q("What does beta mean?", "Hopp works and you can use it every day, but it's still young: you'll find bugs, and things can change as it gets better. Your account and messages are kept between versions. <a href=\"about.html#beta\">More about the beta</a>")}
   ${Q("Something is broken. How do I report it?", "In Hopp, open Settings, then App, and press <b>Copy</b> next to <b>Debug info</b>. Send it, with what happened, to the person who invited you or to whoever runs your server.")}
-  ${Q("Is it really free?", "Yes, all of it. Hopp Cloud runs on a free plan, which is why it has <a href=\"/limits.html\">a few limits</a>.")}
-  ${Q("What are the limits?", "Channels keep their newest 1,000 messages, up to 10 people talk in a voice channel, pictures are 40 a day, and on a very busy day Hopp Cloud can pause for a few hours. <a href=\"/limits.html\">Every limit, and why</a>")}
+  ${Q("Is it really free?", "Yes, all of it. Hopp Cloud runs on a free plan, which is why it has <a href=\"limits.html\">a few limits</a>.")}
+  ${Q("What are the limits?", "Channels keep their newest 1,000 messages, up to 10 people talk in a voice channel, pictures are 40 a day, and on a very busy day Hopp Cloud can pause for a few hours. <a href=\"limits.html\">Every limit, and why</a>")}
   ${Q("How do updates work?", "When a new version is ready, the arrow at the top of Hopp turns green. You choose when to install it.")}
   ${Q("Hopp Cloud seems to be down", "On a very busy day the free plan's daily limit can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe; it comes back by itself.")}
   ${Q("Can I run my own server?", "Yes. In the app, press <b>+</b> and choose <b>Run your own server</b> to see how. It has no limits beyond your own computer.")}
@@ -349,7 +350,7 @@ const limitsPage = head("Limits", "Every limit, and why", "Hopp is free, all of 
   <h2>Want no limits?</h2>
   <p>Run your own server. It runs on a computer of yours, keeps what you want, and nothing goes through Hopp Cloud. In the app, press <b>+</b> in the server list and choose <b>Run your own server</b>.</p>
   <h2>Will they change?</h2>
-  <p>Hopp is in beta. If a limit changes, it says so here and on <a href="/whats-new.html">What's new</a>.</p>
+  <p>Hopp is in beta. If a limit changes, it says so here and on <a href="whats-new.html">What's new</a>.</p>
 </section>`;
 
 // ---------- Hopp ID ----------
