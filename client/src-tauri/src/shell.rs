@@ -206,6 +206,20 @@ pub fn window_compact(app: AppHandle, height: f64) {
     reveal(&w);
 }
 
+/// The small starting window: just the hopping logo while Hopp gets ready.
+#[tauri::command]
+pub fn window_splash(app: AppHandle) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    COMPACT.store(true, Ordering::Relaxed);
+    let _ = w.unmaximize();
+    let _ = w.set_min_size(None::<tauri::LogicalSize<f64>>);
+    let _ = w.set_resizable(false);
+    let _ = w.set_maximizable(false);
+    let _ = w.set_size(tauri::LogicalSize::new(320.0, 380.0));
+    let _ = w.center();
+    reveal(&w);
+}
+
 /// Whether the window's title bar would be on one of the screens connected now.
 fn on_a_screen(w: &tauri::WebviewWindow, b: &Bounds) -> bool {
     let Ok(monitors) = w.available_monitors() else { return false };

@@ -1698,6 +1698,7 @@ fn main() {
             set_autostart,
             shell::window_compact,
             shell::window_full,
+            shell::window_splash,
             shell::window_color,
             update_server,
             set_muted,

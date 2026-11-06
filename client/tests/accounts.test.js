@@ -29,6 +29,8 @@
   syncState.ready = true;
   syncState.saving = false; // the mock cloud never answers an earlier save
   scheduleSync();
+  // Logged out for real: the next start shows the login, it doesn't sign in again.
+  commands.account_status = () => ({ exists: true, name: "Marcus", public_key: ME, logged_in: false, remembered: false, backed_up: true });
   await logout();
   check("pending sync sent before logging out", sent.some((m) => m.type === "set_sync"));
   check("sync starts over for the next account", !syncState.ready && syncState.version === 0 && !syncState.dirty);

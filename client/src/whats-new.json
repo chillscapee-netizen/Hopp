@@ -8,5 +8,6 @@
   "0.2.7": "• Updates wait for you: the arrow at the top turns green when a new version is ready and you choose when to install it; click it any time to look for one\n• About Hopp tells what Hopp is, and honestly what Hopp Cloud's limits are and why they're there",
   "0.2.8": "• Discover has a new look: a colour band on top, cards with icons, What's new as a timeline, and Hopp Cloud's limits side by side with their numbers\n• The section you're in folds out in the sidebar: click a part to jump straight to it, and the one you're reading is marked as you scroll",
   "0.2.9": "• Discover: only About Hopp folds out a quick list in the sidebar; the short guides don't need one",
-  "0.3.0": "• The green update arrow shows by itself: Hopp looks for a new version every 15 minutes and whenever you come back to it"
+  "0.3.0": "• The green update arrow shows by itself: Hopp looks for a new version every 15 minutes and whenever you come back to it",
+  "0.3.1": "• A new starting screen: a small window with the logo hopping and a bar that fills as Hopp signs you in, connects and gets your servers ready, so everything is warm when it opens"
 }

@@ -466,17 +466,19 @@ new ResizeObserver(() => fitAuthWindow()).observe($("auth-card"));
 async function boot() {
   applyVoicePrefs();
   // A moment of hopping bunny while Hopp gets ready.
-  $("shell").classList.add("locked");
+  $("shell").classList.add("locked", "starting");
   $("splash").hidden = false;
-  $("splash-text").textContent = "Starting…";
+  splashStep("Starting…", 0.15);
   for (const id of Object.values(AUTH_PANES)) $(id).hidden = true;
-  fitAuthWindow();
-  const shown = new Promise((r) => setTimeout(r, 900));
+  invoke("window_splash").catch(() => {});
+  const shown = new Promise((r) => setTimeout(r, 1400));
   // Also logs in by itself when "Keep me logged in" was chosen.
   let status;
   try {
     status = await invoke("account_status");
   } catch (err) {
+    $("shell").classList.remove("starting");
+    fitAuthWindow();
     $("splash-text").textContent = `Hopp couldn't start: ${friendlyError(err)}`;
     const retry = el("button", "btn sm splash-retry", "Try again");
     retry.addEventListener("click", () => {
@@ -486,10 +488,31 @@ async function boot() {
     $("splash").append(retry);
     return;
   }
-  if (status.logged_in) $("splash-text").textContent = `Welcome back, ${status.name}`;
-  await shown;
   accountExists = status.exists;
-  if (status.logged_in) return enterApp();
+  if (status.logged_in) {
+    // Warm up while the logo hops: your account connects, your servers get ready.
+    splashStep("Connecting…", 0.4);
+    prepareAccount(status);
+    startAccount();
+    const ready = new Promise((r) => {
+      const t0 = Date.now();
+      const tick = setInterval(() => {
+        if (state.me || Date.now() - t0 > 4000) {
+          clearInterval(tick);
+          r();
+        }
+      }, 100);
+    });
+    await ready;
+    splashStep("Getting your servers ready…", 0.75);
+    await Promise.all([shown, new Promise((r) => setTimeout(r, 500))]);
+    splashStep(`Welcome back, ${status.name}`, 1);
+    await new Promise((r) => setTimeout(r, 450));
+    $("shell").classList.remove("starting");
+    return enterApp(true);
+  }
+  await shown;
+  $("shell").classList.remove("starting");
   $("to-login-row").hidden = !status.exists;
   if (status.exists) {
     $("login-name").textContent = status.name;
@@ -499,19 +522,34 @@ async function boot() {
   }
 }
 
-async function enterApp() {
-  const status = await invoke("account_status");
-  // This account's servers and settings, not whoever used Hopp on this computer before.
+/** This account's servers and settings, not whoever used Hopp on this computer before. */
+function prepareAccount(status) {
   useAccountData(status.public_key);
   state.account = { name: status.name, publicKey: status.public_key, backedUp: status.backed_up };
   accountExists = true;
+}
+
+/** The splash's words and how far along it is (0 to 1). */
+function splashStep(text, progress) {
+  $("splash-text").textContent = text;
+  $("splash-progress").style.width = Math.round(progress * 100) + "%";
+}
+
+async function enterApp(warmed) {
+  const status = await invoke("account_status");
+  if (!warmed) prepareAccount(status);
   $("shell").classList.remove("locked");
   invoke("window_full").catch(() => {});
   $("settings-name").value = status.name;
   $("remember-toggle").checked = status.remembered;
   renderBackupState();
   renderAll();
-  startAccount();
+  if (!warmed) startAccount();
+  // Asked for a username while starting: now there's room for it.
+  if (state.me && !state.me.username && !usernameAsked && !state.onboarding) {
+    usernameAsked = true;
+    openUsernameDialog(true);
+  }
   // Started from a strom:// link (or one arrived while logged out): follow it now.
   const link = await invoke("take_pending_link");
   if (link && state.onboarding) state.onboarding.link = link;
@@ -4583,7 +4621,7 @@ listen("account", (e) => {
       syncState.version = m.sync.version;
       receiveSync(m.sync.data);
       // A Hopp ID made before usernames: ask once (it can wait).
-      if (!m.me.username && !usernameAsked && !state.onboarding) {
+      if (!m.me.username && !usernameAsked && !state.onboarding && !$("shell").classList.contains("locked")) {
         usernameAsked = true;
         openUsernameDialog(true);
       }

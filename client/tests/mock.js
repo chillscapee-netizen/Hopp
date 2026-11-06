@@ -194,7 +194,8 @@ function check(name, ok, detail = "") {
 
 /** Waits for the app to be in a server, ready to test. */
 async function inServer() {
-  for (let i = 0; i < 60 && !document.querySelector("#server-list .rail-item"); i++) await wait(100);
+  // The app is open (past the starting screen) and the server list is there.
+  for (let i = 0; i < 100 && (!document.querySelector("#server-list .rail-item") || document.getElementById("shell").classList.contains("locked")); i++) await wait(100);
   document.querySelector("#server-list .rail-item")?.click();
   // The channel history has arrived (live messages before it would be replaced).
   for (let i = 0; i < 80 && !(state.chats.get(0)?.length >= 5 && document.querySelector("#messages .msg")); i++) await wait(100);

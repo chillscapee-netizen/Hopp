@@ -2,7 +2,7 @@
 // account, so it doesn't come back as unread later.
 
 (async () => {
-  for (let i = 0; i < 60 && !state.accountConnected; i++) await wait(50);
+  for (let i = 0; i < 120 && (!state.accountConnected || $("shell").classList.contains("locked")); i++) await wait(50);
   document.hasFocus = () => true;
   openDm(KEYS.elin);
   await wait(200);

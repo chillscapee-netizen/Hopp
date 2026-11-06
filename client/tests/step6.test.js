@@ -2,7 +2,7 @@
 
 (async () => {
   try {
-  for (let i = 0; i < 60 && !state.accountConnected; i++) await wait(50);
+  for (let i = 0; i < 120 && (!state.accountConnected || $("shell").classList.contains("locked")); i++) await wait(50);
   emit("account", { type: "group", group: { id: "g:00aa11bb", name: "Squad", members: [ME, KEYS.elin, KEYS.jonas], created_at: Date.now() } });
   state.conversations.set("g:00aa11bb", { peer: "g:00aa11bb", last_at: Date.now(), last_read: Date.now() });
   renderAll();
@@ -49,7 +49,7 @@
   check("an empty group leaves the list plain", !document.querySelector(".friend-group-head"));
 
   // The sidebar: dragged wider, kept, and put back with a double-click.
-  check("the sidebar starts at its usual width", Math.round(document.querySelector(".sidebar").getBoundingClientRect().width) === 248);
+  check("the sidebar starts at its usual width", Math.round(document.querySelector(".sidebar").getBoundingClientRect().width) === 248, String(document.querySelector(".sidebar").getBoundingClientRect().width) + " " + innerWidth + " " + document.getElementById("shell").className);
   setSidebarWidth(330);
   await wait(30);
   check("it can be made wider", Math.round(document.querySelector(".sidebar").getBoundingClientRect().width) === 330 && load("sidebarWidth", "") === "330");

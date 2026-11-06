@@ -2,7 +2,7 @@
 // someone who missed it can join later, and a call we're in elsewhere isn't rung over.
 
 (async () => {
-  for (let i = 0; i < 60 && !state.accountConnected; i++) await wait(50);
+  for (let i = 0; i < 120 && (!state.accountConnected || $("shell").classList.contains("locked")); i++) await wait(50);
   const G = "g:0badc0de";
   emit("account", { type: "group", group: { id: G, name: "Raid crew", members: [ME, KEYS.elin, KEYS.jonas, KEYS.sara], created_at: Date.now() } });
   await wait(100);
