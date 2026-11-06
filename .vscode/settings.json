@@ -3,5 +3,7 @@
   "rust-analyzer.check.command": "clippy",
   // The app's page code is checked from client/, where its ESLint setup lives.
   "eslint.workingDirectories": ["client"],
-  "files.associations": { "wrangler.jsonc": "jsonc" }
+  "files.associations": { "wrangler.jsonc": "jsonc" },
+  // Live Preview shows the home page as it is on Hopp Cloud (its files live in cloud/public).
+  "livePreview.serverRoot": "/cloud/public"
 }
