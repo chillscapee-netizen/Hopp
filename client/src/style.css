@@ -3494,3 +3494,8 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .call-stage.live-call.has-video { padding-bottom: 64px; }
 .call-stage.live-call.has-video .call-controls { opacity: 1; }
 .invite-friend-btn:hover { background: color-mix(in srgb, var(--green) 28%, transparent); color: color-mix(in srgb, var(--green) 78%, var(--text)); }
+/* The call's buttons sit close to the bottom edge. */
+.call-controls { bottom: 6px; }
+.call-stage.live-call, .call-stage.live-call.has-video { padding-bottom: 64px; }
+.call-controls { padding: 4px; }
+.call-stage.live-call:fullscreen { padding-bottom: 64px; }
