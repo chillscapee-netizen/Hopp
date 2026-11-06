@@ -4007,6 +4007,7 @@ function playSound(name) {
   if (state.deafened && prefs.quietDeafened && ["others", "message"].includes(event)) return;
   try {
     soundCtx ??= new AudioContext();
+    if (prefs.soundStyle !== "classic" && HOPP_SOUNDS[name]) return playHoppSound(name, prefs.soundVolume / 100);
     const t0 = soundCtx.currentTime + 0.01;
     const peak = (prefs.soundVolume / 100) * (isPtt ? 0.08 : 0.16);
     for (const [freq, at] of notes) {
@@ -4043,10 +4044,12 @@ function renderSoundEvents() {
       play.dataset.tip = "Play";
       play.append(icon("volume", "sm"));
       play.addEventListener("click", () => {
-        const was = prefs.soundEvents[key];
-        prefs.soundEvents[key] = true;
-        playSound(names[0]);
-        prefs.soundEvents[key] = was;
+        names.forEach((n, i) => setTimeout(() => {
+          const was = prefs.soundEvents[key];
+          prefs.soundEvents[key] = true;
+          playSound(n);
+          prefs.soundEvents[key] = was;
+        }, i * (n.startsWith("ring") ? 1300 : 650)));
       });
       li.append(el("span", "grow", label), play, toggle);
       li.classList.toggle("off", !prefs.sounds);
@@ -11683,3 +11686,121 @@ function syncWindowColor() {
   invoke("window_color", { rgb: hex }).catch(() => {});
 }
 syncWindowColor();
+
+// ---------- Hopp's own sounds ----------
+//
+// Made right here, no files: soft mallet and glass tones (a few partials each, gently
+// decaying), small pitch glides for the "hop", a quiet room around them and a soft top end.
+// "Classic" keeps the old plain beeps.
+
+prefs.soundStyle = load("soundStyle", "hopp");
+
+var hoppBus = null;
+function hoppOut() {
+  if (hoppBus?.ctx === soundCtx) return hoppBus.input;
+  const ctx = soundCtx;
+  const input = ctx.createGain();
+  // A soft top end, and nothing ever clips.
+  const tone = ctx.createBiquadFilter();
+  tone.type = "lowpass";
+  tone.frequency.value = 5200;
+  tone.Q.value = 0.4;
+  const limit = ctx.createDynamicsCompressor();
+  limit.threshold.value = -14;
+  limit.ratio.value = 6;
+  // A small room: two short echoes, darker each time.
+  const dry = ctx.createGain();
+  const wet = ctx.createGain();
+  wet.gain.value = 0.16;
+  const d1 = ctx.createDelay(1);
+  d1.delayTime.value = 0.071;
+  const d2 = ctx.createDelay(1);
+  d2.delayTime.value = 0.113;
+  const fb = ctx.createGain();
+  fb.gain.value = 0.32;
+  const damp = ctx.createBiquadFilter();
+  damp.type = "lowpass";
+  damp.frequency.value = 2400;
+  input.connect(tone);
+  tone.connect(dry).connect(limit);
+  tone.connect(d1);
+  tone.connect(d2);
+  d1.connect(damp);
+  d2.connect(damp);
+  damp.connect(fb).connect(d1);
+  damp.connect(wet).connect(limit);
+  limit.connect(ctx.destination);
+  hoppBus = { ctx, input };
+  return input;
+}
+
+/** One soft voice. kind: "mallet" (marimba-like), "glass" (bell-like), "bubble" (a pitch glide). */
+function hoppVoice(kind, freq, at, { dur = 0.35, gain = 1, glide = null } = {}) {
+  const ctx = soundCtx;
+  const out = hoppOut();
+  const t = ctx.currentTime + 0.02 + at;
+  const partials = kind === "mallet" ? [[1, 1, 1], [4, 0.22, 0.25], [9.8, 0.05, 0.12]]
+    : kind === "glass" ? [[1, 1, 1], [2.76, 0.32, 0.55], [5.4, 0.1, 0.3]]
+    : [[1, 1, 1], [2, 0.12, 0.6]];
+  for (const [ratio, level, life] of partials) {
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq * ratio, t);
+    if (glide) osc.frequency.exponentialRampToValueAtTime(glide * ratio, t + Math.min(dur * 0.55, 0.12));
+    const peak = 0.22 * gain * level;
+    const end = t + dur * life;
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.linearRampToValueAtTime(peak, t + (kind === "bubble" ? 0.012 : 0.004));
+    env.gain.exponentialRampToValueAtTime(0.0001, end);
+    osc.connect(env).connect(out);
+    osc.start(t);
+    osc.stop(end + 0.05);
+  }
+}
+
+// Notes, for reading the sounds below.
+var N = { G4: 392, A4: 440, B4: 493.9, C5: 523.3, D5: 587.3, E5: 659.3, F5: 698.5, G5: 784, A5: 880, B5: 987.8, C6: 1046.5, D6: 1174.7, E6: 1318.5, G6: 1568 };
+
+var HOPP_SOUNDS = {
+  // Your microphone: a small drop off, a small lift on.
+  mute: (v) => hoppVoice("bubble", N.A5, 0, { dur: 0.13, gain: 1.3 * v, glide: N.D5 }),
+  unmute: (v) => hoppVoice("bubble", N.D5, 0, { dur: 0.13, gain: 1.3 * v, glide: N.A5 }),
+  // Your ears: two soft mallet notes, down and up.
+  deafen: (v) => { hoppVoice("mallet", N.E5, 0, { dur: 0.3, gain: 0.8 * v }); hoppVoice("mallet", N.A4, 0.09, { dur: 0.4, gain: 0.8 * v }); },
+  undeafen: (v) => { hoppVoice("mallet", N.A4, 0, { dur: 0.3, gain: 0.8 * v }); hoppVoice("mallet", N.E5, 0.09, { dur: 0.4, gain: 0.8 * v }); },
+  // Joining voice: the "hop" — up, and landing on a chord.
+  join: (v) => { hoppVoice("bubble", N.C5, 0, { dur: 0.16, gain: 0.7 * v, glide: N.G5 }); hoppVoice("mallet", N.E5, 0.1, { dur: 0.45, gain: 0.7 * v }); hoppVoice("mallet", N.G5, 0.1, { dur: 0.5, gain: 0.55 * v }); hoppVoice("glass", N.C6, 0.16, { dur: 0.6, gain: 0.3 * v }); },
+  leave: (v) => { hoppVoice("mallet", N.G5, 0, { dur: 0.3, gain: 0.6 * v }); hoppVoice("bubble", N.E5, 0.08, { dur: 0.2, gain: 0.6 * v, glide: N.A4 }); },
+  // Others: quieter, two glass notes.
+  user_join: (v) => { hoppVoice("glass", N.G5, 0, { dur: 0.4, gain: 0.65 * v }); hoppVoice("glass", N.D6, 0.08, { dur: 0.5, gain: 0.6 * v }); },
+  user_leave: (v) => { hoppVoice("glass", N.D6, 0, { dur: 0.35, gain: 0.6 * v }); hoppVoice("glass", N.G5, 0.08, { dur: 0.45, gain: 0.55 * v }); },
+  // A message: a light, short "pling".
+  message: (v) => { hoppVoice("glass", N.E6, 0, { dur: 0.35, gain: 0.8 * v }); hoppVoice("glass", N.B5, 0.06, { dur: 0.5, gain: 0.6 * v }); },
+  // Someone calling you: a friendly little tune (repeats while it rings).
+  ring: (v) => { [[N.C5, 0], [N.E5, 0.13], [N.G5, 0.26], [N.E5, 0.39], [N.G5, 0.6], [N.C6, 0.73]].forEach(([f, at]) => hoppVoice("mallet", f, at, { dur: 0.5, gain: 0.75 * v })); },
+  // You calling: a calm, low "waiting" tone.
+  ringback: (v) => { hoppVoice("mallet", N.G4, 0, { dur: 0.6, gain: 0.7 * v }); hoppVoice("mallet", N.B4, 0, { dur: 0.6, gain: 0.45 * v }); hoppVoice("mallet", N.G4, 0.32, { dur: 0.7, gain: 0.6 * v }); },
+  // Lost the connection: down, muffled.
+  disconnect: (v) => { hoppVoice("mallet", N.E5, 0, { dur: 0.3, gain: 0.6 * v }); hoppVoice("mallet", N.B4, 0.12, { dur: 0.35, gain: 0.6 * v }); hoppVoice("bubble", N.G4, 0.24, { dur: 0.25, gain: 0.5 * v, glide: 196 }); },
+  // Push to talk: tiny ticks.
+  ptt_on: (v) => hoppVoice("bubble", N.G5, 0, { dur: 0.05, gain: 0.7 * v, glide: N.C6 }),
+  ptt_off: (v) => hoppVoice("bubble", N.C6, 0, { dur: 0.05, gain: 0.65 * v, glide: N.G5 }),
+  // Talking while muted: two soft low knocks.
+  muted: (v) => { hoppVoice("mallet", N.D5, 0, { dur: 0.18, gain: 0.6 * v }); hoppVoice("mallet", N.D5, 0.15, { dur: 0.18, gain: 0.6 * v }); },
+};
+
+function playHoppSound(name, volume) {
+  HOPP_SOUNDS[name](Math.max(0, Math.min(1, volume)) * 1.6);
+}
+
+// The style, chosen in Notifications.
+document.querySelectorAll("[data-sound-style]").forEach((b) => {
+  b.classList.toggle("active", b.dataset.soundStyle === prefs.soundStyle);
+  b.addEventListener("click", () => {
+    prefs.soundStyle = b.dataset.soundStyle;
+    save("soundStyle", prefs.soundStyle);
+    document.querySelectorAll("[data-sound-style]").forEach((x) => x.classList.toggle("active", x === b));
+    playSound("join");
+  });
+});
