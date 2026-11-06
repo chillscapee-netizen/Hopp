@@ -1,3 +1,4 @@
+// real-time: 30000
 // Hopp's own sounds: each one is audible, never clips, and is short (rendered offline and measured).
 (async () => {
   await inServer();

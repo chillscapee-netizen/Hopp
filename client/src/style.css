@@ -3512,3 +3512,20 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 /* The window's colours are drawn once, behind everything. */
 .shell { background: transparent !important; }
 .invite-card { border: none; }
+
+/* Custom status. */
+.status-input { display: flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 10px; background: var(--sink); }
+.status-input input { flex: 1; min-width: 0; border: none; background: none; padding-left: 0; }
+.status-emoji { flex: none; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: none; border-radius: 8px; background: none; font-size: 20px; cursor: pointer; }
+.status-emoji:hover { background: var(--hover); }
+.status-emoji.empty { filter: grayscale(1); opacity: 0.55; }
+.status-emoji-mark { flex: none; margin-right: 4px; font-size: 13px; }
+.member-sub .status-emoji-mark { margin-right: 4px; }
+.user-card-status { display: flex; align-items: center; gap: 4px; margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--sink); color: var(--text-2); font-size: 13.5px; }
+#status-dialog .modal-body { display: grid; gap: 12px; }
+#status-dialog .modal-sub { margin: -6px 0 2px; }
+#status-dialog select { width: 100%; }
+/* A member's line under their name stays one line, with "…". */
+.member-info { flex: 1; min-width: 0; display: grid; }
+.member-sub { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.member-sub > .ellipsis { flex: 1; min-width: 0; }

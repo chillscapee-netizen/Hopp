@@ -2293,6 +2293,10 @@ function flagsFor(u) {
 
 function userRow(u, className, size, sub) {
   const isSelf = u.session_id === state.roster.me;
+  if (className === "member" && !sub) {
+    const s = customStatusOf(keyOf(u));
+    if (s) sub = { status: s };
+  }
   const talking = className === "voice-user" && state.speaking.has(u.session_id);
   const row = el("li", className + (isSelf ? " self" : "") + (talking ? " speaking" : ""));
   row.dataset.user = u.session_id;
@@ -2315,7 +2319,8 @@ function userRow(u, className, size, sub) {
   if (sub) {
     const info = el("span", "member-info");
     const subLine = el("span", "member-sub");
-    subLine.append(icon("volume", "xs"), el("span", "ellipsis", sub));
+    if (sub.status) subLine.append(...statusParts(sub.status));
+    else subLine.append(icon("volume", "xs"), el("span", "ellipsis", sub));
     info.append(nameLine, subLine);
     row.append(info);
   } else {
@@ -2400,13 +2405,13 @@ function renderUserPanel() {
   const voice = on ? myVoice() : null;
   status.classList.toggle("live", sending);
   status.textContent = !on
-    ? state.connectingId ? "Connecting…" : state.accountConnected ? STATUS_LABEL[state.me?.status ?? "online"] : "Offline"
+    ? state.connectingId ? "Connecting…" : state.accountConnected ? statusLine(state.me?.custom_status) ?? STATUS_LABEL[state.me?.status ?? "online"] : "Offline"
     : state.deafened ? "Deafened"
     : state.muted ? "Muted"
     : sending ? "Speaking"
     : voice !== null && prefs.mode === "push_to_talk" && !prefs.pttKey ? "No push-to-talk key"
     : voice !== null ? (state.micTesting ? "Hearing yourself" : `In ${channelName(voice)}`)
-    : "Online";
+    : statusLine(state.me?.custom_status) ?? STATUS_LABEL[state.me?.status ?? "online"] ?? "Online";
 
   // Deafened also means nobody hears you, so the microphone shows as off too.
   const silent = state.muted || state.deafened;
@@ -4288,6 +4293,9 @@ function openUserCard(user, anchor) {
   const bio = (keyOf(user) === state.account?.publicKey ? state.me?.bio : profiles.get(keyOf(user))?.bio) ?? "";
   $("user-card-bio").textContent = bio;
   $("user-card-bio").hidden = !bio;
+  const cs = keyOf(user) === state.account?.publicKey ? liveStatus(state.me?.custom_status) : customStatusOf(keyOf(user));
+  $("user-card-status").replaceChildren(...(cs ? statusParts(cs) : []));
+  $("user-card-status").hidden = !cs;
   syncUserCard();
   // Open beside the row, like a profile card.
   const r = anchor.getBoundingClientRect();
@@ -4704,6 +4712,11 @@ function openStatusMenu(x, y) {
       item("dnd", "No notification sounds"),
       item("invisible", "You'll look offline"),
       "sep",
+      liveStatus(state.me?.custom_status)
+        ? { label: statusLine(state.me.custom_status), sub: "Change your custom status", icon: "edit", action: openStatusDialog }
+        : { label: "Set a custom status", icon: "smile", action: openStatusDialog },
+      ...(liveStatus(state.me?.custom_status) ? [{ label: "Clear custom status", icon: "x", action: () => setCustomStatus(null) }] : []),
+      "sep",
       { label: "Edit profile", icon: "user", action: () => openSettings("profile") },
     ],
     x,
@@ -4743,6 +4756,7 @@ function friendRow(f) {
     f.state === "incoming" ? "Wants to be friends"
     : f.state === "outgoing" ? "Request sent"
     : f.state === "blocked" ? "Blocked"
+    : f.status !== "offline" && customStatusOf(f.key) ? statusLine(customStatusOf(f.key))
     : f.activity && f.status !== "offline" ? whereText(f)
     : STATUS_LABEL[f.status] ?? "Offline";
   text.append(top, el("span", "friend-sub ellipsis", sub));
@@ -5367,6 +5381,7 @@ function dmSidebarRows() {
       const text = el("span", "row-text");
       text.append(el("span", "row-title ellipsis", p.display_name));
       if (p.group) text.append(el("span", "row-sub ellipsis", `${state.groups.get(peer).members.length} members`));
+      else if (p.status !== "offline" && customStatusOf(p.key)) text.append(el("span", "row-sub ellipsis", statusLine(customStatusOf(p.key))));
       else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", whereText(p)));
       b.append(personAvatar(p, "", p.state === "friend"), text);
       if (conv.last_at > conv.last_read && !muted) b.append(el("span", "count-badge", "1"));
@@ -5914,8 +5929,9 @@ function loadProfile(key) {
   invoke("fetch_profile", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), key }).then(
     (r) => {
       const changed = (p?.avatar ?? null) !== (r.avatar ?? null) || p?.display_name !== r.display_name;
-      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, at: Date.now() });
-      if (changed) renderPictures();
+      const statusChanged = JSON.stringify(p?.custom_status ?? null) !== JSON.stringify(r.custom_status ?? null);
+      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, bio: r.bio ?? "", custom_status: r.custom_status ?? null, at: Date.now() });
+      if (changed || statusChanged) renderPictures();
     },
     () => profiles.set(key, { ...(p ?? { avatar: null }), loading: false, at: Date.now() }),
   );
@@ -11804,3 +11820,101 @@ document.querySelectorAll("[data-sound-style]").forEach((b) => {
     playSound("join");
   });
 });
+
+// ---------- custom status ----------
+//
+// An emoji and a few words under your name ("🎮 Playing Valorant"), until a time you pick.
+// It lives in your profile, so friends and people in your servers see it.
+
+/** A status, unless it has run out. */
+function liveStatus(s) {
+  return s && (s.text || s.emoji) && (s.until == null || s.until > Date.now()) ? s : null;
+}
+
+/** Someone's custom status: friends from your account, others from their profile. */
+function customStatusOf(key) {
+  if (!key) return null;
+  if (key === state.account?.publicKey) return liveStatus(state.me?.custom_status);
+  const f = state.friends?.get(key);
+  if (f && f.state === "friend" && f.custom_status !== undefined) {
+    try {
+      return liveStatus(typeof f.custom_status === "string" ? JSON.parse(f.custom_status) : f.custom_status);
+    } catch {
+      return null;
+    }
+  }
+  return liveStatus(profiles.get(key)?.custom_status);
+}
+
+function statusLine(s) {
+  const live = liveStatus(s);
+  return live ? [live.emoji, live.text].filter(Boolean).join(" ") : null;
+}
+
+function statusParts(s) {
+  const out = [];
+  if (s.emoji) out.push(el("span", "status-emoji-mark", s.emoji));
+  if (s.text) out.push(el("span", "ellipsis", s.text));
+  return out;
+}
+
+var statusEmoji = null;
+function openStatusDialog() {
+  closePopovers();
+  const s = liveStatus(state.me?.custom_status);
+  statusEmoji = s?.emoji ?? null;
+  $("status-emoji").textContent = statusEmoji ?? "🙂";
+  $("status-emoji").classList.toggle("empty", !statusEmoji);
+  $("status-text").value = s?.text ?? "";
+  $("status-until").value = s ? (s.until == null ? "" : "60") : "240";
+  openModal($("status-dialog"));
+  $("status-text").focus();
+}
+
+async function setCustomStatus(status) {
+  try {
+    await accountSend({ type: "set_profile", custom_status: status });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+$("status-emoji").addEventListener("click", (e) =>
+  openEmojiPicker(e.currentTarget, (emoji) => {
+    statusEmoji = emoji;
+    $("status-emoji").textContent = emoji;
+    $("status-emoji").classList.remove("empty");
+  }),
+);
+$("status-clear-text").addEventListener("click", () => {
+  $("status-text").value = "";
+  statusEmoji = null;
+  $("status-emoji").textContent = "🙂";
+  $("status-emoji").classList.add("empty");
+  $("status-text").focus();
+});
+$("status-form").addEventListener("submit", (e) => {
+  const text = $("status-text").value.trim();
+  if (!text && !statusEmoji) {
+    setCustomStatus(null);
+    return;
+  }
+  const v = $("status-until").value;
+  let until = null;
+  if (v === "today") {
+    const end = new Date();
+    end.setHours(23, 59, 59, 0);
+    until = end.getTime();
+  } else if (v) until = Date.now() + Number(v) * 60_000;
+  e.preventDefault();
+  $("status-dialog").close();
+  setCustomStatus({ text, emoji: statusEmoji, until });
+});
+// A status running out disappears without anyone doing anything.
+setInterval(() => {
+  const mine = state.me?.custom_status;
+  if (mine && mine.until != null && mine.until <= Date.now() && !mine.gone) {
+    mine.gone = true;
+    renderUserPanel();
+  }
+}, 30_000);

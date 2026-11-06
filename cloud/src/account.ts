@@ -19,6 +19,7 @@ const MAX_NEW_SERVERS_PER_DAY = 10;
 const RELAY_LOGINS_PER_DAY = 12;
 const MAX_BIO = 190;
 const MAX_ACTIVITY = 80;
+const MAX_STATUS = 80;
 /** Small pictures only: 128 px WebP is about 10 KB. */
 const MAX_AVATAR = 40_000;
 const MAX_SYNC = 262_144;
@@ -52,12 +53,16 @@ const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 
 type Msg = { type: string; [field: string]: any };
 
+/** A short status of your own: an emoji and a few words, until a time (or until cleared). */
+export interface CustomStatus { text: string; emoji: string | null; until: number | null }
+
 export interface PublicProfile {
   key: string;
   username: string | null;
   display_name: string;
   avatar: string | null;
   bio: string;
+  custom_status?: CustomStatus | null;
 }
 
 /** What a friend sees of you right now. "offline" also covers invisible. */
@@ -80,6 +85,7 @@ interface FriendRow {
   status: string;
   activity: string | null;
   voice: string | null;
+  custom_status?: string | null;
 }
 
 interface Session {
@@ -273,6 +279,7 @@ export class StromAccount extends DurableObject<Env> {
     `);
     const friendColumns = new Set(this.sql.exec("PRAGMA table_info(friends)").toArray().map((c) => String(c.name)));
     if (!friendColumns.has("voice")) this.sql.exec("ALTER TABLE friends ADD COLUMN voice TEXT");
+    if (!friendColumns.has("custom_status")) this.sql.exec("ALTER TABLE friends ADD COLUMN custom_status TEXT");
     const dmColumns = new Set(this.sql.exec("PRAGMA table_info(dms)").toArray().map((c) => String(c.name)));
     if (!dmColumns.has("edited_at")) this.sql.exec("ALTER TABLE dms ADD COLUMN edited_at INTEGER");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
@@ -298,13 +305,23 @@ export class StromAccount extends DurableObject<Env> {
     return this.sql.exec("SELECT * FROM friends WHERE key = ?", key).toArray()[0] as unknown as FriendRow | undefined;
   }
 
-  private upsertFriend(row: Omit<FriendRow, "status" | "activity" | "voice"> & Partial<Pick<FriendRow, "status" | "activity">>) {
+  private upsertFriend(row: Omit<FriendRow, "status" | "activity" | "voice" | "custom_status"> & Partial<Pick<FriendRow, "status" | "activity">>) {
     this.sql.exec(
       `INSERT INTO friends (key, username, display_name, avatar, state, since, status, activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET username = excluded.username, display_name = excluded.display_name,
          avatar = excluded.avatar, state = excluded.state, since = excluded.since`,
       row.key, row.username, row.display_name, row.avatar, row.state, row.since, row.status ?? "offline", row.activity ?? null,
     );
+  }
+
+  /** Your custom status, unless it has run out. */
+  private customStatus(): CustomStatus | null {
+    try {
+      const s = JSON.parse(this.meta("custom_status") ?? "null") as CustomStatus | null;
+      return s && (s.until === null || s.until > Date.now()) ? s : null;
+    } catch {
+      return null;
+    }
   }
 
   private profile(): PublicProfile {
@@ -314,6 +331,7 @@ export class StromAccount extends DurableObject<Env> {
       display_name: this.meta("display_name") ?? "",
       avatar: this.meta("avatar"),
       bio: this.meta("bio") ?? "",
+      custom_status: this.customStatus(),
     };
   }
 
@@ -497,6 +515,18 @@ export class StromAccount extends DurableObject<Env> {
           const bio = String(msg.bio).trim();
           if ([...bio].length > MAX_BIO) return error(`Keep it under ${MAX_BIO} characters.`);
           this.setMeta("bio", bio);
+        }
+        if (msg.custom_status !== undefined) {
+          const s = msg.custom_status;
+          if (s === null) this.setMeta("custom_status", null);
+          else {
+            const text = String(s.text ?? "").trim();
+            const emoji = s.emoji == null ? null : String(s.emoji);
+            const until = s.until == null ? null : Number(s.until);
+            if ([...text].length > MAX_STATUS || (emoji !== null && (emoji.length > 16 || /[\s<>]/.test(emoji))) || (!text && !emoji)) return error(`A status is an emoji and up to ${MAX_STATUS} characters.`);
+            if (until !== null && (!Number.isFinite(until) || until < Date.now() || until > Date.now() + 31 * 86_400_000)) return error("That time doesn't work.");
+            this.setMeta("custom_status", JSON.stringify({ text, emoji, until }));
+          }
         }
         if (msg.avatar !== undefined) {
           if (msg.avatar === null) this.setMeta("avatar", null);
@@ -1180,7 +1210,7 @@ export class StromAccount extends DurableObject<Env> {
   async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {
     const row = this.friend(fromKey);
     if (!row || row.state === "blocked") return;
-    this.sql.exec("UPDATE friends SET username = ?, display_name = ?, avatar = ? WHERE key = ?", profile.username, profile.display_name, profile.avatar, fromKey);
+    this.sql.exec("UPDATE friends SET username = ?, display_name = ?, avatar = ?, custom_status = ? WHERE key = ?", profile.username, profile.display_name, profile.avatar, profile.custom_status ? JSON.stringify(profile.custom_status) : null, fromKey);
     this.toDevices({ type: "friend", friend: this.friend(fromKey) });
   }
 }

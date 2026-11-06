@@ -705,6 +705,38 @@
   </dialog>
 
   <!-- ---------- folder settings ---------- -->
+  <dialog id="status-dialog" class="modal small">
+    <form id="status-form" method="dialog">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2>Set a custom status</h2>
+        <p class="modal-sub">Friends and people in your servers see it under your name.</p>
+        <label class="field">
+          <span class="field-label">What&#39;s up?</span>
+          <span class="status-input">
+            <button type="button" id="status-emoji" class="status-emoji" aria-label="Pick an emoji">🙂</button>
+            <input id="status-text" maxlength="80" autocomplete="off" placeholder="Playing Valorant, back at 8…">
+            <button type="button" id="status-clear-text" class="icon-btn sm" aria-label="Clear"><svg class="i sm"><use href="#i-x"/></svg></button>
+          </span>
+        </label>
+        <label class="field">
+          <span class="field-label">Clear after</span>
+          <select id="status-until" class="row-select">
+            <option value="30">30 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="240">4 hours</option>
+            <option value="today">Today</option>
+            <option value="">Don&#39;t clear</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="text-dialog" class="modal small">
     <form id="text-form" method="dialog">
       <div class="modal-body">
@@ -1457,6 +1489,7 @@
       <span id="user-card-avatar-slot"></span>
       <div id="user-card-name" class="user-card-name"></div>
       <div id="user-card-sub" class="user-card-sub"></div>
+      <div id="user-card-status" class="user-card-status" hidden></div>
       <p id="user-card-bio" class="user-card-bio" hidden></p>
       <div id="user-card-roles" class="user-card-roles" hidden></div>
       <div id="user-card-connection" class="user-card-connection" hidden></div>

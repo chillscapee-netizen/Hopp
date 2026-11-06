@@ -244,6 +244,18 @@ test("profiles: name, bio and picture reach friends", async () => {
   assert.equal(seen.friend.avatar, avatar);
   a.d.send({ type: "set_profile", avatar: "data:image/svg+xml;base64,PHN2Zz4=" });
   assert.match((await a.d.waitFor((m) => m.type === "error")).message, /picture/);
+  // A custom status: friends get it, everyone sees it in the public profile, and it runs out.
+  a.d.inbox = [];
+  const until = Date.now() + 3_600_000;
+  a.d.send({ type: "set_profile", custom_status: { text: "Playing Valorant", emoji: "🎮", until } });
+  const withStatus = await b.d.waitFor((m) => m.type === "friend" && m.friend.custom_status);
+  assert.deepEqual(JSON.parse(withStatus.friend.custom_status), { text: "Playing Valorant", emoji: "🎮", until });
+  const pub = await (await fetch(`${HTTP}/profiles/${a.key.pub}`)).json();
+  assert.equal(pub.custom_status.text, "Playing Valorant");
+  a.d.send({ type: "set_profile", custom_status: { text: "x".repeat(81), emoji: null, until: null } });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /status/);
+  a.d.send({ type: "set_profile", custom_status: null });
+  await b.d.waitFor((m) => m.type === "friend" && !m.friend.custom_status);
   a.d.close();
   b.d.close();
 });
