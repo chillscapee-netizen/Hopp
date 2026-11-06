@@ -7246,6 +7246,8 @@ async function startCall(peer) {
     renderCall();
     return toast(friendlyError(err), true);
   }
+  // An answer can come back before this line ("busy", "offline"): then the call is over.
+  if (state.call !== c) return;
   startRinging("ringback");
   c.timeout = setTimeout(() => state.call === c && endCall("missed"), CALL_RING_MS);
   renderCall();
@@ -7393,8 +7395,14 @@ async function sendDmText(peer, text) {
 
 function startRinging(sound) {
   stopRinging();
+  const call = state.call;
+  if (!call) return;
   playSound(sound);
-  state.ringTimer = setInterval(() => playSound(sound), sound === "ring" ? 2200 : 3000);
+  // Rings only while that very call is still ringing: never after it ended or was answered.
+  state.ringTimer = setInterval(() => {
+    if (state.call !== call || (call.status !== "ringing" && !(call.group && call.role === "caller" && !call.inCall.size))) return stopRinging();
+    playSound(sound);
+  }, sound === "ring" ? 2200 : 3000);
 }
 
 function stopRinging() {
