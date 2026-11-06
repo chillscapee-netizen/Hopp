@@ -7,7 +7,7 @@ const out = fileURLToPath(new URL("../public/", import.meta.url));
 const parts = fileURLToPath(new URL("../site/", import.meta.url));
 const DL = "/download/Hopp-setup.exe";
 const ARROW = `<svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>`;
-const PAGES = [["features", "Features"], ["limits", "Limits"], ["about", "About"], ["privacy", "Privacy"], ["help", "Help"], ["whats-new", "What's new"]];
+const PAGES = [["features", "Features"], ["limits", "Limits"], ["hopp-id", "Hopp ID"], ["about", "About"], ["privacy", "Privacy"], ["help", "Help"], ["whats-new", "What's new"]];
 
 function page(file, current, title, description, body) {
   const nav = PAGES.map(([f, label]) => `<a href="/${f}.html"${f === current ? ' class="here"' : ""}>${label}</a>`).join("");
@@ -38,7 +38,7 @@ ${body}
 <footer class="foot">
   <div class="foot-brand"><a class="brand" href="/"><img src="/site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
   <div><h4>Hopp</h4><a href="/features.html">Features</a><a href="/whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
-  <div><h4>Learn more</h4><a href="/about.html">About Hopp</a><a href="/limits.html">Limits</a><a href="/privacy.html">Privacy &amp; safety</a><a href="/help.html">Help</a></div>
+  <div><h4>Learn more</h4><a href="/about.html">About Hopp</a><a href="/limits.html">Limits</a><a href="/hopp-id.html">Your Hopp ID</a><a href="/privacy.html">Privacy &amp; safety</a><a href="/help.html">Help</a></div>
 </footer>
 <script src="/site/site.js"></script>
 </body>
@@ -122,7 +122,7 @@ const home = `
   <h2 class="section-title">Up and running in a minute</h2>
   <ol>
     <li><span class="num">1</span><h3>Download Hopp</h3><p>A small installer for Windows. It updates itself when you say so.</p></li>
-    <li><span class="num">2</span><h3>Make your Hopp ID</h3><p>Pick a name and a password. No email, no phone number.</p></li>
+    <li><span class="num">2</span><h3>Make your Hopp ID</h3><p>Pick a name and a password. No email, no phone number. You'll get 24 words to keep safe. <a href="/hopp-id.html">Why?</a></p></li>
     <li><span class="num">3</span><h3>Bring your friends</h3><p>Make a server and send an invite link, or add friends by their username.</p></li>
   </ol>
 </section>
@@ -146,6 +146,7 @@ const home = `
     <details><summary>Is it really free?</summary><p>Yes. Everything in Hopp is free and there's nothing to buy. Hopp Cloud runs on a free plan, which is why it has a few limits.</p></details>
     <details><summary>Windows says it doesn't know Hopp</summary><p>Hopp is new, so Windows hasn't seen it much yet. Choose More info, then Run anyway.</p></details>
     <details><summary>How many people fit in a voice channel?</summary><p>Up to 10 at once. Voice goes straight between you, which keeps it free and private.</p></details>
+    <details><summary>Why do I get 24 words?</summary><p>They're the key to your account, so you can get back in if you forget your password. Hopp has no email reset, because it never holds your password. <a href="/hopp-id.html">How your Hopp ID works</a></p></details>
     <details><summary>Is there a Mac or phone version?</summary><p>Not yet. Hopp is for Windows for now.</p></details>
     <a class="more-link" href="/help.html">All questions</a>
   </div>
@@ -288,7 +289,7 @@ const privacy = head("Privacy & safety", "What stays private", "Plain answers ab
   <p>No ads, no tracking, no selling anything about you. Hopp doesn't need your email or phone number.</p>
 
   <h2>Your Hopp ID</h2>
-  <p>You sign in with a key that's made and kept on your own computer, locked with your password. Your recovery phrase is the only way back in if you forget the password, so write it down somewhere safe. Hopp warns you if you're about to send it to anyone.</p>
+  <p>You sign in with a key that's made and kept on your own computer, locked with your password. Your recovery phrase is the only way back in if you forget the password, so write it down somewhere safe. Hopp warns you if you're about to send it to anyone. <a href="/hopp-id.html">Everything about your Hopp ID</a></p>
 
   <h2>Staying safe</h2>
   <ul class="ticks">
@@ -307,6 +308,9 @@ const help = head("Help", "Questions and answers", "The most common questions. C
   ${Q("What do I need?", "A computer with Windows 10 or 11. Hopp is about 5 MB.")}
   ${Q("Windows says it doesn't know Hopp", "Hopp is new, so Windows hasn't seen it much yet. Choose <b>More info</b>, then <b>Run anyway</b>.")}
   ${Q("Do I need an email address?", "No. You make a Hopp ID with a name and a password. No email, no phone number.")}
+  ${Q("Why do I need a recovery phrase?", "Your account is a key that lives on your computer, not a password kept on a server. The 24 words are that key written out, so you can get back in if you forget your password or move to a new computer. <a href=\"/hopp-id.html\">Read more</a>")}
+  ${Q("Do I have to save the phrase as a file?", "No. Writing it on paper is safest. Saving it as a file is only there if you'd rather keep it somewhere private on your computer or a USB stick. <a href=\"/hopp-id.html#keep\">Where to keep it</a>")}
+  ${Q("Is this some crypto thing?", "No. There's no crypto, no wallet and no money. Hopp uses the same kind of word list to write out your key in words people can copy by hand.")}
   ${Q("I forgot my password", "Use your recovery phrase: on the login screen, choose to recover your account and type it in. Without it, nobody can get the account back, not even Hopp.")}
   ${Q("Is there a Mac or phone version?", "Not yet. Hopp is for Windows for now.")}
 
@@ -348,6 +352,60 @@ const limitsPage = head("Limits", "Every limit, and why", "Hopp is free, all of 
   <p>Hopp is in beta. If a limit changes, it says so here and on <a href="/whats-new.html">What's new</a>.</p>
 </section>`;
 
+// ---------- Hopp ID ----------
+const hoppId = head("Your Hopp ID", "How your account works", "Hopp doesn't ask for your email or phone number, and it never keeps your password. Instead, your account is a key that lives on your computer. Here's what that means, and why you get 24 words.") + `
+<section class="id-facts">
+  <div><strong>No email</strong><span>Nothing to sign up with but a name</span></div>
+  <div><strong>No password on any server</strong><span>Not even Hopp Cloud has it</span></div>
+  <div><strong>24 words</strong><span>Your key, written out, for getting back in</span></div>
+</section>
+
+<section class="prose">
+  <h2>Your account is a key</h2>
+  <p>When you make a Hopp ID, your computer makes a key: a long secret number that only you have. Every time you join a server or talk to a friend, Hopp proves it's you with that key, without ever sending the key itself. Servers and friends only ever see a public part of it, which is safe to share.</p>
+  <p>The key is kept on your computer, locked with your password. Your password never leaves your computer, and it's never sent to Hopp Cloud or anyone else.</p>
+
+  <h2>So why the 24 words?</h2>
+  <p>Because nobody else holds your password, nobody can send you a "reset your password" email. That's on purpose: it means nobody can trick a support person into giving away your account, and a leak somewhere can't expose your password.</p>
+  <p>The 24 words are your key written out in plain words. With them you can:</p>
+  <ul class="ticks">
+    <li>Get back in if you forget your password, and pick a new one</li>
+    <li>Use your Hopp ID on a new or second computer</li>
+    <li>Get your account back if your computer breaks or is replaced</li>
+  </ul>
+  <p>Without them, and without your password, nobody can get the account back. Not you, and not Hopp.</p>
+
+  <h2>It's not a crypto thing</h2>
+  <p>The words come from the same kind of word list that some crypto wallets use, because it's a good way to write a key in words people can copy by hand without mistakes. That's all. There's no crypto, no wallet, no coins and no money in Hopp.</p>
+</section>
+
+<section class="beta-box" id="keep">
+  <span class="kicker">Keeping it safe</span>
+  <h2>Where to keep your words</h2>
+  <ul class="ticks">
+    <li><b>Best: on paper.</b> Write the 24 words down, in order, and keep the paper somewhere at home.</li>
+    <li><b>Or as a file</b>, if you'd rather: Hopp can save them as a file you put somewhere private, like a USB stick or a password manager. You don't have to; it's only there if it suits you better.</li>
+  </ul>
+  <p class="never"><b>Never</b> keep them in a chat, an email, a screenshot you share, or a note others can see.</p>
+  <p>Hopp asks you to type a few of the words back once, so you know you have them right. Until you've saved them, a small reminder stays in Hopp so you don't forget.</p>
+</section>
+
+<section class="prose">
+  <h2>What Hopp will never do</h2>
+  <ul class="ticks">
+    <li>Hopp, and anyone who works on it, will never ask for your 24 words or your password</li>
+    <li>There's no "log in with a QR code" that someone could trick you into scanning</li>
+    <li>If you paste your words into a chat, Hopp stops and warns you before anything is sent</li>
+  </ul>
+  <p>If anyone asks for your words, for any reason, it's someone trying to take your account.</p>
+
+  <h2>Day to day</h2>
+  <p>Most of the time you never think about any of this. Tick <b>Keep me logged in</b> and Hopp opens straight into your account. On Windows you can use <b>Windows Hello</b> (your face, fingerprint or PIN) instead of your password when Hopp asks to confirm it's you.</p>
+
+  <h2>If you lose everything</h2>
+  <p>If you lose both your password and your 24 words, the account can't be recovered. You can make a new Hopp ID right away and add your friends again, but your old account, its friends and its messages stay out of reach. That's the price of nobody else holding the keys, and it's why the words matter.</p>
+</section>`;
+
 // ---------- what's new ----------
 const news = head("What's new", "Better every week", "Every version of Hopp and what it brought. The app tells you when a new one is ready.") + `
 <section class="news full"><div class="releases" data-show="all"></div></section>`;
@@ -355,6 +413,7 @@ const news = head("What's new", "Better every week", "Every version of Hopp and 
 writeFileSync(out + "index.html", page("index", "", "Hopp: hang out with your friends", "Hopp is a free app to talk, play and hang out with your friends. Voice channels, calls, cameras and screen sharing. No ads, no tracking.", home));
 writeFileSync(out + "features.html", page("features", "features", "Features · Hopp", "Everything Hopp can do: servers, voice channels, calls, screen sharing, chat, friends, roles and themes.", features));
 writeFileSync(out + "limits.html", page("limits", "limits", "Limits · Hopp", "Every limit Hopp Cloud has, and why it is there.", limitsPage));
+writeFileSync(out + "hopp-id.html", page("hopp-id", "hopp-id", "Your Hopp ID · Hopp", "How a Hopp ID works: a key on your computer, no email, no password on any server, and 24 words to get back in.", hoppId));
 writeFileSync(out + "about.html", page("about", "about", "About · Hopp", "What Hopp is, how it stays free, and every limit and why.", about));
 writeFileSync(out + "privacy.html", page("privacy", "privacy", "Privacy & safety · Hopp", "What's encrypted in Hopp, what Hopp Cloud keeps, and how you stay in control.", privacy));
 writeFileSync(out + "help.html", page("help", "help", "Help · Hopp", "Answers to the most common questions about Hopp.", help));

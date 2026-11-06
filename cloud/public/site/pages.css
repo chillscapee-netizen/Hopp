@@ -156,3 +156,13 @@ details p { margin: -4px 0 18px; color: var(--text-2); }
 .limit-chips span { color: var(--muted); font-size: 14px; }
 @media (max-width: 1000px) { .home-limits { grid-template-columns: 1fr; gap: 28px; padding: 28px; } }
 .meta a { color: var(--text-2); }
+
+/* Hopp ID: three facts up top. */
+.id-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 10px 0 30px; }
+.id-facts div { display: grid; gap: 4px; padding: 22px 24px; border-radius: 18px; background: rgb(255 255 255 / 0.05); }
+.id-facts strong { font-size: 19px; letter-spacing: -0.02em; }
+.id-facts span { color: var(--muted); font-size: 14.5px; }
+.steps li a { color: var(--text); text-underline-offset: 3px; }
+.beta-box .ticks b { color: var(--text); }
+@media (max-width: 760px) { .id-facts { grid-template-columns: 1fr; } }
+.never { padding: 12px 16px; border-radius: 12px; background: rgb(255 255 255 / 0.06); }
