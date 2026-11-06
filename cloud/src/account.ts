@@ -64,6 +64,9 @@ export interface PublicProfile {
 export interface Presence {
   status: "online" | "idle" | "dnd" | "offline";
   activity: string | null;
+  /** Which voice channel: a server's address and a channel number, no names. Friends who
+   *  are in that server too can see where and join; others just see "In voice". */
+  voice: string | null;
 }
 
 interface FriendRow {
@@ -76,6 +79,7 @@ interface FriendRow {
   since: number;
   status: string;
   activity: string | null;
+  voice: string | null;
 }
 
 interface Session {
@@ -267,6 +271,8 @@ export class StromAccount extends DurableObject<Env> {
         server TEXT NOT NULL, channel INTEGER NOT NULL, read_id INTEGER NOT NULL DEFAULT 0, last_id INTEGER NOT NULL DEFAULT 0,
         last_at INTEGER NOT NULL DEFAULT 0, mentions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel));
     `);
+    const friendColumns = new Set(this.sql.exec("PRAGMA table_info(friends)").toArray().map((c) => String(c.name)));
+    if (!friendColumns.has("voice")) this.sql.exec("ALTER TABLE friends ADD COLUMN voice TEXT");
     const dmColumns = new Set(this.sql.exec("PRAGMA table_info(dms)").toArray().map((c) => String(c.name)));
     if (!dmColumns.has("edited_at")) this.sql.exec("ALTER TABLE dms ADD COLUMN edited_at INTEGER");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
@@ -292,7 +298,7 @@ export class StromAccount extends DurableObject<Env> {
     return this.sql.exec("SELECT * FROM friends WHERE key = ?", key).toArray()[0] as unknown as FriendRow | undefined;
   }
 
-  private upsertFriend(row: Omit<FriendRow, "status" | "activity"> & Partial<Pick<FriendRow, "status" | "activity">>) {
+  private upsertFriend(row: Omit<FriendRow, "status" | "activity" | "voice"> & Partial<Pick<FriendRow, "status" | "activity">>) {
     this.sql.exec(
       `INSERT INTO friends (key, username, display_name, avatar, state, since, status, activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET username = excluded.username, display_name = excluded.display_name,
@@ -314,8 +320,8 @@ export class StromAccount extends DurableObject<Env> {
   /** What friends see: invisible and no devices both look offline. */
   private presence(): Presence {
     const status = this.meta("status") ?? "online";
-    if (this.devices().length === 0 || status === "invisible") return { status: "offline", activity: null };
-    return { status: status as Presence["status"], activity: this.meta("activity") };
+    if (this.devices().length === 0 || status === "invisible") return { status: "offline", activity: null, voice: null };
+    return { status: status as Presence["status"], activity: this.meta("activity"), voice: this.meta("voice") };
   }
 
   // ---------- sockets ----------
@@ -529,8 +535,11 @@ export class StromAccount extends DurableObject<Env> {
       }
       case "set_activity": {
         const activity = msg.activity == null ? null : String(msg.activity).slice(0, MAX_ACTIVITY);
-        if (activity === this.meta("activity")) return;
+        // "<server address>#<channel>", or nothing.
+        const voice = typeof msg.voice === "string" && /^[\w.:\[\]-]{1,120}#\d{1,9}$/.test(msg.voice) ? msg.voice : null;
+        if (activity === this.meta("activity") && voice === this.meta("voice")) return;
         this.setMeta("activity", activity);
+        this.setMeta("voice", voice);
         return this.announcePresence();
       }
       case "set_privacy": {
@@ -937,7 +946,7 @@ export class StromAccount extends DurableObject<Env> {
   private async learnPresence(key: string) {
     const p = await accountOf(this.env, key).currentPresence(this.meta("key")!);
     if (!p) return;
-    this.sql.exec("UPDATE friends SET status = ?, activity = ? WHERE key = ?", p.status, p.activity, key);
+    this.sql.exec("UPDATE friends SET status = ?, activity = ?, voice = ? WHERE key = ?", p.status, p.activity, p.voice ?? null, key);
     this.toDevices({ type: "presence", key, ...p });
   }
 
@@ -977,6 +986,7 @@ export class StromAccount extends DurableObject<Env> {
     }
     if (was === "joined" && this.devices().length === 0) {
       this.setMeta("activity", null);
+      this.setMeta("voice", null);
       await this.announcePresence();
     }
   }
@@ -1035,7 +1045,7 @@ export class StromAccount extends DurableObject<Env> {
 
   async presenceChanged(fromKey: string, presence: Presence): Promise<void> {
     if (this.friend(fromKey)?.state !== "friend") return;
-    this.sql.exec("UPDATE friends SET status = ?, activity = ? WHERE key = ?", presence.status, presence.activity, fromKey);
+    this.sql.exec("UPDATE friends SET status = ?, activity = ?, voice = ? WHERE key = ?", presence.status, presence.activity, presence.voice ?? null, fromKey);
     this.toDevices({ type: "presence", key: fromKey, ...presence });
   }
 

@@ -70,12 +70,13 @@
   await wait(150);
   document.getElementById("call-accept").click();
   await wait(300);
-  const callCam = document.querySelector("#call-stage .call-btn.media");
-  check("calls have camera and screen buttons", !!callCam && document.querySelectorAll("#call-stage .call-btn.media").length === 2);
+  const callButtons = () => document.querySelectorAll("#call-stage .call-btn.media");
+  const callCam = callButtons()[1];
+  check("calls have mic, camera and screen buttons", callButtons().length === 3);
   callCam.click();
   const elinCam = await playing(`#call-stage .call-person[data-session="1"] video`);
   check("a camera in a call arrives", elinCam?.videoWidth === 320, String(elinCam?.videoWidth));
-  document.querySelectorAll("#call-stage .call-btn.media")[1].click();
+  callButtons()[2].click();
   const screen = await playing("#call-stage .call-screen video");
   check("a shared screen in a call shows big", !!screen);
   emit("account", { type: "call", from: KEYS.elin, kind: "end", call_id: "abcdabcd-1111" });

@@ -46,7 +46,7 @@
   --text: #f0f0f3;
   --text-2: #d9d9de;
   --muted: #b0b0b8;
-  --faint: #8c8c95;
+  --faint: #96969f;
 
   --green: #3ccf8e;
   --yellow: #f0b232;
@@ -3410,3 +3410,41 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .new-divider { border-top-color: var(--red) !important; }
 /* A call in a conversation: a soft layer, not a hard block. */
 .call-stage { background: var(--sink); border-bottom: none; }
+
+/* Active now: one card per friend in voice; the card opens your conversation, Join takes you to them. */
+.active-card { cursor: pointer; transition: background 120ms; }
+.active-card:hover { background: var(--hover); }
+.active-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.active-what { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.active-place { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 8px 8px 10px; border-radius: 10px; background: var(--sink); color: var(--text-2); font-size: 13px; }
+.active-place > .ellipsis { flex: 1; }
+.active-server { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; font-size: 9px; font-weight: 700; overflow: hidden; }
+.active-server img { width: 100%; height: 100%; object-fit: cover; }
+.active-here { color: var(--green); font-size: 12.5px; font-weight: 600; }
+.active-actions { display: none; }
+
+/* ---------- a call with video: a set height, the conversation below ---------- */
+.call-person { position: relative; display: grid; justify-items: center; gap: 6px; }
+.call-name { max-width: 120px; color: var(--text-2); font-size: 13px; font-weight: 600; }
+.call-stage.has-video { flex: none; height: 62%; min-height: 280px; padding: 14px 16px 12px; gap: 10px; justify-content: flex-start; }
+.call-stage.has-video .call-screen { position: relative; flex: 1; min-height: 0; width: 100%; max-width: none; aspect-ratio: auto; display: grid; }
+.call-stage.has-video .call-screen video { width: 100%; height: 100%; object-fit: contain; }
+.call-screen:fullscreen { border-radius: 0; }
+.call-screen .stage-bar { opacity: 0; transition: opacity 150ms; }
+.call-screen:hover .stage-bar { opacity: 1; }
+.call-screen-label { position: absolute; left: 10px; top: 10px; padding: 3px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.5); color: #fff; font-size: 12.5px; }
+/* With a screen in the middle, everyone is a small row below it. */
+.call-stage.has-screen .call-people { flex: none; flex-wrap: nowrap; gap: 14px; max-width: 100%; overflow-x: auto; }
+.call-stage.has-screen .call-person .avatar.s80 { width: 44px; height: 44px; font-size: 16px; }
+.call-stage.has-screen .call-person.video { width: 150px; }
+.call-stage.has-screen .call-stage-status { display: none; }
+/* Cameras without a screen: tiles that share the space. */
+.call-stage.has-video:not(.has-screen) .call-people { flex: 1; min-height: 0; align-items: center; }
+.call-stage.has-video:not(.has-screen) .call-person.video { width: min(420px, 44%); }
+.call-person.video .call-name { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.5); color: #fff; }
+.call-stage-actions { flex: none; }
+.call-btn.media.off { background: color-mix(in srgb, var(--red) 22%, var(--elev)); color: var(--red); }
+/* Readable everywhere: server initials are white on their tint; a conversation's line under its name. */
+.server-tint:not(.has-picture) { color: #fff; }
+.row-text .row-sub { color: var(--muted); }
+.server-chip:not(.has-picture) { color: #fff; }

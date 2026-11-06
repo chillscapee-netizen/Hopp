@@ -4638,7 +4638,7 @@ listen("account", (e) => {
       break;
     case "presence": {
       const f = state.friends.get(m.key);
-      if (f) Object.assign(f, { status: m.status, activity: m.activity });
+      if (f) Object.assign(f, { status: m.status, activity: m.activity, voice: m.voice ?? null });
       if (state.call?.peer === m.key && m.status === "offline") {
         toast(`${f?.display_name ?? "Your friend"} went offline. The call ended.`);
         endCall("remote");
@@ -4668,11 +4668,16 @@ listen("account", (e) => {
 
 let lastActivity;
 function setActivityFromVoice() {
-  // Just "in voice": which server and channel stays private.
+  // "In voice", and where: only a Hopp Cloud server's id and the channel's number. Friends in
+  // that server too see where and can join; others just see "In voice". A LAN server's
+  // address is never shared (it would show where you are on your network).
   const activity = inVoice() ? "In voice" : null;
-  if (activity === lastActivity || !state.accountConnected) return;
-  lastActivity = activity;
-  invoke("account_send", { msg: { type: "set_activity", activity } }).catch(() => {});
+  const server = activeServer();
+  const voice = activity && server && isCloud(server) && myVoice() !== null ? server.address + "#" + myVoice() : null;
+  const key = activity + "|" + voice;
+  if (key === lastActivity || !state.accountConnected) return;
+  lastActivity = key;
+  invoke("account_send", { msg: { type: "set_activity", activity, voice } }).catch(() => {});
 }
 
 const STATUS_LABEL = { online: "Online", idle: "Idle", dnd: "Do Not Disturb", invisible: "Invisible", offline: "Offline" };
@@ -4733,7 +4738,7 @@ function friendRow(f) {
     f.state === "incoming" ? "Wants to be friends"
     : f.state === "outgoing" ? "Request sent"
     : f.state === "blocked" ? "Blocked"
-    : f.activity && f.status !== "offline" ? f.activity
+    : f.activity && f.status !== "offline" ? whereText(f)
     : STATUS_LABEL[f.status] ?? "Offline";
   text.append(top, el("span", "friend-sub ellipsis", sub));
   li.append(personAvatar(f, "s40", f.state === "friend"), text);
@@ -5357,7 +5362,7 @@ function dmSidebarRows() {
       const text = el("span", "row-text");
       text.append(el("span", "row-title ellipsis", p.display_name));
       if (p.group) text.append(el("span", "row-sub ellipsis", `${state.groups.get(peer).members.length} members`));
-      else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", p.activity));
+      else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", whereText(p)));
       b.append(personAvatar(p, "", p.state === "friend"), text);
       if (conv.last_at > conv.last_read && !muted) b.append(el("span", "count-badge", "1"));
       else if (pinned) b.append(icon("pin", "xs pin-mark"));
@@ -7443,8 +7448,7 @@ function renderCall() {
   const who = (person, id) => {
     const wrap = el("div", "call-person");
     wrap.dataset.session = id;
-    wrap.dataset.tip = person.display_name ?? "";
-    wrap.append(avatar(person.display_name ?? "?", "s80", undefined, person.avatar));
+    wrap.append(avatar(person.display_name ?? "?", "s80", undefined, person.avatar), el("span", "call-name ellipsis", person.display_name ?? ""));
     return wrap;
   };
   if (joinable) {
@@ -7465,7 +7469,7 @@ function renderCall() {
     people.classList.toggle("many", !!c.group && c.inCall.size > 2);
     const withVideo = (tile, id) => {
       const cam = mediaStream("cam", id);
-      if (cam) tile.replaceChildren(videoEl("cam|" + id, cam, id === "me"));
+      if (cam) tile.replaceChildren(videoEl("cam|" + id, cam, id === "me"), ...tile.querySelectorAll(".call-name"));
       tile.classList.toggle("video", !!cam);
       return tile;
     };
@@ -7477,9 +7481,25 @@ function renderCall() {
     if (media.out.screen) screens.unshift(["screen|me", media.out.screen.stream]);
     const shown = screens.slice(0, 1).map(([k, s]) => {
       const frame = el("div", "call-screen");
-      frame.append(videoEl(k, s, false));
+      const video = videoEl(k, s, false);
+      const bar = el("div", "stage-bar");
+      const btn = (name, label, fn) => {
+        const b = el("button", "stage-btn");
+        b.type = "button";
+        b.setAttribute("aria-label", label);
+        b.append(icon(name));
+        b.addEventListener("click", fn);
+        bar.append(b);
+      };
+      btn("pip", "Pop out", () => (document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture?.())?.catch?.(() => {}));
+      btn(document.fullscreenElement === frame ? "minimize" : "maximize", "Full screen", () => (document.fullscreenElement ? document.exitFullscreen() : frame.requestFullscreen()).catch(() => {}));
+      frame.addEventListener("dblclick", () => (document.fullscreenElement ? document.exitFullscreen() : frame.requestFullscreen()).catch(() => {}));
+      frame.append(video, bar);
+      if (k === "screen|me") frame.append(el("span", "call-screen-label", "Your screen · what " + (c.group ? "the others see" : personFor(c.peer).display_name + " sees")));
       return frame;
     });
+    stage.classList.toggle("has-video", shown.length > 0 || people.querySelector(".video") !== null);
+    stage.classList.toggle("has-screen", shown.length > 0);
     people.classList.toggle("videos", people.querySelector(".video") !== null);
     const status = el("div", "call-stage-status", callStatusText(c));
     const actions = el("div", "call-stage-actions");
@@ -7493,6 +7513,12 @@ function renderCall() {
     shareBtn.setAttribute("aria-label", media.out.screen ? "Stop sharing your screen" : "Share your screen");
     shareBtn.append(icon("monitor"));
     shareBtn.addEventListener("click", () => (media.out.screen ? stopOut("screen") : startCallScreen()));
+    const micBtn = el("button", "call-btn media" + (state.muted ? " off" : ""));
+    micBtn.type = "button";
+    micBtn.setAttribute("aria-label", state.muted ? "Unmute" : "Mute");
+    micBtn.append(icon(state.muted ? "mic-off" : "mic"));
+    micBtn.addEventListener("click", () => $("mute-btn").click());
+    actions.append(micBtn);
     if (c.engineReady) actions.append(camBtn, shareBtn);
     const hang = el("button", "call-btn decline");
     hang.type = "button";
@@ -7964,26 +7990,38 @@ function activeNowPanel() {
     return aside;
   }
   for (const f of busy) {
+    // The whole card opens your conversation with them, like their row anywhere else.
     const card = el("div", "active-card");
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.addEventListener("click", () => openDm(f.key));
+    card.addEventListener("keydown", (e) => e.key === "Enter" && openDm(f.key));
     const top = el("div", "active-top");
     const text = el("div", "active-text");
     text.append(el("strong", "ellipsis", f.display_name));
     const what = el("span", "active-what ellipsis");
-    what.append(icon("headphones", "xs"), f.activity);
+    what.append(icon("headphones", "xs"), el("span", "ellipsis", f.activity));
     text.append(what);
     top.append(personAvatar(f, "s40", true), text);
-    const actions = el("div", "active-actions");
-    const message = el("button", "btn sm", "Message");
-    message.type = "button";
-    message.addEventListener("click", () => openDm(f.key));
-    const callBtn = el("button", "btn sm", "Call");
-    callBtn.type = "button";
-    callBtn.addEventListener("click", () => {
-      openDm(f.key);
-      startCall(f.key);
-    });
-    actions.append(message, callBtn);
-    card.append(top, actions);
+    card.append(top);
+    const where = friendVoice(f);
+    if (where?.server) {
+      // Where they are, in a server you're in too: there, and one click to join them.
+      const place = el("div", "active-place");
+      place.append(serverIcon("active-server server-tint", where.server.label, where.server.icon), el("span", "ellipsis", (where.channelName ? where.channelName + " · " : "") + where.server.label));
+      const here = activeServer()?.id === where.server.id && myVoice() === where.channel;
+      if (here) place.append(el("span", "active-here", "You're here"));
+      else {
+        const join = el("button", "btn sm primary", "Join");
+        join.type = "button";
+        join.addEventListener("click", (e) => {
+          e.stopPropagation();
+          joinFriendVoice(where);
+        });
+        place.append(join);
+      }
+      card.append(place);
+    }
     aside.append(card);
   }
   if (rest.length) {
@@ -9765,7 +9803,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
       hover: "rgb(0 0 0 / 0.05)", active: "rgb(0 0 0 / 0.08)", "msg-hover": "rgb(0 0 0 / 0.03)",
       layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", tile: "rgb(0 0 0 / 0.07)", "app-solid": at(-6),
       text: tint(12), "text-2": tint(22), muted: tint(38), faint: tint(53),
-      link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#1f9d63", yellow: "#b7791f", red: "#d93a40", scheme: "light",
+      link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#15804f", yellow: "#b7791f", red: "#d93a40", scheme: "light",
     };
   }
   return {
@@ -9773,7 +9811,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
     border: at(4.3), "border-strong": at(10.4), "border-active": at(16.3), "border-focus": at(20.4), "focus-ring": at(21.5),
     hover: "rgb(255 255 255 / 0.05)", active: "rgb(255 255 255 / 0.09)", "msg-hover": "rgb(0 0 0 / 0.06)",
     layer: "rgb(255 255 255 / 0.045)", "layer-2": "rgb(255 255 255 / 0.065)", sink: "rgb(0 0 0 / 0.16)", tile: "rgb(255 255 255 / 0.065)", "app-solid": at(-4.5),
-    text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(57),
+    text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(62),
     link: "#8ab4f8", "primary-hover": "#ffffff", "name-s": "22%", "name-l": "80%", green: "#3ccf8e", yellow: "#f0b232", red: "#f2555a", scheme: "dark",
   };
 }
@@ -9811,6 +9849,12 @@ function applyTheme() {
   }
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
+  // Names in role colours are adjusted for light and dark: redraw them.
+  if (state.roster && typeof online === "function" && online()) {
+    renderSidebar();
+    renderMembers();
+    if (state.view !== null && renderedChannel === state.view) renderMessages(true);
+  }
 }
 
 function setTheme(id) {
@@ -11155,7 +11199,12 @@ function rolesOn() {
 /** The colour of someone's highest role that has one. */
 function roleColor(u) {
   if (!u?.roles?.length) return null;
-  return (state.roster.roles ?? []).find((r) => r.color && u.roles.includes(r.id))?.color ?? null;
+  const c = (state.roster.roles ?? []).find((r) => r.color && u.roles.includes(r.id))?.color ?? null;
+  return c && isLightTheme() ? "color-mix(in srgb, " + c + " 62%, #000)" : c;
+}
+
+function isLightTheme() {
+  return getComputedStyle(document.documentElement).colorScheme === "light";
 }
 function roleColorByKey(key) {
   return roleColor(state.roster?.users.find((u) => keyOf(u) === key));
@@ -11439,3 +11488,36 @@ setInterval(() => {
     else if (Date.now() - since > 8000) n.textContent = "Couldn't load this. Close it and try again.";
   }
 }, 1000);
+
+// ---------- where friends are in voice ----------
+
+/** A friend's voice channel, when it's in a server you're in too (otherwise just "in voice"). */
+function friendVoice(f) {
+  if (!f?.voice || f.status === "offline") return null;
+  const i = f.voice.lastIndexOf("#");
+  const address = f.voice.slice(0, i);
+  const channel = Number(f.voice.slice(i + 1));
+  const server = prefs.servers.find((x) => x.address === address);
+  if (!server) return { server: null, channel };
+  // The channel's name, when we know that server's channels (the one you're in).
+  const channelName = activeServer()?.id === server.id ? state.roster?.channels.find((c) => c.id === channel)?.name ?? null : null;
+  return { server, channel, channelName };
+}
+
+/** "In Lobby · The Crew", "In voice · The Crew" or just "In voice". */
+function whereText(f) {
+  const w = friendVoice(f);
+  if (!w?.server) return f.activity;
+  return (w.channelName ? "In " + w.channelName : "In voice") + " · " + w.server.label;
+}
+
+/** Joins a friend in their voice channel: into their server, then the channel. */
+async function joinFriendVoice(where) {
+  if (activeServer()?.id !== where.server.id || state.atHome) {
+    const ok = await connectTo(where.server);
+    if (!ok) return;
+  }
+  if (!voiceChannels().some((c) => c.id === where.channel)) return toast("That voice channel isn't there anymore.", true);
+  openTextChannel(where.channel);
+  joinVoice(where.channel);
+}

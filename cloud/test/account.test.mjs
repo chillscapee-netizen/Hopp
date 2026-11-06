@@ -170,9 +170,13 @@ test("friend requests, accepting, presence and removing", async () => {
   await bob.d.saw((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "online");
 
   // Status and activity reach friends; invisible looks offline.
-  alice.d.send({ type: "set_activity", activity: "In voice: Lobby" });
+  alice.d.send({ type: "set_activity", activity: "In voice: Lobby", voice: "cloud:abc123#4" });
   const act = await bob.d.waitFor((m) => m.type === "presence" && m.activity);
   assert.equal(act.activity, "In voice: Lobby");
+  assert.equal(act.voice, "cloud:abc123#4", "where in voice reaches friends");
+  alice.d.send({ type: "set_activity", activity: "In voice", voice: "<script>#x" });
+  const bad = await bob.d.waitFor((m) => m.type === "presence" && m.activity === "In voice");
+  assert.equal(bad.voice, null, "anything else is dropped");
   alice.d.send({ type: "set_status", status: "invisible" });
   await bob.d.waitFor((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "offline");
   alice.d.send({ type: "set_status", status: "dnd" });

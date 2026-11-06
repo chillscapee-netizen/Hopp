@@ -58,7 +58,7 @@ const chatHistory = [
 ];
 
 const friends = [
-  { key: KEYS.elin, username: "elin", display_name: "Elin", avatar: null, state: "friend", status: "online", activity: "In voice" },
+  { key: KEYS.elin, username: "elin", display_name: "Elin", avatar: null, state: "friend", status: "online", activity: "In voice", voice: "cloud:crew0001#1" },
   { key: KEYS.jonas, username: "jonas", display_name: "Jonas", avatar: null, state: "friend", status: "idle", activity: null },
   { key: KEYS.sara, username: "sara", display_name: "Sara", avatar: null, state: "friend", status: "dnd", activity: null },
   { key: KEYS.kim, username: "kim", display_name: "Kim", avatar: null, state: "friend", status: "offline", activity: null },

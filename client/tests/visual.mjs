@@ -1,0 +1,156 @@
+// A visual sweep: opens the app in many states (every view, light and dark, big and the
+// smallest window, long names) and reports what an eye would catch:
+//  - text cut off without "…" (or spilling out of its box)
+//  - things outside the window
+//  - clickable things covering each other
+//  - text too faint to read on its background
+//
+//   node client/tests/visual.mjs            prints findings; exits 1 if any
+//
+// It runs the page like the page tests do (mock.js for Tauri).
+
+import { execFileSync } from "node:child_process";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const here = fileURLToPath(new URL(".", import.meta.url));
+const src = join(here, "..", "src");
+const work = join(tmpdir(), "hopp-visual");
+const edge = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe"].find((p) => {
+  try { readFileSync(p); return true; } catch { return false; }
+});
+mkdirSync(work, { recursive: true });
+cpSync(src, work, { recursive: true });
+copyFileSync(join(here, "mock.js"), join(work, "mock.js"));
+const page = readFileSync(join(src, "index.html"), "utf8");
+
+// Each scene: what to do before looking.
+const STRESS = `
+  const r = structuredClone(state.roster);
+  r.features = ["search","screen","voice-chat","voice-mod","voice-settings","mod-tools","roles","pings","resync"];
+  r.roles = [{ id: 7, name: "A rather long role name", color: "#46a758", hoist: true, level: "mod", position: 2, mentionable: true }];
+  r.channels.push({ id: 9, name: "a-really-quite-long-channel-name-here", kind: "text", topic: "A long topic that goes on and on to see what happens in the header of the channel" });
+  r.users.find((u) => u.name === "Elin").name = "Elinorabella Strandberg-Lindqvist";
+  r.users[1].roles = [7];
+  emit("roster", r); await wait(150);`;
+const scenes = {
+  chat: ``,
+  longchannel: `[...document.querySelectorAll(".channel-row")].find((n) => n.textContent.includes("really"))?.click(); await wait(150);`,
+  voice: `const m = structuredClone(state.roster); m.users[0].voice_channel = 1; emit("roster", m); emit("voice-state", { ready: true }); await wait(50); [...document.querySelectorAll(".channel-row")].find((n) => n.textContent.includes("Lobby"))?.click(); await wait(250);`,
+  membermenu: `[...document.querySelectorAll(".member")].find((x) => x.textContent.includes("Elin"))?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 9999, clientY: 9999 })); await wait(150); [...document.querySelectorAll("#server-menu .menu-item")].find((b) => b.textContent.trim() === "Voice")?.dispatchEvent(new MouseEvent("mouseenter")); await wait(150);`,
+  usercard: `[...document.querySelectorAll(".member")].find((x) => x.textContent.includes("Elin"))?.click(); await wait(150);`,
+  home: `$("home-btn").click(); await wait(250);`,
+  dm: `$("home-btn").click(); await wait(100); document.querySelector(".dm-row")?.click(); await wait(250);`,
+  settings: `openSettings("profile"); await wait(200);`,
+  appearance: `openSettings("appearance"); await wait(200);`,
+  voicesettings: `openSettings("voice"); await wait(200);`,
+  notifications: `openSettings("sounds"); await wait(200);`,
+  serversettings: `openServerSettings(); await wait(200);`,
+  roles: `openServerSettings(); await wait(50); showServerTab("roles"); document.querySelector(".role-row")?.click(); await wait(200);`,
+  members: `openServerSettings(); await wait(50); showServerTab("members"); await wait(200);`,
+  channeledit: `openChannelEdit(state.roster.channels[0]); await wait(200);`,
+  invite: `openInvite(); await wait(250);`,
+  add: `openModal($("add-dialog")); await wait(200);`,
+  emoji: `$("emoji-btn").click(); await wait(250);`,
+  servermenu: `$("sidebar-head").click(); await wait(150); [...document.querySelectorAll("#server-menu .menu-item")].find((b) => b.textContent.trim() === "Notifications")?.dispatchEvent(new MouseEvent("mouseenter")); await wait(150);`,
+  status: `$("me-card").click(); await wait(200);`,
+};
+const themes = ["dusk", "light", "mid"];
+const sizes = [[1366, 768], [940, 560]];
+
+const probe = `
+function rgb(c) { const m = c.match(/[\\d.]+/g); return m ? m.map(Number) : null; }
+function lum([r, g, b]) { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }
+function bgOf(el) {
+  // The first solid-ish background behind an element (layers mixed over the window's colour).
+  const layers = [];
+  for (let n = el; n; n = n.parentElement) {
+    const c = rgb(getComputedStyle(n).backgroundColor);
+    if (c && (c[3] ?? 1) > 0) { layers.push(c); if ((c[3] ?? 1) >= 0.95) break; }
+  }
+  let base = rgb(getComputedStyle(document.documentElement).getPropertyValue("--app-solid").trim() ? getComputedStyle(document.body).backgroundColor : "rgb(40,40,45)") ?? [40, 40, 45];
+  if ((base[3] ?? 1) < 0.5) base = [51, 51, 56];
+  for (const c of layers.reverse()) { const a = c[3] ?? 1; base = [0, 1, 2].map((i) => c[i] * a + base[i] * (1 - a)); }
+  return base;
+}
+function visible(n) {
+  const r = n.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return false;
+  const cs = getComputedStyle(n);
+  if (cs.visibility === "hidden" || Number(cs.opacity) < 0.3) return false;
+  for (let p = n; p; p = p.parentElement) { const s = getComputedStyle(p); if (s.display === "none" || Number(s.opacity) < 0.3) return false; }
+  return true;
+}
+const out = [];
+const W = innerWidth, H = innerHeight;
+const label = (n) => (n.id ? "#" + n.id : "") + "." + [...n.classList].slice(0, 2).join(".") + ' "' + (n.textContent || "").trim().slice(0, 30) + '"';
+for (const n of document.querySelectorAll("body *")) {
+  if (!visible(n) || n.closest("#test-results, svg, video, canvas, .emoji-grid, iframe, .reaction-emoji, .emoji")) continue;
+  const cs = getComputedStyle(n);
+  const r = n.getBoundingClientRect();
+  const ownText = [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim());
+  // Cut-off text: content wider than the box, no ellipsis, not a scroller.
+  if (ownText && n.scrollWidth > n.clientWidth + 1 && cs.textOverflow !== "ellipsis" && !/(auto|scroll)/.test(cs.overflowX) && cs.overflowX === "hidden") out.push("cut off without …: " + label(n));
+  if (ownText && cs.overflowX === "visible" && n.scrollWidth > n.clientWidth + 2 && cs.whiteSpace === "nowrap" && !n.closest(".menu, .submenu")) {
+    const parent = n.parentElement.getBoundingClientRect();
+    if (r.right > parent.right + 2) out.push("text spills out of its box: " + label(n));
+  }
+  // Outside the window.
+  if ((r.right > W + 1 || r.bottom > H + 1 || r.left < -1 || r.top < -1) && cs.position === "fixed") out.push("outside the window: " + label(n));
+  // Contrast for text.
+  if (ownText && n.textContent.trim().length > 1) {
+    const fg = rgb(cs.color);
+    if (fg && (fg[3] ?? 1) > 0.5) {
+      const bg = bgOf(n);
+      const L1 = lum(fg), L2 = lum(bg);
+      const ratio = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+      const size = parseFloat(cs.fontSize);
+      const need = n.closest("button:disabled, [disabled], .skeleton, .placeholder") ? 1.5 : size >= 18 ? 3 : 3.2;
+      if (ratio < need && !n.matches("input, textarea")) out.push("hard to read (" + ratio.toFixed(1) + ":1): " + label(n));
+    }
+  }
+}
+// Clickable things covering each other (the top one at a button's middle isn't it).
+for (const b of document.querySelectorAll("button, a[href], [role=button]")) {
+  if (!visible(b) || b.closest("#test-results")) continue;
+  const r = b.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  if (x < 0 || y < 0 || x > W || y > H) continue;
+  const top = document.elementFromPoint(x, y);
+  if (top && !b.contains(top) && !top.contains(b) && top.closest("button, a[href], [role=button], input") && !top.closest(".popover, .menu, dialog[open], .modal, #server-submenu") === !b.closest(".popover, .menu, dialog[open], .modal, #server-submenu")) out.push("covered by another control: " + label(b) + " under " + label(top));
+}
+const pre = document.createElement("pre");
+pre.id = "test-results";
+pre.textContent = [...new Set(out)].join("\\n");
+document.body.append(pre);
+`;
+
+let total = 0;
+for (const [w, h] of sizes) {
+  for (const theme of themes) {
+    for (const [name, steps] of Object.entries(scenes)) {
+      const script = `(async () => { await inServer(); prefs.theme = "${theme}"; applyTheme(); ${STRESS} ${steps} await wait(150); ${probe} })();`;
+      const file = join(work, "v.js");
+      writeFileSync(file, script);
+      const html = join(work, "v.html");
+      writeFileSync(html, page.replace('<script src="main.js"></script>', '<script src="mock.js"></script><script src="main.js"></script><script src="v.js"></script>'));
+      let dom = "";
+      try {
+        dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${w},${h}`, "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(html).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      } catch (e) {
+        dom = String(e.stdout ?? "");
+      }
+      const m = dom.match(/<pre id="test-results">([\s\S]*?)<\/pre>/);
+      const lines = (m?.[1] ?? "scene never finished").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').split("\n").filter(Boolean);
+      if (lines.length) {
+        console.log(`\n${name} · ${theme} · ${w}×${h}`);
+        for (const l of lines) console.log("  " + l);
+        total += lines.length;
+      }
+    }
+  }
+}
+console.log(total ? `\n${total} findings` : "\nnothing found");
+process.exit(total ? 1 : 0);
