@@ -1062,8 +1062,11 @@ function railFolder(f) {
   head.addEventListener("click", () => {
     if (railDrag.justDropped) return;
     f.open = !f.open;
+    // Only the opening itself unfolds with motion; later redraws (switching servers) stay still.
+    railOpening = f.open ? f : null;
     saveRail();
     renderRail();
+    railOpening = null;
   });
   head.addEventListener("contextmenu", (e) => openFolderMenu(f, e.clientX, e.clientY));
 
@@ -1076,7 +1079,7 @@ function railFolder(f) {
     head.append(box);
     return head;
   }
-  const wrap = el("div", "folder-open");
+  const wrap = el("div", "folder-open" + (railOpening === f ? " opening" : ""));
   wrap.style.setProperty("--folder", color);
   const glyph = el("span", "rail-icon folder-glyph");
   glyph.append(icon("folder"));
@@ -1084,6 +1087,8 @@ function railFolder(f) {
   wrap.append(head, ...f.ids.map(serverById).filter(Boolean).map((s) => railServer(s, f)));
   return wrap;
 }
+
+var railOpening = null;
 
 function renderRail() {
   $("home-btn").classList.toggle("active", state.atHome || (!state.activeId && !state.connectingId));
@@ -1595,6 +1600,15 @@ async function connectTo(server, create, reconnecting) {
   state.replyTo = null;
   state.editing = null;
   state.latency = null;
+  // Coming back to a server we saw this session: its remembered messages stay on screen
+  // until the server has sent this channel's history, so the chat never blinks empty.
+  state.keepStale = serverViews.has(server.id);
+  clearTimeout(state.keepStaleTimer);
+  state.keepStaleTimer = setTimeout(() => {
+    if (!state.keepStale) return;
+    state.keepStale = false;
+    if (online()) renderMessages(false);
+  }, 4000);
   renderAll();
 
   try {
@@ -1815,6 +1829,7 @@ listen("chat-history", (e) => {
   const server = currentServer();
   if (server) noteHistory(server, ch, messages);
   // While connecting, the channel is drawn once the server is ready (with its address in the keys).
+  if (ch === state.view) state.keepStale = false;
   if (ch === state.view && online()) renderMessages(false);
   renderUnread();
   // Opened from a message link: go to it once its channel is here.
@@ -2164,6 +2179,8 @@ function renderSidebar() {
 }
 
 function openTextChannel(id) {
+  // Picking another channel: the remembered view belongs to the old one.
+  state.keepStale = false;
   if (state.view !== id) {
     saveDraft();
     setReply(null);
@@ -2606,6 +2623,11 @@ function renderMessages(keepScrollUnlessAtBottom) {
     const hint = isOwner() ? "Create one with the + next to Text channels." : "The server owner hasn't created one yet.";
     empty.append(badge, el("h1", "", "No text channels"), el("p", "", hint));
     $("messages").replaceChildren(empty);
+    return;
+  }
+  // Just back on this server: what was here stays until the history arrives (see connectTo).
+  if (state.keepStale && !state.chats.has(state.view)) {
+    renderedChannel = undefined;
     return;
   }
   const name = channelName(state.view);
@@ -10344,7 +10366,7 @@ function rememberServerView() {
     channel: $("chat-channel").textContent,
     topic: $("chat-topic").textContent,
     sidebar: [...$("sidebar-body").children],
-    messages: [...$("messages").children].filter((n) => n.dataset.key),
+    messages: [...$("messages").children].filter((n) => n.dataset.key || n.classList.contains("welcome") || n.classList.contains("day-divider")),
     members: [...$("member-list").children],
   });
 }

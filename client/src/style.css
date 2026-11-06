@@ -198,7 +198,7 @@ kbd { font: 600 12px "Inter", sans-serif; background: var(--elev-2); border: 1px
 }
 .rail-item:hover::before { height: 20px; }
 .rail-item.active::before { height: 40px; }
-.rail-item.connecting .rail-icon { animation: pulse 1.1s ease-in-out infinite; }
+.rail-item.connecting .rail-icon { animation: pulse 1.1s ease-in-out 400ms infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 .rail-item.home .rail-icon { color: var(--text); }
 .rail-item.home .i { width: 26px; height: 26px; }
@@ -1877,7 +1877,7 @@ details.advanced-card > summary:hover { color: var(--text); }
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--folder) 22%, transparent);
 }
 /* Opening a folder: its servers slide in, one after another. */
-.folder-open > .rail-item:not(.folder-head) { animation: folder-in 160ms ease-out both; }
+.folder-open.opening > .rail-item:not(.folder-head) { animation: folder-in 160ms ease-out both; }
 .folder-open > .rail-item:nth-child(3) { animation-delay: 20ms; }
 .folder-open > .rail-item:nth-child(4) { animation-delay: 40ms; }
 .folder-open > .rail-item:nth-child(n+5) { animation-delay: 60ms; }
