@@ -3295,3 +3295,17 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .reaction.mine { background: color-mix(in srgb, var(--link) 22%, transparent); border-color: transparent; }
 .rail-item.home .rail-icon, .rail-item.add .rail-icon { background: var(--layer-2); }
 .rail-item.home.active .rail-icon { background: var(--text); }
+/* Not a floating window: the content runs to the window's edges. A thin line separates it
+   from the server list and the top, with one soft corner where they meet. */
+:root { --line: color-mix(in srgb, var(--text) 9%, transparent); }
+.frame {
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 12px;
+  overflow: hidden;
+}
+.channel-view, .home-view {
+  margin: 0;
+  border-radius: 0;
+  border-left: 1px solid var(--line);
+}
