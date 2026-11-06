@@ -12223,6 +12223,14 @@ function renderNewsNav(body, head) {
   }));
 }
 
+/** About Hopp: what it is and what it stands for. */
+var NEWS_ABOUT = [
+  ["A place to hang out", "Hopp is where you and your friends talk, play and share: servers with text and voice channels, calls, cameras and screens, and messages between friends."],
+  ["Free, all of it", "Everything in Hopp is free: screen sharing in full quality, cameras, profile banners, uploads and every look. There is nothing to unlock."],
+  ["Private by design", "Messages between friends are end-to-end encrypted, your Hopp ID is a key that stays on your computer, and calls go straight between you whenever they can. No ads and no tracking."],
+  ["Light and fast", "Hopp is a small download, starts quickly and switches between servers at once. Updates come when you choose to install them."],
+];
+
 /** Guides: a few short articles each, plain and friendly. */
 var NEWS_GUIDES = {
   start: [
@@ -12286,16 +12294,14 @@ async function renderNews() {
     const hero = el("div", "news-hero");
     const mark = el("span", "news-logo");
     mark.append(icon("logo"));
-    hero.append(mark, el("h1", "", "Hopp"), el("p", "", "Voice, video and chat for you and your friends. Free, with no ads and no tracking."));
+    hero.append(mark, el("h1", "", "Hopp"), el("p", "", "Voice, video and chat for you and your friends."));
     page.append(hero);
-    const card = el("article", "news-item");
-    card.append(el("h2", "", "Version " + (updates.version || "?")));
-    const sub = el("p", "news-text", updates.found ? "Hopp " + updates.found.version + " is ready to install." : "Hopp checks for new versions by itself; you choose when to install them.");
-    const check = el("button", "btn sm" + (updates.found ? " primary" : ""), updates.found ? "Restart and update" : "Check for updates");
-    check.type = "button";
-    check.addEventListener("click", () => (updates.found ? installUpdate() : checkForUpdate(true).then(renderNews)));
-    card.append(sub, check);
-    page.append(card);
+    for (const [title, text] of NEWS_ABOUT) {
+      const item = el("article", "news-item");
+      item.append(el("h2", "", title), el("p", "news-text", text));
+      page.append(item);
+    }
+    page.append(el("p", "news-version", "Hopp " + (updates.version || "")));
   } else {
     const hero = el("div", "news-hero");
     hero.append(el("span", "news-kicker", "Guide"), el("h1", "", label));

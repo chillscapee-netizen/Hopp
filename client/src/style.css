@@ -3581,3 +3581,4 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .news-points li + li { margin-top: 4px; }
 .news-text { margin: 0 0 12px; color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
 .news-text:last-child { margin-bottom: 0; }
+.news-version { margin: 8px 0 0; color: var(--faint); font-size: 13px; text-align: center; }
