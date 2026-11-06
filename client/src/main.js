@@ -1500,6 +1500,7 @@ function openServerMenu(server, x, y) {
             { label: "Create channel", icon: "plus", action: () => onServer(server, () => openChannelDialog("text")) },
           ]
         : []),
+      ...(active && nicknamesOn() ? [{ label: "Change nickname", icon: "edit", action: () => changeNickname(meUser()) }] : []),
       "sep",
       // Notifications fold out to the side: one row here, the choices there.
       { label: "Notifications", submenu: [
@@ -2747,7 +2748,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(el("span", "msg-gutter", clock(m.sent_at)));
     } else {
       const head = el("div", "msg-head");
-      const author = el("span", "msg-author", m.sender_name);
+      const author = el("span", "msg-author", nameHere(m.author_key) ?? m.sender_name);
       author.style.color = roleColorByKey(m.author_key) ?? `hsl(${hue(m.sender_name)} var(--name-s) var(--name-l))`;
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
@@ -2795,7 +2796,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key)]);
     items.push(li);
     prev = m;
   }
@@ -4289,6 +4290,9 @@ function openUserCard(user, anchor) {
   else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
   renderUserRole(user);
   renderCardActions(user);
+  const real = accountNameOf(user);
+  $("user-card-realname").textContent = real ?? "";
+  $("user-card-realname").hidden = !real;
   // What they wrote about themselves, when known.
   const bio = (keyOf(user) === state.account?.publicKey ? state.me?.bio : profiles.get(keyOf(user))?.bio) ?? "";
   $("user-card-bio").textContent = bio;
@@ -8268,7 +8272,7 @@ function renderMemberList() {
   const q = $("member-search").value.trim().toLowerCase();
   const online = new Set((state.roster?.users ?? []).map((u) => u.public_key));
   const members = state.members
-    .filter((m) => !q || m.name.toLowerCase().includes(q))
+    .filter((m) => !q || m.name.toLowerCase().includes(q) || (m.account_name ?? "").toLowerCase().includes(q))
     .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0) || a.name.localeCompare(b.name));
   $("member-count").textContent = `${state.members.length} ${state.members.length === 1 ? "member" : "members"}`;
   if (!members.length) {
@@ -8284,7 +8288,7 @@ function renderMemberList() {
       const text = el("span", "admin-text");
       const name = el("strong", "ellipsis", m.name);
       const joined = new Date(m.joined_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-      text.append(name, el("span", "admin-sub", `${online.has(m.public_key) ? "Online · " : ""}Joined ${joined}`));
+      text.append(name, el("span", "admin-sub", `${m.nick && m.account_name && m.account_name !== m.nick ? m.account_name + " · " : ""}${online.has(m.public_key) ? "Online · " : ""}Joined ${joined}`));
       who.append(text);
       li.append(who);
       const actions = el("span", "member-admin-actions");
@@ -9405,6 +9409,7 @@ function openUserMenu(u, row, e) {
   const friend = key ? state.friends?.get(key) : null;
   const vol = userVolume(u) ?? 100;
   const items = [{ label: "Profile", icon: "user", action: () => openUserCard(u, row) }];
+  if (nicknamesOn() && (isSelf || (can("moderate") && outranks(u))) && key) items.push({ label: "Change nickname", icon: "edit", action: () => changeNickname(u) });
   // Your own roles, from your own menu.
   if (isSelf) {
     const mine = roleItems(u);
@@ -11298,7 +11303,7 @@ function slowmodeWait(view) {
 }
 
 var AUDIT_WORDS = {
-  kick: "kicked", ban: "banned", unban: "unbanned", timeout: "timed out", untimeout: "lifted the timeout for",
+  kick: "kicked", nickname: "changed the nickname of", ban: "banned", unban: "unbanned", timeout: "timed out", untimeout: "lifted the timeout for",
   role: "changed the role of", transfer: "gave the server to", create_channel: "created the channel", update_channel: "edited the channel",
   delete_channel: "deleted the channel", delete_message: "deleted a message by", server_mute: "server-muted", server_unmute: "unmuted",
   server_deafen: "server-deafened", server_undeafen: "undeafened", voice_disconnect: "disconnected", voice_move: "moved",
@@ -11612,7 +11617,7 @@ document.addEventListener("mousedown", (e) => {
 // the rows whose look changed are rebuilt.
 var lastRoleLook = "";
 function roleLookChanged() {
-  const look = JSON.stringify([state.roster?.roles ?? [], (state.roster?.users ?? []).map((u) => [u.public_key, u.roles ?? [], u.role ?? null])]);
+  const look = JSON.stringify([state.roster?.roles ?? [], (state.roster?.users ?? []).map((u) => [u.public_key, u.roles ?? [], u.role ?? null, u.name])]);
   if (look === lastRoleLook) return;
   lastRoleLook = look;
   if (online() && state.view !== null && renderedChannel === state.view) renderMessages(true);
@@ -11918,3 +11923,43 @@ setInterval(() => {
     renderUserPanel();
   }
 }, 30_000);
+
+// ---------- nicknames ----------
+//
+// A name of your own in a server (and moderators can change people's). The server sends it
+// as the person's name; messages show the name someone has here now.
+
+function nicknamesOn() {
+  return !!state.roster?.features?.includes("nicknames");
+}
+
+/** Someone's name in this server right now, when they're here. */
+function nameHere(key) {
+  if (!key || !online()) return null;
+  return state.roster.users.find((u) => keyOf(u) === key)?.name ?? null;
+}
+
+/** Their own name, when the one shown here is a nickname. */
+function accountNameOf(u) {
+  const key = keyOf(u);
+  const own = key === state.account?.publicKey ? state.account?.name : state.friends?.get(key)?.display_name ?? profiles.get(key)?.display_name;
+  return own && own !== u.name ? own : null;
+}
+
+async function changeNickname(u) {
+  if (!u) return;
+  const self = u.session_id === state.roster?.me;
+  const own = self ? state.account?.name : accountNameOf(u) ?? u.name;
+  const value = await askText({
+    title: self ? "Your nickname here" : "Nickname for " + u.name,
+    label: "Nickname",
+    value: u.name === own ? "" : u.name,
+    hint: (self ? "Only in " : "Only in ") + (activeServer()?.label ?? "this server") + ". Leave it empty to use " + (self ? "your own name" : "their own name") + " (" + own + ").",
+  });
+  if (value === null || value === undefined) return;
+  try {
+    await invoke("set_nickname", { publicKey: keyOf(u), nick: value.trim() || null });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}

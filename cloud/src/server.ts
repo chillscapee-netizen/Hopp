@@ -109,7 +109,7 @@ interface User {
 type Role = "owner" | "admin" | "mod";
 const RANK: Record<string, number> = { owner: 3, admin: 2, mod: 1 };
 const rank = (role: Role | null | undefined) => (role ? RANK[role] : 0);
-interface Member { public_key: string; name: string; role: Role | null; joined_at: number; roles: number[] }
+interface Member { public_key: string; name: string; role: Role | null; joined_at: number; roles: number[]; nick?: string | null; account_name?: string }
 interface Reply { id: number; sender_name: string; author_key: string; text: string }
 interface Reaction { emoji: string; keys: string[] }
 interface ChatMessage {
@@ -254,6 +254,7 @@ export class StromServer extends DurableObject<Env> {
     if (!roleColumns.has("mentionable")) this.sql.exec("ALTER TABLE roles ADD COLUMN mentionable INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
+    if (!accountColumns.has("nick")) this.sql.exec("ALTER TABLE accounts ADD COLUMN nick TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
     if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
     // Replies, edits and reactions came later: add their columns to older servers.
@@ -410,11 +411,13 @@ export class StromServer extends DurableObject<Env> {
   private memberList(): Member[] {
     const owner = this.meta("owner");
     return this.sql
-      .exec("SELECT key, name, role, created_at FROM accounts ORDER BY lower(name)")
+      .exec("SELECT key, name, nick, role, created_at FROM accounts ORDER BY lower(coalesce(nick, name))")
       .toArray()
       .map((r) => ({
         public_key: String(r.key),
-        name: String(r.name),
+        name: String(r.nick ?? r.name),
+        nick: r.nick === null ? null : String(r.nick),
+        account_name: String(r.name),
         role: r.key === owner ? "owner" : r.role === "admin" || r.role === "mod" ? (r.role as Role) : null,
         joined_at: Number(r.created_at),
         roles: this.rolesOf(String(r.key)),
@@ -661,7 +664,9 @@ export class StromServer extends DurableObject<Env> {
 
     const now = Date.now();
     const key = s.key!;
-    const name = s.name!;
+    const accountName = s.name!;
+    const nick = this.sql.exec("SELECT nick FROM accounts WHERE key = ?", key).toArray()[0]?.nick;
+    const name = nick == null ? accountName : String(nick);
 
     // A brand-new server is created by whoever asks for it first; they own it.
     if (this.meta("name") === null) {
@@ -711,7 +716,7 @@ export class StromServer extends DurableObject<Env> {
     }
     this.sql.exec(
       "INSERT INTO accounts (key, name, created_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET name = excluded.name",
-      key, name, now,
+      key, accountName, now,
     );
 
     // Back in the server: the next news in each channel reaches their account again.
@@ -744,7 +749,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames"],
       roles: this.customRoles(),
     });
     for (const ch of channels) {
@@ -1289,6 +1294,27 @@ export class StromServer extends DurableObject<Env> {
           ows.serializeAttachment({ stage: "removed" } satisfies Session);
           ows.close(4001, banned ? "banned" : "kicked");
           this.broadcast({ type: "user_left", session_id: os.user!.session_id });
+        }
+        return;
+      }
+      case "set_nickname": {
+        // Your own: anyone. Someone else's: moderators, for people below them.
+        const key = String(msg.public_key ?? "");
+        const nick = msg.nick == null ? "" : String(msg.nick).trim();
+        if ([...nick].length > 32) return this.error(ws, "Nicknames are up to 32 characters.");
+        const row = this.sql.exec("SELECT name, nick FROM accounts WHERE key = ?", key).toArray()[0];
+        if (!row) return this.error(ws, "They're not a member of this server anymore.");
+        const self = key === s.key;
+        if (!self) {
+          if (!allowed("mod")) return;
+          if (rank(this.roleOf(key)) >= myRank) return this.error(ws, "You can't change the nickname of someone with the same role as you or higher.");
+        }
+        this.sql.exec("UPDATE accounts SET nick = ? WHERE key = ?", nick || null, key);
+        const shown = nick || String(row.name);
+        if (!self) this.audit(user.name, "nickname", String(row.nick ?? row.name), nick ? "to " + nick : "reset");
+        for (const [tws, ts] of this.members().filter(([, m]) => m.key === key)) {
+          ts.name = shown;
+          this.updateUser(tws, ts, (u) => (u.name = shown));
         }
         return;
       }

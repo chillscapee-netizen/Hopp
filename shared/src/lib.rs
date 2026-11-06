@@ -176,6 +176,12 @@ pub struct Ban {
 pub struct Member {
     pub public_key: String,
     pub name: String,
+    /// Their nickname here, when they have one (`name` is then the nickname).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nick: Option<String>,
+    /// Their own name, apart from any nickname.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_name: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
@@ -369,6 +375,8 @@ pub enum ClientMsg {
     ReorderRoles { order: Vec<u32> },
     /// Gives someone a role, or takes it away.
     AssignRole { public_key: String, role: u32, on: bool },
+    /// Your name in this server (yours: anyone; someone else's: moderators). None resets it.
+    SetNickname { public_key: String, nick: Option<String> },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },
     /// Allowed for the author and the owner.

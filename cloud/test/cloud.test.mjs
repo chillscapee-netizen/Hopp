@@ -810,3 +810,40 @@ test("resync: a connection kept in the background gets its channels again", asyn
   owner.close();
   bob.close();
 });
+
+test("nicknames: your own, a moderator's for others, kept for next time, shown on new messages", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("nicknames"));
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+  const bobKey = bob.key.pub;
+  // Bob names himself.
+  bob.send({ type: "set_nickname", public_key: bobKey, nick: "Bobby" });
+  const renamed = await owner.waitFor((m) => m.type === "user_updated" && m.user.public_key === bobKey && m.user.name === "Bobby");
+  assert.equal(renamed.user.name, "Bobby");
+  bob.send({ type: "send_chat", channel: general, text: "hi" });
+  const msg = await owner.waitFor((m) => m.type === "chat" && m.message.text === "hi");
+  assert.equal(msg.message.sender_name, "Bobby", "new messages carry the nickname");
+  // Bob can't rename the owner; the owner can rename Bob.
+  bob.send({ type: "set_nickname", public_key: owner.key.pub, nick: "Boss" });
+  assert.match(await errorOf(bob), /moderator|admin|owner|can't/i);
+  owner.send({ type: "set_nickname", public_key: bobKey, nick: "Robert" });
+  await bob.waitFor((m) => m.type === "user_updated" && m.user.public_key === bobKey && m.user.name === "Robert");
+  // Kept: back next time with it.
+  bob.close();
+  await new Promise((r) => setTimeout(r, 200));
+  const again = await join(id, "bob", { key: bob.key });
+  assert.equal(again.welcome.users.find((u) => u.public_key === bobKey).name, "Robert");
+  // The members list shows both names; the audit log has it.
+  owner.send({ type: "get_members" });
+  const members = await owner.waitFor((m) => m.type === "members");
+  const row = members.members.find((m) => m.public_key === bobKey);
+  assert.deepEqual([row.name, row.nick, row.account_name], ["Robert", "Robert", "bob"]);
+  owner.send({ type: "get_audit_log" });
+  assert.equal((await owner.waitFor((m) => m.type === "audit_log")).entries[0].action, "nickname");
+  // Empty resets it.
+  again.send({ type: "set_nickname", public_key: bobKey, nick: null });
+  await owner.waitFor((m) => m.type === "user_updated" && m.user.public_key === bobKey && m.user.name === "bob");
+  owner.close();
+  again.close();
+});

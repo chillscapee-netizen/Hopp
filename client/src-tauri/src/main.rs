@@ -1032,6 +1032,12 @@ fn assign_role(state: State<'_, AppState>, public_key: String, role: u32, on: bo
     with_conn(&state, |c| c.control.send(ClientMsg::AssignRole { public_key, role, on }))
 }
 
+/// Your name in this server, or (moderators) someone else's.
+#[tauri::command]
+fn set_nickname(state: State<'_, AppState>, public_key: String, nick: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetNickname { public_key, nick }))
+}
+
 /// Moderators: times someone out (0 minutes lifts it).
 #[tauri::command]
 fn timeout_member(state: State<'_, AppState>, session_id: SessionId, minutes: u32) -> CmdResult {
@@ -1666,6 +1672,7 @@ fn main() {
             delete_role,
             reorder_roles,
             assign_role,
+            set_nickname,
             get_audit_log,
             set_loopback,
             local_address,

@@ -762,7 +762,8 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 | ClientMsg::UpdateRole { .. }
                 | ClientMsg::DeleteRole { .. }
                 | ClientMsg::ReorderRoles { .. }
-                | ClientMsg::AssignRole { .. } => error("This server doesn't have that yet."),
+                | ClientMsg::AssignRole { .. }
+                | ClientMsg::SetNickname { .. } => error("This server doesn't have that yet."),
                 ClientMsg::Kick { session_id: target } | ClientMsg::Ban { session_id: target, .. } => {
                     let banned = matches!(msg, ClientMsg::Ban { .. });
                     if !is_owner {

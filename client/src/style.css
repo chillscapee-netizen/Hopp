@@ -3529,3 +3529,4 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .member-info { flex: 1; min-width: 0; display: grid; }
 .member-sub { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .member-sub > .ellipsis { flex: 1; min-width: 0; }
+.user-card-realname { margin-top: -2px; color: var(--muted); font-size: 13px; }
