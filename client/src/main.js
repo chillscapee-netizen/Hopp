@@ -3346,7 +3346,7 @@ function adminRow(main, sub, actionLabel, action) {
 function renderInviteList(invites) {
   const list = $("invite-list");
   if (invites.length === 0) {
-    list.replaceChildren(el("li", "admin-empty", "No active invites. Create one with Invite people."));
+    list.replaceChildren(el("li", "admin-empty", "No active invites yet."));
     return;
   }
   list.replaceChildren(
@@ -11161,3 +11161,9 @@ function roleMentionNode(id) {
   if (r?.color) node.style.setProperty("--role", r.color);
   return node;
 }
+
+// Making an invite from the Invites page: it opens over settings, and the list follows when it's closed.
+$("invites-create").addEventListener("click", () => {
+  openInvite();
+  $("invite-dialog").addEventListener("close", () => { if ($("server-settings").open) call("get_server_settings"); }, { once: true });
+});

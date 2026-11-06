@@ -3323,3 +3323,5 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 /* Setting rows in dialogs: soft, no outline. */
 .setting-row { border: none; background: var(--layer-2); }
 .theme-pic-side { background: transparent !important; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.page-head h2 { margin: 0 !important; }
