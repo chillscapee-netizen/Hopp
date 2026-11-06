@@ -6,3 +6,4 @@ strom-data/
 cloud/public/download/
 cloud/public/update/
 target-release/
+cloud/public/whats-new.json

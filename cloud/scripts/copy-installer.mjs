@@ -14,6 +14,10 @@ const download = dir("../public/download/");
 const update = dir("../public/update/");
 const { version } = JSON.parse(readFileSync(dir("../../client/src-tauri/tauri.conf.json"), "utf8"));
 
+// The home page shows the app's own news, so it is current after every deploy.
+const appNotes = dir("../../client/src/whats-new.json");
+if (existsSync(appNotes)) copyFileSync(appNotes, dir("../public/whats-new.json"));
+
 const name = `Hopp_${version}_x64-setup.exe`;
 const setup = join(bundles, name);
 if (!existsSync(setup)) {
