@@ -3499,3 +3499,13 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .call-stage.live-call, .call-stage.live-call.has-video { padding-bottom: 64px; }
 .call-controls { padding: 4px; }
 .call-stage.live-call:fullscreen { padding-bottom: 64px; }
+/* The new call view decides its tiles' sizes: the old call layout's sizes don't apply. */
+.call-stage.live-call .voice-tile.call-person.video, .call-stage.live-call .voice-tile.call-person { width: var(--tile-w, 220px); height: auto; aspect-ratio: 16 / 9; }
+.call-stage.live-call .voice-tiles.strip { align-items: center; }
+.call-stage.live-call .voice-tiles.strip .voice-tile { width: var(--tile-w, 120px); height: auto; aspect-ratio: 16 / 9; }
+.call-stage.live-call .stage-main .voice-tile.focus { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
+.call-stage.live-call .voice-tile .tile-video { aspect-ratio: auto; height: 100%; }
+/* The row under the one in the middle: room for a name. */
+.call-stage.live-call .voice-tiles.strip { --tile-w: 150px !important; }
+.call-stage.live-call .voice-tiles.strip .voice-tile-name { left: 6px; bottom: 6px; max-width: calc(100% - 12px); font-size: 12px; padding: 1px 6px; }
+.call-stage.live-call .voice-tiles.strip .voice-tile-marks { top: 6px; right: 6px; bottom: auto; }

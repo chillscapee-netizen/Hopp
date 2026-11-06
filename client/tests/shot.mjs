@@ -29,6 +29,15 @@ copyFileSync(setup, join(work, "setup.js"));
 const page = readFileSync(join(here, "..", "src", "index.html"), "utf8").replace('<script src="main.js"></script>', '<script src="mock.js"></script><script src="main.js"></script><script src="setup.js"></script>');
 const file = join(work, "shot.html");
 writeFileSync(file, page);
+// An updating Edge restarts itself in processes that outlive this run: end ours first.
+const cleanUp = () => {
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'msedge.exe' -and $_.CommandLine -like '*hopp-page-shots*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"], { stdio: "ignore" });
+  } catch {
+    // Nothing to end.
+  }
+};
+cleanUp();
 try {
   execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${width},${height}`, "--virtual-time-budget=8000", `--screenshot=${resolve(out)}`, pathToFileURL(file).href], { stdio: "ignore" });
 } catch {
