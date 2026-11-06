@@ -77,7 +77,7 @@
   const elinCam = await playing(`#call-stage .call-person[data-session="1"] video`);
   check("a camera in a call arrives", elinCam?.videoWidth === 320, String(elinCam?.videoWidth));
   callButtons()[2].click();
-  const screen = await playing("#call-stage .call-screen video");
+  const screen = await playing("#call-stage .screen-tile video");
   check("a shared screen in a call shows big", !!screen);
   emit("account", { type: "call", from: KEYS.elin, kind: "end", call_id: "abcdabcd-1111" });
   await wait(200);

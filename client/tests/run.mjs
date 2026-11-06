@@ -46,6 +46,17 @@ try {
   process.exit(1);
 }
 
+// Some Edge builds (e.g. while an update waits for a restart) print nothing with --dump-dom.
+// Then every test runs live over the debugging port (slower, in real time).
+const probeFile = join(work, "probe.html");
+writeFileSync(probeFile, "<html><body>probe-ok</body></html>");
+let dumpWorks = false;
+try {
+  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
+} catch (e) {
+  dumpWorks = String(e.stdout ?? "").includes("probe-ok");
+}
+if (!dumpWorks) console.log("(Edge prints no pages here: running every test live)");
 const filter = process.argv[2] ?? "";
 const tests = readdirSync(here).filter((f) => f.endsWith(".test.js") && f.includes(filter));
 let failed = 0;
@@ -61,7 +72,7 @@ for (const test of tests) {
   // up to that long for the results.
   const real = source.match(/\/\/ real-time: (\d+)/)?.[1];
   let dom;
-  if (real) dom = await runLive(file, test, Number(real));
+  if (real || !dumpWorks) dom = await runLive(file, test, Number(real ?? budget) + (real ? 0 : 15000));
   else {
     try {
       dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
@@ -82,9 +93,20 @@ console.log(failed ? `\n${failed} failed` : "\nall passed");
 process.exit(failed ? 1 : 0);
 
 /** Runs a page in real time through Edge's debugging port; returns its results block. */
+/** Ends headless Edge processes this runner started (an updating Edge restarts itself in a new
+ *  process that kill() never reaches; left over, they slow every later test). */
+function cleanUp() {
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'msedge.exe' -and $_.CommandLine -like '*hopp-page-tests*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"], { stdio: "ignore" });
+  } catch {
+    // Nothing to end.
+  }
+}
+
 async function runLive(file, test, timeoutMs) {
+  cleanUp();
   const port = 9300 + Math.floor(Math.random() * 500);
-  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     let target = null;
@@ -121,5 +143,6 @@ async function runLive(file, test, timeoutMs) {
     return "";
   } finally {
     browser.kill();
+    cleanUp();
   }
 }

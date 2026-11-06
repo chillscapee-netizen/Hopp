@@ -7463,72 +7463,181 @@ function renderCall() {
     actions.append(join);
     stage.replaceChildren(people, el("div", "call-stage-status", "Call in progress"), actions);
   }
-  if (here) {
-    const me = state.me ?? {};
-    const people = el("div", "call-people");
-    people.classList.toggle("many", !!c.group && c.inCall.size > 2);
-    const withVideo = (tile, id) => {
-      const cam = mediaStream("cam", id);
-      if (cam) tile.replaceChildren(videoEl("cam|" + id, cam, id === "me"), ...tile.querySelectorAll(".call-name"));
-      tile.classList.toggle("video", !!cam);
-      return tile;
-    };
-    people.append(withVideo(who({ display_name: state.account?.name, avatar: me.avatar }, c.me), "me"));
-    if (c.group) for (const k of c.inCall) people.append(withVideo(who(personFor(k), callSession(k)), k));
-    else people.append(withVideo(who(personFor(c.peer), c.other), c.peer));
-    // A shared screen: big, above everyone.
-    const screens = [...mediaIn.entries()].filter(([k]) => k.startsWith("screen|")).map(([k, v]) => [k, v.stream]);
-    if (media.out.screen) screens.unshift(["screen|me", media.out.screen.stream]);
-    const shown = screens.slice(0, 1).map(([k, s]) => {
-      const frame = el("div", "call-screen");
-      const video = videoEl(k, s, false);
-      const bar = el("div", "stage-bar");
-      const btn = (name, label, fn) => {
-        const b = el("button", "stage-btn");
-        b.type = "button";
-        b.setAttribute("aria-label", label);
-        b.append(icon(name));
-        b.addEventListener("click", fn);
-        bar.append(b);
-      };
-      btn("pip", "Pop out", () => (document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture?.())?.catch?.(() => {}));
-      btn(document.fullscreenElement === frame ? "minimize" : "maximize", "Full screen", () => (document.fullscreenElement ? document.exitFullscreen() : frame.requestFullscreen()).catch(() => {}));
-      frame.addEventListener("dblclick", () => (document.fullscreenElement ? document.exitFullscreen() : frame.requestFullscreen()).catch(() => {}));
-      frame.append(video, bar);
-      if (k === "screen|me") frame.append(el("span", "call-screen-label", "Your screen · what " + (c.group ? "the others see" : personFor(c.peer).display_name + " sees")));
-      return frame;
-    });
-    stage.classList.toggle("has-video", shown.length > 0 || people.querySelector(".video") !== null);
-    stage.classList.toggle("has-screen", shown.length > 0);
-    people.classList.toggle("videos", people.querySelector(".video") !== null);
-    const status = el("div", "call-stage-status", callStatusText(c));
-    const actions = el("div", "call-stage-actions");
-    const camBtn = el("button", "call-btn media" + (media.out.cam ? " on" : ""));
-    camBtn.type = "button";
-    camBtn.setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
-    camBtn.append(icon(media.out.cam ? "video" : "video-off"));
-    camBtn.addEventListener("click", () => (media.out.cam ? stopOut("cam") : startCamera()));
-    const shareBtn = el("button", "call-btn media" + (media.out.screen ? " on" : ""));
-    shareBtn.type = "button";
-    shareBtn.setAttribute("aria-label", media.out.screen ? "Stop sharing your screen" : "Share your screen");
-    shareBtn.append(icon("monitor"));
-    shareBtn.addEventListener("click", () => (media.out.screen ? stopOut("screen") : startCallScreen()));
-    const micBtn = el("button", "call-btn media" + (state.muted ? " off" : ""));
-    micBtn.type = "button";
-    micBtn.setAttribute("aria-label", state.muted ? "Unmute" : "Mute");
-    micBtn.append(icon(state.muted ? "mic-off" : "mic"));
-    micBtn.addEventListener("click", () => $("mute-btn").click());
-    actions.append(micBtn);
-    if (c.engineReady) actions.append(camBtn, shareBtn);
-    const hang = el("button", "call-btn decline");
-    hang.type = "button";
-    hang.dataset.tip = "Hang up";
-    hang.append(icon("phone-off"));
-    hang.addEventListener("click", () => endCall());
-    actions.append(hang);
-    stage.replaceChildren(...shown, people, status, actions);
+  stage.classList.toggle("live-call", !!here);
+  if (here) renderCallStage(c);
+  // The call panel above your name: like the voice panel, with camera, screen and soundboard.
+  if (c && !ringingHere) {
+    const ready = !!c.engineReady;
+    $("call-actions").hidden = !ready;
+    $("call-cam-btn").classList.toggle("on", !!media.out.cam);
+    $("call-cam-btn").setAttribute("aria-label", media.out.cam ? "Turn off camera" : "Turn on camera");
+    $("call-cam-btn").querySelector("use").setAttribute("href", media.out.cam ? "#i-video" : "#i-video-off");
+    $("call-share-btn").classList.toggle("on", !!media.out.screen);
+    $("call-share-btn").setAttribute("aria-label", media.out.screen ? "Stop sharing your screen" : "Share your screen");
   }
 }
+
+/**
+ * A call in its conversation, laid out like a voice channel: everyone's tile (camera or
+ * picture) and each shared screen as its own tile, sized to fill the call area. Click a
+ * video to put it in the middle (the others in a row below); the buttons along the bottom
+ * stay over the call, also in full screen. The area's height is yours to drag.
+ */
+var callFocus = null;
+function renderCallStage(c) {
+  const stage = $("call-stage");
+  const me = state.me ?? {};
+  const people = [{ id: "me", session: c.me, name: state.account?.name ?? "You", avatar: me.avatar }];
+  if (c.group) for (const k of c.inCall) people.push({ id: k, session: callSession(k), name: personFor(k).display_name, avatar: personFor(k).avatar });
+  else people.push({ id: c.peer, session: c.other, name: personFor(c.peer).display_name, avatar: personFor(c.peer).avatar });
+
+  const tiles = [];
+  for (const p of people) {
+    const cam = mediaStream("cam", p.id);
+    const tile = el("button", "voice-tile call-person" + (cam ? " video" : ""));
+    tile.type = "button";
+    tile.dataset.session = p.session;
+    tile.dataset.key = "cam|" + p.id;
+    if (cam) tile.append(videoEl("cam|" + p.id, cam, p.id === "me"));
+    else tile.append(avatar(p.name ?? "?", "s64", undefined, p.avatar));
+    tile.append(el("span", "voice-tile-name ellipsis", p.id === "me" ? p.name + " (you)" : p.name));
+    if (cam) tile.addEventListener("click", () => setCallFocus("cam|" + p.id));
+    tiles.push(tile);
+    const screen = mediaStream("screen", p.id);
+    if (screen) {
+      const st = el("button", "voice-tile video screen-tile");
+      st.type = "button";
+      st.dataset.key = "screen|" + p.id;
+      st.append(videoEl("screen|" + p.id, screen, false), el("span", "voice-tile-name ellipsis", p.id === "me" ? "Your screen" : p.name + "'s screen"));
+      const marks = el("span", "voice-tile-marks");
+      marks.append(el("span", "live-pill", "LIVE"));
+      st.append(marks);
+      st.addEventListener("click", () => setCallFocus("screen|" + p.id));
+      tiles.push(st);
+    }
+  }
+  // A screen just shared (by anyone else) goes in the middle by itself, once.
+  const screens = tiles.filter((t) => t.classList.contains("screen-tile")).map((t) => t.dataset.key);
+  for (const k of screens) if (!callSeen.has(k)) {
+    callSeen.add(k);
+    if (k !== "screen|me" && callFocus === null) callFocus = k;
+  }
+  for (const k of [...callSeen]) if (!screens.includes(k)) callSeen.delete(k);
+  if (callFocus && !tiles.some((t) => t.dataset.key === callFocus)) callFocus = null;
+
+  const grid = el("div", "voice-tiles" + (callFocus ? " strip" : ""));
+  let main = null;
+  for (const t of tiles) {
+    if (t.dataset.key === callFocus) {
+      t.classList.add("focus");
+      main = el("div", "stage-main");
+      main.append(t);
+    } else grid.append(t);
+  }
+
+  // Top: how long, and the view's buttons.
+  const top = el("div", "call-top");
+  top.append(el("span", "call-stage-status", callStatusText(c)));
+  const bar = el("div", "stage-bar");
+  const btn = (name, label, fn) => {
+    const x = el("button", "stage-btn");
+    x.type = "button";
+    x.setAttribute("aria-label", label);
+    x.append(icon(name));
+    x.addEventListener("click", fn);
+    bar.append(x);
+  };
+  if (main) {
+    btn("pip", "Pop out", () => {
+      const v = main.querySelector("video");
+      if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+      else v?.requestPictureInPicture?.().catch(() => toast("This video can't pop out right now.", true));
+    });
+    btn("grid", "Show everyone", () => setCallFocus(null));
+  }
+  btn(document.fullscreenElement === stage ? "minimize" : "maximize", "Full screen", () => (document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen()).catch(() => {}));
+  top.append(bar);
+
+  // Bottom: mic, camera, screen, hang up — over the call, also in full screen.
+  const controls = el("div", "call-controls");
+  const control = (name, label, on, fn, cls = "") => {
+    const x = el("button", "call-btn media" + (on ? " on" : "") + cls);
+    x.type = "button";
+    x.setAttribute("aria-label", label);
+    x.append(icon(name));
+    x.addEventListener("click", fn);
+    controls.append(x);
+  };
+  control(state.muted ? "mic-off" : "mic", state.muted ? "Unmute" : "Mute", false, () => $("mute-btn").click(), state.muted ? " off" : "");
+  if (c.engineReady) {
+    control(media.out.cam ? "video" : "video-off", media.out.cam ? "Turn off camera" : "Turn on camera", !!media.out.cam, () => (media.out.cam ? stopOut("cam") : startCamera()));
+    control("monitor", media.out.screen ? "Stop sharing your screen" : "Share your screen", !!media.out.screen, () => (media.out.screen ? stopOut("screen") : startCallScreen()));
+  }
+  const hang = el("button", "call-btn decline");
+  hang.type = "button";
+  hang.setAttribute("aria-label", "Hang up");
+  hang.append(icon("phone-off"));
+  hang.addEventListener("click", () => endCall());
+  controls.append(hang);
+
+  const grip = el("div", "call-grip");
+  grip.addEventListener("mousedown", startCallResize);
+  stage.replaceChildren(top, ...(main ? [main] : []), grid, controls, grip);
+  stage.classList.toggle("has-video", tiles.some((t) => t.classList.contains("video")));
+  const h = callHeight();
+  stage.style.height = h + "px";
+  // Too low for a row of people under the one in the middle: just the one.
+  stage.classList.toggle("low", !!main && h < 400 && document.fullscreenElement !== stage);
+  fitCallTiles();
+}
+var callSeen = new Set();
+
+function setCallFocus(key) {
+  callFocus = callFocus === key ? null : key;
+  renderCall();
+}
+
+/** The call area's height: what you dragged it to, or a size that suits what's in it. */
+function callHeight() {
+  const view = $("home").clientHeight || window.innerHeight;
+  const video = $("call-stage").classList.contains("has-video");
+  // With video: most of the room, leaving the conversation a few lines below.
+  const wanted = prefs.callHeight ?? (video ? view - 230 : 300);
+  return Math.round(Math.max(220, Math.min(wanted, view - 170)));
+}
+prefs.callHeight = loadJson("callHeight", null);
+
+function startCallResize(e) {
+  e.preventDefault();
+  const stage = $("call-stage");
+  const startY = e.clientY;
+  const startH = stage.offsetHeight;
+  document.body.classList.add("resizing-call");
+  const move = (ev) => {
+    prefs.callHeight = startH + ev.clientY - startY;
+    stage.style.height = callHeight() + "px";
+    fitCallTiles();
+  };
+  const up = () => {
+    document.body.classList.remove("resizing-call");
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
+    prefs.callHeight = $("call-stage").offsetHeight;
+    save("callHeight", JSON.stringify(prefs.callHeight));
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+}
+
+function fitCallTiles() {
+  fitTiles(document.querySelector("#call-stage .voice-tiles"));
+}
+new ResizeObserver(() => fitCallTiles()).observe($("call-stage"));
+document.addEventListener("fullscreenchange", () => state.call && renderCall());
+
+$("call-cam-btn").addEventListener("click", () => (media.out.cam ? stopOut("cam") : startCamera()));
+$("call-share-btn").addEventListener("click", () => (media.out.screen ? stopOut("screen") : startCallScreen()));
+$("call-sound-btn").addEventListener("click", (e) => openSoundboard(e.currentTarget));
 
 $("dm-call-btn").addEventListener("click", () => state.openDm && (isGroup(state.openDm) ? startGroupCall(state.openDm) : startCall(state.openDm)));
 $("call-accept").addEventListener("click", answerCall);
@@ -10625,8 +10734,7 @@ function renderVoiceStage() {
 }
 
 /** Sizes the tiles so everyone fits the space as big as possible (16:9 each). */
-function fitTiles() {
-  const box = document.querySelector("#voice-stage .voice-tiles");
+function fitTiles(box = document.querySelector("#voice-stage .voice-tiles")) {
   if (!box || box.classList.contains("strip")) return;
   const n = box.children.length;
   const w = box.clientWidth;

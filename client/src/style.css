@@ -3448,3 +3448,49 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .server-tint:not(.has-picture) { color: #fff; }
 .row-text .row-sub { color: var(--muted); }
 .server-chip:not(.has-picture) { color: #fff; }
+
+/* ---------- a call in its conversation: like a voice channel ---------- */
+.call-panel .voice-top { display: flex; align-items: center; gap: 8px; }
+.call-panel .voice-info { flex: 1; min-width: 0; }
+.call-panel .call-where { display: block; max-width: 100%; padding: 0; border: none; background: none; text-align: left; cursor: pointer; }
+.call-panel .call-where:hover { color: var(--text); text-decoration: underline; }
+
+.call-stage.live-call { position: relative; flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-height: 220px; padding: 12px 16px 64px; background: var(--sink); border: none; }
+.call-stage.live-call:fullscreen { background: var(--app-bg, var(--app-solid)); padding: 16px 20px 76px; height: 100% !important; }
+.call-top { flex: none; display: flex; align-items: center; justify-content: space-between; min-height: 34px; }
+.call-top .stage-bar { position: static; }
+.call-top .call-stage-status { display: block !important; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.call-stage.live-call .voice-tiles { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-content: safe center; justify-content: center; gap: 8px; overflow-y: auto; max-width: none; max-height: none; padding: 0; }
+.call-stage.live-call .voice-tile { position: relative; display: grid; place-items: center; width: var(--tile-w, 220px); aspect-ratio: 16 / 9; padding: 0; overflow: hidden; border: none; border-radius: 12px; background: var(--tile, rgb(255 255 255 / 0.065)); color: var(--text-2); font: inherit; cursor: default; }
+.call-stage.live-call .voice-tile.video { cursor: pointer; background: #000; }
+.call-stage.live-call .voice-tile:not(.video) .avatar { width: clamp(32px, calc(var(--tile-w, 220px) * 0.2), 104px); height: clamp(32px, calc(var(--tile-w, 220px) * 0.2), 104px); font-size: clamp(13px, calc(var(--tile-w, 220px) * 0.07), 36px); margin-bottom: 14px; }
+.call-stage.live-call .voice-tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.call-stage.live-call .screen-tile video, .call-stage.live-call .voice-tile.focus video { object-fit: contain; }
+.call-stage.live-call .voice-tile-name { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 70px); padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.5); color: #fff; font-size: 13px; font-weight: 600; }
+.call-stage.live-call .voice-tile-marks { position: absolute; right: 8px; bottom: 8px; }
+.call-stage.live-call .voice-tile.speaking { box-shadow: inset 0 0 0 2px var(--green); }
+.call-stage.live-call .voice-tile.speaking .avatar { box-shadow: none; }
+.call-stage.live-call .stage-main { flex: 1; min-height: 0; display: grid; }
+.call-stage.live-call .stage-main .voice-tile.focus { width: 100%; height: 100%; aspect-ratio: auto; }
+.call-stage.live-call .voice-tiles.strip { flex: none; flex-wrap: nowrap; justify-content: center; overflow-x: auto; overflow-y: hidden; --tile-w: 150px; }
+.call-stage.live-call .voice-tiles.strip .voice-tile { flex: none; }
+.call-controls { position: absolute; left: 50%; bottom: 12px; z-index: 3; display: flex; gap: 10px; padding: 6px; border-radius: 999px; background: rgb(0 0 0 / 0.28); transform: translateX(-50%); }
+.call-controls .call-btn { width: 44px; height: 44px; }
+.call-grip { position: absolute; left: 0; right: 0; bottom: -4px; height: 8px; z-index: 4; cursor: ns-resize; }
+.call-grip::after { content: ""; position: absolute; left: 50%; top: 3px; width: 36px; height: 3px; border-radius: 2px; background: var(--faint); opacity: 0; transform: translateX(-50%); transition: opacity 120ms; }
+.call-stage:hover .call-grip::after, body.resizing-call .call-grip::after { opacity: 0.6; }
+body.resizing-call { cursor: ns-resize; user-select: none; }
+body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
+.call-stage.live-call.has-video { padding-bottom: 12px; }
+.call-stage.live-call.has-video .call-controls { opacity: 0; transition: opacity 150ms; }
+.call-stage.live-call.has-video:hover .call-controls, .call-stage.live-call.has-video:focus-within .call-controls { opacity: 1; }
+.call-stage.live-call .voice-tiles.strip { --tile-w: 120px; }
+.call-stage.live-call.low .voice-tiles.strip { display: none; }
+/* The emoji picker fits any window. */
+.emoji-picker, .emoji-picker.with-gifs { max-height: calc(100vh - 16px); }
+/* "Invite" in light themes: a green that reads. */
+.invite-friend-btn { color: color-mix(in srgb, var(--green) 78%, var(--text)); }
+/* The call's buttons have a row of their own at the bottom, always there, never over a tile. */
+.call-stage.live-call.has-video { padding-bottom: 64px; }
+.call-stage.live-call.has-video .call-controls { opacity: 1; }
+.invite-friend-btn:hover { background: color-mix(in srgb, var(--green) 28%, transparent); color: color-mix(in srgb, var(--green) 78%, var(--text)); }

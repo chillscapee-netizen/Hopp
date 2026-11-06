@@ -31,6 +31,10 @@
   check("a jump reaches a message far up", !!target && target.classList.contains("flash"));
 
   // Back at the bottom with a lot drawn: trimmed again, out of sight.
+  // (A jump scrolls smoothly; in real time it may still be moving.)
+  await wait(800);
+  scroller.scrollTop = scroller.scrollHeight;
+  await wait(100);
   scroller.scrollTop = scroller.scrollHeight;
   await wait(50);
   emit("chat", { id: 5601, channel: 3, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "newest", sent_at: Date.now() });

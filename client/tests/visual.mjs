@@ -9,7 +9,7 @@
 //
 // It runs the page like the page tests do (mock.js for Tauri).
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,12 +56,20 @@ const scenes = {
   emoji: `$("emoji-btn").click(); await wait(250);`,
   servermenu: `$("sidebar-head").click(); await wait(150); [...document.querySelectorAll("#server-menu .menu-item")].find((b) => b.textContent.trim() === "Notifications")?.dispatchEvent(new MouseEvent("mouseenter")); await wait(150);`,
   status: `$("me-card").click(); await wait(200);`,
+  call: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; renderCall(); await wait(200);`,
+  callscreen: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; const c = document.createElement("canvas"); c.width = 640; c.height = 360; c.getContext("2d").fillRect(0, 0, 640, 360); mediaIn.set("screen|" + KEYS.elin, { stream: c.captureStream(5) }); renderCall(); await wait(300);`,
 };
 const themes = ["dusk", "light", "mid"];
 const sizes = [[1366, 768], [940, 560]];
 
 const probe = `
-function rgb(c) { const m = c.match(/[\\d.]+/g); return m ? m.map(Number) : null; }
+function rgb(c) {
+  const m = c.match(/[\\d.]+/g);
+  if (!m) return null;
+  const v = m.map(Number);
+  // color(srgb r g b / a) gives 0 to 1 (what color-mix() computes to).
+  return c.startsWith("color(") ? [v[0] * 255, v[1] * 255, v[2] * 255, v[3] ?? 1] : v;
+}
 function lum([r, g, b]) { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }
 function bgOf(el) {
   // The first solid-ish background behind an element (layers mixed over the window's colour).
@@ -127,6 +135,65 @@ pre.textContent = [...new Set(out)].join("\\n");
 document.body.append(pre);
 `;
 
+// Some Edge builds print nothing with --dump-dom (an update waiting for a restart): then each
+// scene runs live over the debugging port.
+const probeFile = join(work, "probe.html");
+writeFileSync(probeFile, "<html><body>probe-ok</body></html>");
+let dumpWorks = false;
+try {
+  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
+} catch (e) {
+  dumpWorks = String(e.stdout ?? "").includes("probe-ok");
+}
+
+function cleanUp() {
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'msedge.exe' -and $_.CommandLine -like '*hopp-visual*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"], { stdio: "ignore" });
+  } catch {
+    // Nothing to end.
+  }
+}
+
+async function runLive(file, w, h) {
+  cleanUp();
+  const port = 9300 + Math.floor(Math.random() * 500);
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live")}`, `--window-size=${w},${h}`, `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    let target = null;
+    for (let i = 0; i < 50 && !target; i++) {
+      await sleep(200);
+      target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(pathToFileURL(file).href)}`, { method: "PUT" }).then((r) => r.json()).catch(() => null);
+    }
+    if (!target) return "";
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((r) => ws.addEventListener("open", r, { once: true }));
+    let id = 0;
+    const evaluate = (expression) => new Promise((resolve) => {
+      const mine = ++id;
+      const onMessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.id !== mine) return;
+        ws.removeEventListener("message", onMessage);
+        resolve(msg.result?.result?.value ?? null);
+      };
+      ws.addEventListener("message", onMessage);
+      ws.send(JSON.stringify({ id: mine, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+    });
+    const until = Date.now() + 25000;
+    while (Date.now() < until) {
+      const out = await evaluate("document.getElementById('test-results')?.outerHTML ?? null");
+      if (out) { ws.close(); return out; }
+      await sleep(300);
+    }
+    ws.close();
+    return "";
+  } finally {
+    browser.kill();
+    cleanUp();
+  }
+}
+
 let total = 0;
 for (const [w, h] of sizes) {
   for (const theme of themes) {
@@ -137,11 +204,13 @@ for (const [w, h] of sizes) {
       const html = join(work, "v.html");
       writeFileSync(html, page.replace('<script src="main.js"></script>', '<script src="mock.js"></script><script src="main.js"></script><script src="v.js"></script>'));
       let dom = "";
-      try {
-        dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${w},${h}`, "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(html).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-      } catch (e) {
-        dom = String(e.stdout ?? "");
-      }
+      if (dumpWorks) {
+        try {
+          dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${w},${h}`, "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(html).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+        } catch (e) {
+          dom = String(e.stdout ?? "");
+        }
+      } else dom = await runLive(html, w, h);
       const m = dom.match(/<pre id="test-results">([\s\S]*?)<\/pre>/);
       const lines = (m?.[1] ?? "scene never finished").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').split("\n").filter(Boolean);
       if (lines.length) {

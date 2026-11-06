@@ -212,11 +212,18 @@
         </section>
 
         <section id="call-panel" class="voice-panel call-panel" hidden>
-          <div class="voice-info">
-            <div class="voice-status"><svg class="i sm"><use href="#i-phone"/></svg> <span id="call-status-text"></span></div>
-            <button id="call-where" type="button" class="voice-where call-where ellipsis"></button>
+          <div class="voice-top">
+            <div class="voice-info">
+              <div class="voice-status"><svg class="i sm"><use href="#i-phone"/></svg> <span id="call-status-text"></span></div>
+              <button id="call-where" type="button" class="voice-where call-where ellipsis"></button>
+            </div>
+            <button id="call-hangup" class="icon-btn" aria-label="Hang up"><svg class="i"><use href="#i-phone-off"/></svg></button>
           </div>
-          <button id="call-hangup" class="icon-btn" data-tip="Hang up"><svg class="i"><use href="#i-phone-off"/></svg></button>
+          <div id="call-actions" class="voice-actions">
+            <button id="call-cam-btn" type="button" class="voice-action share-btn" aria-label="Turn on camera"><svg class="i"><use href="#i-video-off"/></svg></button>
+            <button id="call-share-btn" type="button" class="voice-action share-btn" aria-label="Share your screen"><svg class="i"><use href="#i-monitor"/></svg></button>
+            <button id="call-sound-btn" type="button" class="voice-action" aria-label="Soundboard"><svg class="i"><use href="#i-music"/></svg></button>
+          </div>
         </section>
 
         <footer class="user-panel">
