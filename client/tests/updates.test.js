@@ -2,7 +2,7 @@
 
 (async () => {
   await inServer();
-  check("no arrow without an update", $("update-btn").hidden);
+  check("a grey arrow without an update", !$("update-btn").hidden && !$("update-btn").classList.contains("ready"));
 
   updates.version = "0.2.1";
   let installed = 0;
@@ -34,7 +34,13 @@
   await checkForUpdate(true);
   check("says you have the newest", $("version-sub").textContent === "You have the newest version." && !$("update-btn").classList.contains("ready"));
   check("version shown", $("version-title").textContent === "Hopp 0.2.1");
-  check("and the arrow goes away", $("update-btn").hidden);
+  check("and the arrow stays, grey", !$("update-btn").hidden && !$("update-btn").classList.contains("ready"));
+  let checked = 0;
+  commands.check_update = () => { checked++; return null; };
+  $("update-btn").click();
+  await wait(50);
+  check("clicking the grey arrow looks for updates at once", checked === 1 && document.querySelector(".update-pop")?.textContent.includes("newest version"));
+  closeUpdatePop();
 
   commands.check_update = () => { throw "network down"; };
   await checkForUpdate(true);
