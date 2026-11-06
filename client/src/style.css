@@ -3538,3 +3538,4 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .banner-swatch:hover { transform: scale(1.08); }
 .banner-swatch.active { border-color: var(--text); }
 .banner-row { align-items: flex-start; }
+.menu-item .status-swatch + .menu-text { flex: 1; text-align: left; }

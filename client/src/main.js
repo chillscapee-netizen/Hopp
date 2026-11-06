@@ -4723,8 +4723,8 @@ function openStatusMenu(x, y) {
       { heading: "Status" },
       item("online"),
       item("idle"),
-      item("dnd", "No notification sounds"),
-      item("invisible", "You'll look offline"),
+      item("dnd"),
+      item("invisible"),
       "sep",
       liveStatus(state.me?.custom_status)
         ? { label: statusLine(state.me.custom_status), sub: "Change your custom status", icon: "edit", action: openStatusDialog }
