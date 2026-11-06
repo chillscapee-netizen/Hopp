@@ -487,6 +487,12 @@ async fn main() -> anyhow::Result<()> {
                         public: msg["public"].as_str().map(String::from),
                         local: msg["local"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(String::from)).collect(),
                     };
+                    // The same person ringing again lost the old call (their app closed without
+                    // saying so): that one is over.
+                    if kind == "ring" && call.as_ref().is_some_and(|c| c.group.is_none() && c.in_call.contains(&from)) {
+                        println!("{} rang again: the old call is over", &from[..8]);
+                        call = None;
+                    }
                     match kind {
                         "ring" if call.is_none() => {
                             let Some(key) = me.open_from(&from, msg["sealed"].as_str().unwrap_or_default()).ok().and_then(|b| String::from_utf8(b).ok()).and_then(|h| key_from_hex(&h)) else { continue };

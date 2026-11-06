@@ -25,5 +25,20 @@
   await wait(3200);
   check("once answered, the ringing stops by itself", !state.ringTimer);
   await endCall();
+
+  // A friend whose app closed mid-call rings again: the old call is over, the new one rings.
+  emit("account", { type: "call", from: KEYS.elin, kind: "ring", call_id: "aaaa1111-0001", sealed: "plain:" + "cd".repeat(32) });
+  await wait(100);
+  state.call.status = "live";
+  const busy = [];
+  commands.account_send = (a) => { if (a.msg.kind === "busy") busy.push(a); return send(a); };
+  emit("account", { type: "call", from: KEYS.elin, kind: "ring", call_id: "aaaa1111-0002", sealed: "plain:" + "cd".repeat(32) });
+  await wait(150);
+  check("the same friend ringing again replaces the lost call", state.call?.id === "aaaa1111-0002" && state.call.status === "ringing" && !busy.length);
+  emit("account", { type: "call", from: KEYS.jonas, kind: "ring", call_id: "bbbb2222-0001", sealed: "plain:" + "cd".repeat(32) });
+  await wait(100);
+  check("someone else ringing then hears busy", busy.length === 1 && state.call.id === "aaaa1111-0002");
+  commands.account_send = send;
+  await endCall();
   report();
 })();

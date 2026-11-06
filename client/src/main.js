@@ -7258,7 +7258,9 @@ async function handleCallSignal(m) {
   const c = state.call;
   const name = personFor(m.from).display_name;
   if (m.kind === "ring") {
-    if (c) return callSend({ peer: m.from, id: m.call_id }, "busy");
+    // The same friend ringing again lost our call (their app closed without saying so): it's over.
+    if (c && !c.group && c.peer === m.from && c.id !== m.call_id) await endCall("remote");
+    if (state.call) return callSend({ peer: m.from, id: m.call_id }, "busy");
     let key;
     try {
       key = await invoke("dm_open", { peer: m.from, sealed: m.sealed });
