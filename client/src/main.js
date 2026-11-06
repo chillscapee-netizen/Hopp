@@ -2860,7 +2860,9 @@ function inviteCardView(p, known, link) {
   const card = el("div", "invite-card");
   // A server picks its own icon: only plain image data goes into the style.
   const art = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(p.icon ?? "") ? p.icon : null;
-  if (art) card.style.setProperty("--invite-art", `url("${art}")`);
+  // Blurred once, as a tiny picture the card stretches (a live blur filter is redrawn
+  // whenever the window changes size, which made resizing lag).
+  if (art) blurredArt(art).then((url) => url && card.style.setProperty("--invite-art", `url("${url}")`));
   card.classList.toggle("has-art", !!art);
   card.append(el("div", "invite-card-kicker", p.kicker));
   const row = el("div", "invite-card-row");
@@ -9968,6 +9970,7 @@ function applyTheme() {
   }
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
+  if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
   // Names in role colours are adjusted for light and dark: redraw them.
   if (state.roster && typeof online === "function" && online()) {
     renderSidebar();
@@ -11639,3 +11642,44 @@ async function joinFriendVoice(where) {
   openTextChannel(where.channel);
   joinVoice(where.channel);
 }
+
+/** A picture blurred into a tiny one (kept per picture), for soft backgrounds that cost nothing to draw. */
+var blurCache = new Map();
+function blurredArt(src) {
+  if (blurCache.has(src)) return blurCache.get(src);
+  const done = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = 24;
+      c.height = 24;
+      const g = c.getContext("2d");
+      g.filter = "blur(2px) saturate(1.2)";
+      g.drawImage(img, -4, -4, 32, 32);
+      resolve(c.toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+  blurCache.set(src, done);
+  return done;
+}
+
+// The window behind the page takes the app's colour, so growing the window never shows black
+// before the page catches up.
+var windowColor = "";
+function syncWindowColor() {
+  const probe = document.createElement("span");
+  probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--app-solid").trim() || "#333338";
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  const m = color.match(/[\d.]+/g);
+  if (!m) return;
+  const [r, g, b] = (color.startsWith("color(") ? m.slice(0, 3).map((v) => v * 255) : m.slice(0, 3).map(Number)).map((v) => Math.round(v));
+  const hex = "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  if (hex === windowColor) return;
+  windowColor = hex;
+  invoke("window_color", { rgb: hex }).catch(() => {});
+}
+syncWindowColor();

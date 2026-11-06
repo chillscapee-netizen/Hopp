@@ -132,7 +132,7 @@ static COMPACT: AtomicBool = AtomicBool::new(true);
 /// The window has been shown at least once (it starts hidden, to appear at the right size).
 static SHOWN: AtomicBool = AtomicBool::new(false);
 static STARTED_HIDDEN: AtomicBool = AtomicBool::new(false);
-static LAST_SAVE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static SAVE_TICKET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Bounds {
@@ -147,31 +147,34 @@ fn bounds_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("window.json"))
 }
 
-/// Remembers where the full-size window is, a couple of times a second at most.
+/// Remembers where the full-size window is: once the moving or resizing has stopped for a
+/// moment, read and written on a thread of its own, so dragging the window never waits on it.
 fn remember_bounds(window: &tauri::Window) {
-    if COMPACT.load(Ordering::Relaxed) || window.is_minimized().unwrap_or(false) {
+    if COMPACT.load(Ordering::Relaxed) {
         return;
     }
-    {
-        let mut last = LAST_SAVE.lock().unwrap();
-        if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400)) {
+    let ticket = SAVE_TICKET.fetch_add(1, Ordering::Relaxed) + 1;
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Moved or resized again meanwhile: that later one saves.
+        if SAVE_TICKET.load(Ordering::Relaxed) != ticket || COMPACT.load(Ordering::Relaxed) || window.is_minimized().unwrap_or(false) {
             return;
         }
-        *last = Some(std::time::Instant::now());
-    }
-    let maximized = window.is_maximized().unwrap_or(false);
-    let previous = bounds_path(window.app_handle()).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Bounds>(&b).ok());
-    // Maximized: keep the size it goes back to.
-    let bounds = match (maximized, previous) {
-        (true, Some(p)) => Bounds { maximized: true, ..p },
-        _ => {
-            let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
-            Bounds { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized }
+        let maximized = window.is_maximized().unwrap_or(false);
+        let previous = bounds_path(window.app_handle()).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Bounds>(&b).ok());
+        // Maximized: keep the size it goes back to.
+        let bounds = match (maximized, previous) {
+            (true, Some(p)) => Bounds { maximized: true, ..p },
+            _ => {
+                let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
+                Bounds { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized }
+            }
+        };
+        if let Some(path) = bounds_path(window.app_handle()) {
+            let _ = std::fs::write(path, serde_json::to_vec(&bounds).unwrap_or_default());
         }
-    };
-    if let Some(path) = bounds_path(window.app_handle()) {
-        let _ = std::fs::write(path, serde_json::to_vec(&bounds).unwrap_or_default());
-    }
+    });
 }
 
 fn reveal(window: &tauri::WebviewWindow) {
@@ -211,6 +214,20 @@ fn on_a_screen(w: &tauri::WebviewWindow, b: &Bounds) -> bool {
         let (x, y) = (b.x + 100, b.y + 15);
         x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
     })
+}
+
+/// The window's own colour, shown for a moment while it grows (before the page catches up):
+/// the app's background, so a resize never flashes black. `rgb` is "#rrggbb".
+#[tauri::command]
+pub fn window_color(app: AppHandle, rgb: String) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let hex = rgb.trim_start_matches('#');
+    let Ok(n) = u32::from_str_radix(hex, 16) else { return };
+    if hex.len() != 6 {
+        return;
+    }
+    let color = tauri::window::Color((n >> 16) as u8, (n >> 8) as u8, n as u8, 255);
+    let _ = w.set_background_color(Some(color));
 }
 
 /// The full app window, where it was last time.

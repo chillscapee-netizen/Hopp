@@ -19,7 +19,7 @@
   cards.find((c) => c.dataset.theme === "light").click();
   await wait(50);
   check("Light grey turns the app light", css("color-scheme") === "light" && bodyBg() !== midBg);
-  const [r, g, b] = getComputedStyle(document.querySelector(".shell")).backgroundColor.match(/\d+/g).map(Number);
+  const [r, g, b] = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number);
   check("with a light background", r > 200 && g > 200 && b > 200, `${r} ${g} ${b}`);
   const text = getComputedStyle(document.body).color.match(/\d+/g).map(Number);
   check("and dark text", text[0] < 60, text.join(" "));

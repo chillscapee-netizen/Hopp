@@ -2678,9 +2678,9 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 /* The server's picture, blurred and faint, behind the card. */
 .invite-card.has-art::before {
   content: "";
-  position: absolute; inset: -40px;
+  position: absolute; inset: 0;
   background: var(--invite-art) center / cover;
-  filter: blur(36px) saturate(1.2);
+  image-rendering: auto;
   opacity: 0.22;
   pointer-events: none;
 }
@@ -3509,3 +3509,6 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .call-stage.live-call .voice-tiles.strip { --tile-w: 150px !important; }
 .call-stage.live-call .voice-tiles.strip .voice-tile-name { left: 6px; bottom: 6px; max-width: calc(100% - 12px); font-size: 12px; padding: 1px 6px; }
 .call-stage.live-call .voice-tiles.strip .voice-tile-marks { top: 6px; right: 6px; bottom: auto; }
+/* The window's colours are drawn once, behind everything. */
+.shell { background: transparent !important; }
+.invite-card { border: none; }
