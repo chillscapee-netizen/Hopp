@@ -727,6 +727,8 @@ async function logout() {
   if (syncState.dirty && syncState.ready) await pushSync();
   Object.assign(syncState, { version: 0, saving: false, dirty: false, timer: null, ready: false });
   await call("logout");
+  // The next account connects its own servers in the background.
+  warmStarted = false;
   state.account = null;
   renderBackupState();
   state.activeId = null;
@@ -1446,7 +1448,7 @@ function menuItems(items, inSub = false) {
         sub.hidden = false;
         const left = r.right + 4 + 220 > window.innerWidth ? r.left - 224 : r.right + 4;
         sub.style.left = left + "px";
-        sub.style.top = Math.min(r.top - 6, window.innerHeight - sub.offsetHeight - 8) + "px";
+        sub.style.top = Math.max(8, Math.min(r.top - 6, window.innerHeight - sub.offsetHeight - 8)) + "px";
       };
       b.addEventListener("mouseenter", open);
       b.addEventListener("click", open);
@@ -1712,7 +1714,16 @@ listen("roster", (e) => {
   const before = myVoice();
   const mineBefore = state.roster?.users.find((u) => u.session_id === state.roster.me);
   const companyBefore = voiceCompany();
+  const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
+  // A channel made just now has no history coming: it starts empty, with its welcome.
+  if (knownChannels.size) {
+    for (const c of state.roster.channels) {
+      if (knownChannels.has(c.id) || state.chats.has(c.id)) continue;
+      state.chats.set(c.id, []);
+      state.olderDone.add(c.id);
+    }
+  }
   const after = myVoice();
   if ((before === null) !== (after === null)) setActivityFromVoice();
   if (before === null && after !== null) playSound("join");
@@ -2407,6 +2418,11 @@ function renderChannelView() {
 }
 
 $("members-toggle").addEventListener("click", () => {
+  // A narrow window has no room beside the chat: the list opens over it instead.
+  if (window.matchMedia("(max-width: 1100px)").matches) {
+    document.querySelector(".channel-view").classList.toggle("members-over");
+    return;
+  }
   prefs.showMembers = !prefs.showMembers;
   save("showMembers", prefs.showMembers ? "1" : "0");
   renderChannelView();
@@ -2559,7 +2575,7 @@ function renderInline(text, out) {
     if (kind === "code") out.append(el("code", "inline-code", inner));
     else if (kind === "mention") out.append(el("span", "mention" + (inner === state.account?.publicKey ? " me" : ""), `@${nameForKey(inner)}`));
     else if (kind === "role") out.append(roleMentionNode(Number(inner)));
-    else if (kind === "crowd") out.append(pingsOn() ? el("span", "mention" + (crowdQuiet(currentServer()?.address) ? "" : " me"), m[0]) : m[0]);
+    else if (kind === "crowd") out.append(pingsOn() && !state.atHome ? el("span", "mention" + (crowdQuiet(currentServer()?.address) ? "" : " me"), m[0]) : m[0]);
     else if (kind === "link") out.append(linkNode(m[0]));
     else {
       const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : "span", kind === "spoiler" ? "spoiler" : "");
@@ -7388,6 +7404,7 @@ function renderCall() {
   const elsewhere = dmOpen && isGroup(state.openDm) && !(c && c.peer === state.openDm) ? state.groupCalls.get(state.openDm) : null;
   const joinable = elsewhere?.inCall.size ? elsewhere : null;
   $("dm-call-btn").hidden = !dmOpen || !!c || !!joinable;
+  $("dm-video-btn").hidden = $("dm-call-btn").hidden;
   $("dm-search-input-box").hidden = !dmOpen;
   const here = c && dmOpen && c.peer === state.openDm && !ringingHere;
   const stage = $("call-stage");
@@ -8475,7 +8492,8 @@ function renderInviteFriends() {
   const friends = [...(state.friends?.values() ?? [])]
     .filter((f) => f.state === "friend")
     .filter((f) => !q || f.display_name.toLowerCase().includes(q) || (f.username ?? "").toLowerCase().includes(q))
-    .sort((a, b) => (a.status === "offline") - (b.status === "offline") || a.display_name.localeCompare(b.display_name));
+    // Those you can still invite first; friends already here go last.
+    .sort((a, b) => here.has(a.key) - here.has(b.key) || (a.status === "offline") - (b.status === "offline") || a.display_name.localeCompare(b.display_name));
   const hasFriends = [...(state.friends?.values() ?? [])].some((f) => f.state === "friend");
   $("invite-friend-search").hidden = !hasFriends;
   $("invite-link-label").textContent = hasFriends ? "Or send a server invite link" : "Send a server invite link";
@@ -9178,6 +9196,11 @@ function openUserMenu(u, row, e) {
   const friend = key ? state.friends?.get(key) : null;
   const vol = userVolume(u) ?? 100;
   const items = [{ label: "Profile", icon: "user", action: () => openUserCard(u, row) }];
+  // Your own roles, from your own menu.
+  if (isSelf) {
+    const mine = roleItems(u);
+    if (mine.length) items.push("sep", ...mine);
+  }
   if (!isSelf) {
     items.push({ label: "Mention", icon: "at", action: () => mentionUser(u) });
     if (friend?.state === "friend") {
@@ -10999,7 +11022,8 @@ function roleColorByKey(key) {
 
 /** "Roles" in someone's menu, for admins: tick to give, untick to take. */
 function roleItems(u) {
-  const roles = state.roster?.roles ?? [];
+  // Admin-level roles are the owner's to give: others don't see them here.
+  const roles = (state.roster?.roles ?? []).filter((r) => r.level !== "admin" || can("own"));
   if (!rolesOn() || !can("manage") || !roles.length || !keyOf(u)) return [];
   return [{
     label: "Roles",
@@ -11197,9 +11221,12 @@ function warmServersSoon() {
   if (warmStarted) return;
   warmStarted = true;
   setTimeout(async () => {
-    for (const s of [...prefs.servers]) {
-      if (!state.account || s.invite || s.id === state.activeId || s.id === state.connectingId) continue;
-      await invoke("warm", { address: endpoint(s) }).catch(() => {});
+    const wanted = (s) => state.account && !s.invite && s.id !== state.activeId && s.id !== state.connectingId;
+    // A LAN server that is off can take long to give up: those go on their own, so Hopp
+    // Cloud servers (one at a time) never wait for them.
+    for (const s of prefs.servers.filter((x) => !isCloud(x))) if (wanted(s)) invoke("warm", { address: endpoint(s) }).catch(() => {});
+    for (const s of prefs.servers.filter(isCloud)) {
+      if (wanted(s)) await invoke("warm", { address: endpoint(s) }).catch(() => {});
     }
   }, 2500);
 }
@@ -11227,4 +11254,26 @@ listen("background-chat", (e) => {
     notifyMention({ server: server.address, channel: m.channel, author_key: m.author_key, author_name: m.sender_name, channel_name: channel_name ?? "", text: previewText(m.text), mention });
   }
   renderUnread();
+});
+
+// A video call: the call starts, and your camera turns on as soon as it is connected.
+$("dm-video-btn").addEventListener("click", async () => {
+  const peer = state.openDm;
+  if (!peer) return;
+  await (isGroup(peer) ? startGroupCall(peer) : startCall(peer));
+  const started = Date.now();
+  const wait = setInterval(() => {
+    if (!state.call || Date.now() - started > 90_000) return clearInterval(wait);
+    if (state.call.engineReady) {
+      clearInterval(wait);
+      startCamera();
+    }
+  }, 300);
+});
+
+// The member list over the chat (narrow windows) closes when you click elsewhere.
+document.addEventListener("mousedown", (e) => {
+  const view = document.querySelector(".channel-view.members-over");
+  if (!view || e.target.closest(".members, #members-toggle, .popover, .menu")) return;
+  view.classList.remove("members-over");
 });
