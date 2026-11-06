@@ -3557,35 +3557,73 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .rail-item.news:hover .rail-icon, .rail-item.news.active .rail-icon { background: var(--green); color: var(--app-solid); border-radius: 16px; }
 .rail-item.news .i { width: 24px; height: 24px; }
 .news-dot { position: absolute; top: 2px; right: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 3px var(--app-solid); }
+
+/* ---------- Discover: the page ---------- */
 .news-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .shell:not(.news) .news-view { display: none; }
 .shell.news .home-view, .shell.news .channel-view { display: none !important; }
+.news-body { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+.news-page { max-width: 880px; margin: 0 auto; padding: 28px 32px 64px; display: grid; gap: 22px; }
+
+/* The sidebar: sections, and the open one's parts. */
 .news-nav { width: 100%; gap: 10px; border: none; background: none; text-align: left; font: inherit; color: var(--muted); cursor: pointer; }
 .news-nav .i { width: 18px; height: 18px; flex: none; }
 .news-nav.current { color: var(--text); }
-.news-body { flex: 1; overflow-y: auto; }
-.news-page { max-width: 760px; margin: 0 auto; padding: 36px 32px 56px; display: grid; gap: 14px; }
-.news-hero { display: grid; gap: 6px; margin-bottom: 8px; }
-.news-hero h1 { margin: 0; font-size: 30px; }
-.news-hero p { margin: 0; color: var(--muted); font-size: 15px; }
+.news-parts { display: grid; gap: 1px; margin: 2px 0 8px 22px; padding-left: 10px; border-left: 2px solid var(--line); }
+.news-part { padding: 5px 10px; border: none; border-radius: 8px; background: none; color: var(--faint); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-part:hover { background: var(--hover); color: var(--text-2); }
+.news-part.current { color: var(--text); font-weight: 600; }
+
+/* The hero: a soft colour band with the section's mark. */
+.news-hero { position: relative; display: flex; align-items: center; gap: 24px; padding: 34px 36px; overflow: hidden; border-radius: 22px; background: linear-gradient(120deg, color-mix(in srgb, var(--green) 30%, var(--layer-2)), color-mix(in srgb, #5b6ee1 26%, var(--layer-2))); }
+.news-hero-words { position: relative; z-index: 1; display: grid; gap: 8px; flex: 1; }
+.news-hero h1 { margin: 0; font-size: 34px; letter-spacing: -0.02em; }
+.news-hero p { margin: 0; max-width: 520px; color: var(--text-2); font-size: 15.5px; line-height: 1.5; }
 .news-kicker { color: var(--green); font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.news-logo { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 20px; background: var(--layer-2); margin-bottom: 6px; }
-.news-logo .i { width: 34px; height: 34px; }
-.news-item { padding: 18px 20px; border-radius: 14px; background: var(--layer-2); }
-.news-item.latest { background: color-mix(in srgb, var(--green) 9%, var(--layer-2)); }
-.news-item h2 { margin: 0 0 6px; font-size: 17px; }
-.news-item-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.news-item-head h2 { margin: 0; }
+.news-hero .news-kicker { color: var(--text-2); opacity: 0.85; }
+.news-hero-art { flex: none; display: grid; place-items: center; width: 108px; height: 108px; border-radius: 32px; background: rgb(255 255 255 / 0.1); color: var(--text); }
+.news-hero-art .i { width: 54px; height: 54px; stroke-width: 1.6; }
+
+/* Cards in a grid. */
+.news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.news-card { display: grid; align-content: start; gap: 8px; padding: 20px; border-radius: 16px; background: var(--layer-2); scroll-margin-top: 16px; transition: background 120ms; }
+.news-card:hover { background: color-mix(in srgb, var(--text) 7%, var(--layer-2)); }
+.news-card-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.news-card-icon .i { width: 20px; height: 20px; }
+.news-card h3 { margin: 4px 0 0; font-size: 16.5px; }
+.news-card p { margin: 0; color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
+
+/* What's new: a timeline. */
+.news-timeline { position: relative; display: grid; gap: 16px; padding-left: 30px; }
+.news-timeline::before { content: ""; position: absolute; left: 8px; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: var(--line); }
+.news-release { position: relative; padding: 18px 20px; border-radius: 16px; background: var(--layer-2); scroll-margin-top: 16px; }
+.news-release::before { content: ""; position: absolute; left: -28px; top: 22px; width: 14px; height: 14px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 4px var(--app-solid); }
+.news-release.latest { background: color-mix(in srgb, var(--green) 10%, var(--layer-2)); }
+.news-release.latest::before { background: var(--green); }
+.news-release-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.news-release-head h2 { margin: 0; font-size: 18px; }
 .news-new { padding: 2px 9px; border-radius: 999px; background: var(--green); color: #102018; font-size: 11.5px; font-weight: 700; }
-.news-points { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
-.news-points li + li { margin-top: 4px; }
-.news-text { margin: 0 0 12px; color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
-.news-text:last-child { margin-bottom: 0; }
-.news-version { margin: 8px 0 0; color: var(--faint); font-size: 13px; text-align: center; }
-.news-section { margin-top: 18px; }
-.news-section h2 { margin: 0; font-size: 22px; }
-.news-limits { display: grid; gap: 14px; }
-.news-limit { display: grid; gap: 3px; }
-.news-limit strong { font-size: 14.5px; }
-.news-limit span { color: var(--text-2); font-size: 14px; line-height: 1.5; }
-.news-limit + .news-limit { padding-top: 14px; border-top: 1px solid var(--line); }
+.news-points { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.news-points li { display: flex; gap: 10px; color: var(--text-2); font-size: 14.5px; line-height: 1.5; }
+.news-points li .i { flex: none; width: 16px; height: 16px; margin-top: 3px; color: var(--green); }
+
+/* About: the limits, and running your own. */
+.news-block { display: grid; gap: 8px; margin-top: 10px; scroll-margin-top: 16px; }
+.news-block h2 { margin: 0; font-size: 24px; }
+.news-lead { margin: 0 0 8px; color: var(--text-2); font-size: 15px; line-height: 1.55; }
+.news-limits { display: grid; gap: 2px; overflow: hidden; border-radius: 16px; background: var(--layer-2); }
+.news-limit { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 18px; align-items: start; padding: 16px 20px; }
+.news-limit + .news-limit { border-top: 1px solid var(--line); }
+.news-limit-value { color: var(--green); font-size: 19px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+.news-limit-words { display: grid; gap: 3px; }
+.news-limit-words strong { font-size: 15px; }
+.news-limit-words span { color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.news-cta { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px; border-radius: 16px; background: color-mix(in srgb, #5b6ee1 14%, var(--layer-2)); scroll-margin-top: 16px; }
+.news-cta h2 { margin: 0 0 4px; font-size: 18px; }
+.news-cta p { margin: 0; color: var(--text-2); font-size: 14.5px; }
+.news-cta .btn { flex: none; }
+.news-version { margin: 4px 0 0; color: var(--faint); font-size: 13px; text-align: center; }
+@media (max-width: 1100px) {
+  .news-hero-art { display: none; }
+  .news-limit { grid-template-columns: 1fr; gap: 4px; }
+}

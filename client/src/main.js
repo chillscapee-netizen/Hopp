@@ -12196,21 +12196,82 @@ async function renderNewsDot() {
 }
 
 var NEWS_SECTIONS = [
-  ["news", "What's new", "compass"],
-  ["start", "Getting started", "user-plus"],
-  ["voice", "Voice, video and calls", "volume"],
-  ["servers", "Servers and roles", "server"],
-  ["privacy", "Privacy and safety", "lock"],
-  ["keys", "Shortcuts", "keyboard"],
-  ["about", "About Hopp", "logo"],
+  ["news", "What's new", "compass", "Everything that's new and better, version by version."],
+  ["start", "Getting started", "user-plus", "Friends, servers and making Hopp yours, in a minute."],
+  ["voice", "Voice, video and calls", "volume", "Talking, cameras, screens and calls with friends."],
+  ["servers", "Servers and roles", "server", "Channels, roles and keeping a server friendly."],
+  ["privacy", "Privacy and safety", "lock", "What stays private, and who can reach you."],
+  ["keys", "Shortcuts", "keyboard", "Get around Hopp without the mouse."],
+  ["about", "About Hopp", "logo", "Voice, video and chat for you and your friends."],
 ];
+
+/** What each section holds: [id, title, icon, text] (versions for What's new are added live). */
+var NEWS_ABOUT = [
+  ["hang-out", "A place to hang out", "users", "Hopp is where you and your friends talk, play and share: servers with text and voice channels, calls, cameras and screens, and messages between friends."],
+  ["free", "Free, all of it", "check", "Screen sharing in full quality, cameras, profile banners, uploads and every look. There is nothing to unlock. To keep it that way, Hopp Cloud has a few limits; they're all below."],
+  ["private", "Private by design", "lock", "Messages between friends are end-to-end encrypted, your Hopp ID is a key that stays on your computer, and calls go straight between you whenever they can. No ads and no tracking."],
+  ["fast", "Light and fast", "signal", "A small download that starts quickly and switches between servers at once. Updates come when you choose to install them."],
+];
+
+/** Every limit Hopp Cloud has, and why (the numbers are the cloud's own). */
+var CLOUD_LIMITS = [
+  ["A few hours", "Busy days", "The free plan has a daily limit for the whole of Hopp Cloud. On a very busy day it can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe meanwhile."],
+  ["1,000", "Messages kept per channel", "Each channel keeps its newest 1,000 messages, and each conversation between friends its newest 5,000. Storage is what a free plan has least of."],
+  ["40 a day", "Pictures", "Hopp makes pictures small (about 300 KB at most). You can share 40 a day in each server and 40 a day with friends, and a server keeps up to 100 MB of them. Again: storage."],
+  ["10", "People in voice", "Voice and video go straight between the people talking, not through a server. That keeps calls free and private, but everyone sends to everyone, and past 10 people a home connection can't keep up. The same goes for group calls."],
+  ["25", "People in a group", "Group conversations are encrypted for each person in them, so they stay small."],
+  ["12 a day", "Relay sign-ins", "When two people can't reach each other directly (some networks block it), voice goes through a relay. That costs, so each person gets 12 relay sign-ins a day; one lasts all day."],
+  ["1 a second", "Spam protection", "A burst of 5 messages, then one a second. 10 new servers and 30 friend requests a day per person. This keeps bots and spam out, not you."],
+];
+
+/** Guides: a few short articles each, plain and friendly. [title, icon, text] */
+var NEWS_GUIDES = {
+  start: [
+    ["Add your friends", "user-plus", "Go Home, open Add friend and type their username. Once they accept, you can message and call them, and invite them anywhere with one click."],
+    ["Make a server", "plus", "Press + in the server list and pick Create a server. It's on Hopp Cloud, free and always on. Invite people with a link, or straight from your friends list."],
+    ["Join one", "link", "Got an invite link? Press + and Join a server, or just click the link in a chat."],
+    ["Make it yours", "user", "Settings → Profile: your picture, a banner, About me. Click your name at the bottom left for your status and a custom status."],
+  ],
+  voice: [
+    ["Voice channels", "volume", "Click a voice channel to join. Everyone shows as a tile; click a camera or a screen to put it in the middle, and use full screen when you want to watch."],
+    ["Camera and screen", "monitor", "The buttons under your voice panel turn on your camera, share your screen, or play a sound from the soundboard for everyone in the channel."],
+    ["Calls with friends", "phone", "Open a conversation and press the phone or the camera at the top. The call sits above your messages; drag its edge to make it bigger."],
+    ["Hearing people right", "headphones", "Right-click someone for their volume. Settings → Voice & audio picks your microphone and headset, noise suppression and push to talk."],
+  ],
+  servers: [
+    ["Channels", "hash", "Text channels for chatting and voice channels for talking; every voice channel has a chat of its own. Right-click a channel to edit it."],
+    ["Roles", "shield", "Server settings → Roles: give people a colour, their own heading in the member list, and what they may do. Private channels only chosen roles can see."],
+    ["Keeping it friendly", "clock", "Moderators can time people out, use slowmode, move or mute people in voice, and everything is in the audit log."],
+    ["Nicknames", "edit", "Change nickname in the server menu gives you a name for just that server."],
+  ],
+  privacy: [
+    ["Your messages", "lock", "Direct messages and group chats are end-to-end encrypted: only the people in them can read them, not even Hopp Cloud."],
+    ["Calls", "phone", "Voice and video go straight between you and the people you talk to whenever the network allows."],
+    ["Who can reach you", "shield", "Settings → Privacy & safety decides who may send you friend requests. Block anyone from their menu."],
+    ["Your Hopp ID", "eye-off", "You sign in with a key kept on your computer. Back up your recovery phrase in Settings → Password & security."],
+  ],
+  keys: [
+    ["Getting around", "keyboard", "Ctrl+K jumps to any server, channel or friend. Alt+↑ and Alt+↓ move between channels. Ctrl+F searches the chat you're in."],
+    ["In voice", "mic", "Ctrl+M mutes you, Ctrl+D deafens you. Push to talk uses the key you pick in Settings → Keybinds."],
+    ["Writing", "edit", "↑ in an empty message box edits your last message. Type : for emoji and @ to mention someone. Esc marks a channel read."],
+  ],
+};
+
+/** The parts of a section, for the quick list under it in the sidebar: [anchor, label]. */
+function newsParts(key) {
+  if (key === "news") return newsVersions().map((v) => ["v-" + v.replaceAll(".", "-"), "Version " + v]);
+  if (key === "about") return [...NEWS_ABOUT.map(([id, title]) => [id, title]), ["limits", "Hopp Cloud, honestly"], ["own", "Your own server"]];
+  return (NEWS_GUIDES[key] ?? []).map(([title], i) => ["g-" + i, title]);
+}
 
 function renderNewsNav(body, head) {
   $("sidebar-title").textContent = "Discover";
   head.disabled = true;
   body.classList.remove("stale");
-  body.replaceChildren(...NEWS_SECTIONS.map(([key, label, ic]) => {
-    const b = el("button", "channel-row news-nav" + (newsSection === key ? " current" : ""));
+  const rows = [];
+  for (const [key, label, ic] of NEWS_SECTIONS) {
+    const current = newsSection === key;
+    const b = el("button", "channel-row news-nav" + (current ? " current" : ""));
     b.type = "button";
     b.append(icon(ic), el("span", "ellipsis", label));
     b.addEventListener("click", () => {
@@ -12219,125 +12280,125 @@ function renderNewsNav(body, head) {
       renderNews();
       $("news-body").scrollTop = 0;
     });
-    return b;
-  }));
+    rows.push(b);
+    // The open section folds out its parts: a click scrolls right to one.
+    if (current) {
+      const parts = el("div", "news-parts");
+      for (const [anchor, text] of newsParts(key)) {
+        const p = el("button", "news-part", text);
+        p.type = "button";
+        p.dataset.anchor = anchor;
+        p.addEventListener("click", () => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+        parts.append(p);
+      }
+      rows.push(parts);
+    }
+  }
+  body.replaceChildren(...rows);
 }
 
-/** About Hopp: what it is and what it stands for. */
-var NEWS_ABOUT = [
-  ["A place to hang out", "Hopp is where you and your friends talk, play and share: servers with text and voice channels, calls, cameras and screens, and messages between friends."],
-  ["Free, all of it", "Everything in Hopp is free: screen sharing in full quality, cameras, profile banners, uploads and every look. There is nothing to unlock. To keep it that way, Hopp Cloud has a few limits; they're all below."],
-  ["Private by design", "Messages between friends are end-to-end encrypted, your Hopp ID is a key that stays on your computer, and calls go straight between you whenever they can. No ads and no tracking."],
-  ["Light and fast", "Hopp is a small download, starts quickly and switches between servers at once. Updates come when you choose to install them."],
-];
+function newsHero(kicker, title, text, ic) {
+  const hero = el("header", "news-hero");
+  const words = el("div", "news-hero-words");
+  words.append(el("span", "news-kicker", kicker), el("h1", "", title), el("p", "", text));
+  const art = el("span", "news-hero-art");
+  art.append(icon(ic));
+  hero.append(words, art);
+  return hero;
+}
 
-/** Every limit Hopp Cloud has, and why (the numbers are the cloud's own). */
-var CLOUD_LIMITS = [
-  ["Busy days", "The free plan has a daily limit for the whole of Hopp Cloud. On a very busy day it can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe meanwhile."],
-  ["1,000 messages per channel", "Each channel keeps its newest 1,000 messages, and each conversation between friends its newest 5,000. Storage is what a free plan has least of."],
-  ["Pictures", "Hopp makes pictures small before they're sent (about 300 KB at most). You can share 40 a day in each server and 40 a day with friends, and a server keeps up to 100 MB of them. Again: storage."],
-  ["10 people in voice", "Voice and video go straight between the people talking, not through a server. That keeps calls free and private, but everyone sends to everyone, and past 10 people a home connection can't keep up. The same goes for group calls."],
-  ["25 people in a group", "Group conversations are encrypted for each person in them, so they stay small."],
-  ["The relay", "When two people can't reach each other directly (some networks block it), voice goes through a relay instead. That costs, so each person gets 12 relay sign-ins a day; one lasts all day, so that is plenty."],
-  ["Spam protection", "A burst of 5 messages, then one a second. 10 new servers and 30 friend requests a day per person. This keeps bots and spam out, not you."],
-];
-
-/** Guides: a few short articles each, plain and friendly. */
-var NEWS_GUIDES = {
-  start: [
-    ["Add your friends", "Go Home, open Add friend and type their username. Once they accept, you can message and call them, and invite them anywhere with one click."],
-    ["Make a server", "Press + in the server list and pick Create a server. It's on Hopp Cloud, free and always on. Invite people with a link, or straight from your friends list."],
-    ["Join one", "Got an invite link? Press + and Join a server, or just click the link in a chat."],
-    ["Make it yours", "Settings → Profile: your picture, a banner, About me. Click your name at the bottom left for your status and a custom status."],
-  ],
-  voice: [
-    ["Voice channels", "Click a voice channel to join. Everyone shows as a tile; click a camera or a screen to put it in the middle, and use full screen when you want to watch."],
-    ["Camera and screen", "The buttons under your voice panel turn on your camera, share your screen, or play a sound from the soundboard for everyone in the channel."],
-    ["Calls with friends", "Open a conversation and press the phone or the camera at the top. The call sits above your messages; drag its edge to make it bigger."],
-    ["Hearing people right", "Right-click someone for their volume. Settings → Voice & audio picks your microphone and headset, noise suppression and push to talk."],
-  ],
-  servers: [
-    ["Channels", "Text channels for chatting and voice channels for talking; every voice channel has a chat of its own. Right-click a channel to edit it."],
-    ["Roles", "Server settings → Roles: give people a colour, their own heading in the member list, and what they may do. Private channels only chosen roles can see."],
-    ["Keeping it friendly", "Moderators can time people out, use slowmode, move or mute people in voice, and everything is in the audit log."],
-    ["Nicknames", "Change nickname in the server menu gives you a name for just that server."],
-  ],
-  privacy: [
-    ["Your messages", "Direct messages and group chats are end-to-end encrypted: only the people in them can read them, not even Hopp Cloud."],
-    ["Calls", "Voice and video go straight between you and the people you talk to whenever the network allows."],
-    ["Who can reach you", "Settings → Privacy & safety decides who may send you friend requests. Block anyone from their menu."],
-    ["Your Hopp ID", "You sign in with a key kept on your computer. Back up your recovery phrase in Settings → Password & security."],
-  ],
-  keys: [
-    ["Getting around", "Ctrl+K jumps to any server, channel or friend. Alt+↑ and Alt+↓ move between channels. Ctrl+F searches the chat you're in."],
-    ["In voice", "Ctrl+M mutes you, Ctrl+D deafens you. Push to talk uses the key you pick in Settings → Keybinds."],
-    ["Writing", "↑ in an empty message box edits your last message. Type : for emoji and @ to mention someone. Esc marks a channel read."],
-  ],
-};
+function newsCard(id, title, ic, text, cls = "") {
+  const card = el("article", "news-card" + cls);
+  card.id = id;
+  const mark = el("span", "news-card-icon");
+  mark.append(icon(ic));
+  card.append(mark, el("h3", "", title), el("p", "", text));
+  return card;
+}
 
 async function renderNews() {
   await loadWhatsNew();
   const body = $("news-body");
-  const label = NEWS_SECTIONS.find(([k]) => k === newsSection)?.[1] ?? "Discover";
+  const [, label, ic, sub] = NEWS_SECTIONS.find(([k]) => k === newsSection) ?? NEWS_SECTIONS[0];
   $("news-title").textContent = label;
   const page = el("div", "news-page");
   if (newsSection === "news") {
     const versions = newsVersions();
-    const hero = el("div", "news-hero");
-    hero.append(el("span", "news-kicker", "What's new"), el("h1", "", "Hopp " + (versions[0] ?? "")), el("p", "", "Everything that's new and better, version by version."));
-    page.append(hero);
+    page.append(newsHero("What's new", "Hopp " + (versions[0] ?? ""), sub, "compass"));
+    const line = el("div", "news-timeline");
     versions.forEach((v, i) => {
-      const item = el("article", "news-item" + (i === 0 ? " latest" : ""));
-      const h = el("div", "news-item-head");
+      const item = el("article", "news-release" + (i === 0 ? " latest" : ""));
+      item.id = "v-" + v.replaceAll(".", "-");
+      const h = el("div", "news-release-head");
       h.append(el("h2", "", "Version " + v));
       if (i === 0) h.append(el("span", "news-new", "Latest"));
       const list = el("ul", "news-points");
-      for (const line of whatsNew[v].split("\n")) {
-        const text = line.replace(/^\s*•\s*/, "").trim();
-        if (text) list.append(el("li", "", text));
+      for (const ln of whatsNew[v].split("\n")) {
+        const text = ln.replace(/^\s*•\s*/, "").trim();
+        if (!text) continue;
+        const li = el("li");
+        li.append(icon("check"), el("span", "", text));
+        list.append(li);
       }
       item.append(h, list);
-      page.append(item);
+      line.append(item);
     });
+    page.append(line);
     if (versions[0]) save("newsSeen", versions[0]);
     $("news-dot").hidden = true;
   } else if (newsSection === "about") {
-    const hero = el("div", "news-hero");
-    const mark = el("span", "news-logo");
-    mark.append(icon("logo"));
-    hero.append(mark, el("h1", "", "Hopp"), el("p", "", "Voice, video and chat for you and your friends."));
-    page.append(hero);
-    for (const [title, text] of NEWS_ABOUT) {
-      const item = el("article", "news-item");
-      item.append(el("h2", "", title), el("p", "news-text", text));
-      page.append(item);
-    }
-    // Hopp Cloud, honestly: the limits, and why each one is there.
-    const honest = el("div", "news-hero news-section");
-    honest.append(el("span", "news-kicker", "Hopp Cloud, honestly"), el("h2", "", "Why there are limits"), el("p", "", "Hopp Cloud runs on a free plan. That's how Hopp stays free, with no ads and nothing to pay. A free plan only does so much each day and only stores so much, so Hopp keeps things small and shares them fairly. Here is every limit, and why it's there."));
-    page.append(honest);
-    const list = el("article", "news-item news-limits");
-    for (const [what, why] of CLOUD_LIMITS) {
+    page.append(newsHero("About", "Hopp", sub + " Free, with no ads and no tracking.", "logo"));
+    const grid = el("div", "news-grid");
+    for (const [id, title, i, text] of NEWS_ABOUT) grid.append(newsCard(id, title, i, text));
+    page.append(grid);
+    const limits = el("section", "news-block");
+    limits.id = "limits";
+    limits.append(el("span", "news-kicker", "Hopp Cloud, honestly"), el("h2", "", "Why there are limits"), el("p", "news-lead", "Hopp Cloud runs on a free plan. That's how Hopp stays free, with no ads and nothing to pay. A free plan only does so much each day and only stores so much, so Hopp keeps things small and shares them fairly. Here is every limit, and why it's there."));
+    const list = el("div", "news-limits");
+    for (const [value, what, why] of CLOUD_LIMITS) {
       const row = el("div", "news-limit");
-      row.append(el("strong", "", what), el("span", "", why));
+      const words = el("div", "news-limit-words");
+      words.append(el("strong", "", what), el("span", "", why));
+      row.append(el("span", "news-limit-value", value), words);
       list.append(row);
     }
-    page.append(list);
-    const own = el("article", "news-item");
-    own.append(el("h2", "", "No limits of your own"), el("p", "news-text", "Want none of these? Press + in the server list and pick Run your own server: it runs on your computer, keeps what you want, and nothing goes through Hopp Cloud."));
-    page.append(own);
-    page.append(el("p", "news-version", "Hopp " + (updates.version || "")));
+    limits.append(list);
+    page.append(limits);
+    const own = el("section", "news-cta");
+    own.id = "own";
+    const words = el("div", "");
+    words.append(el("h2", "", "No limits of your own"), el("p", "", "Run a server on your own computer: it keeps what you want, and nothing goes through Hopp Cloud."));
+    const go = el("button", "btn primary", "Run your own server");
+    go.type = "button";
+    go.addEventListener("click", () => openAddDialog("host"));
+    own.append(words, go);
+    page.append(own, el("p", "news-version", "Hopp " + (updates.version || "")));
   } else {
-    const hero = el("div", "news-hero");
-    hero.append(el("span", "news-kicker", "Guide"), el("h1", "", label));
-    page.append(hero);
-    for (const [title, text] of NEWS_GUIDES[newsSection] ?? []) {
-      const item = el("article", "news-item");
-      item.append(el("h2", "", title), el("p", "news-text", text));
-      page.append(item);
-    }
+    page.append(newsHero("Guide", label, sub, ic));
+    const grid = el("div", "news-grid");
+    (NEWS_GUIDES[newsSection] ?? []).forEach(([title, i, text], n) => grid.append(newsCard("g-" + n, title, i, text)));
+    page.append(grid);
   }
   body.replaceChildren(page);
+  watchNewsParts();
+}
+
+/** While you scroll, the part you're reading is marked in the sidebar. */
+var newsSpy = null;
+function watchNewsParts() {
+  newsSpy?.disconnect();
+  const marks = [...document.querySelectorAll(".news-part")];
+  if (!marks.length) return;
+  const mark = (anchor) => marks.forEach((m) => m.classList.toggle("current", m.dataset.anchor === anchor));
+  mark(marks[0].dataset.anchor);
+  newsSpy = new IntersectionObserver((entries) => {
+    const seen = entries.filter((e) => e.isIntersecting).sort((x, y) => x.boundingClientRect.top - y.boundingClientRect.top)[0];
+    if (seen) mark(seen.target.id);
+  }, { root: $("news-body"), rootMargin: "0px 0px -60% 0px" });
+  for (const m of marks) {
+    const target = document.getElementById(m.dataset.anchor);
+    if (target) newsSpy.observe(target);
+  }
 }
 
 function openDiscover() {
