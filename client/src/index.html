@@ -419,84 +419,123 @@
   </dialog>
 
   <!-- ---------- create channel ---------- -->
-  <dialog id="channel-edit-dialog" class="modal">
-    <form id="channel-edit-form" method="dialog">
-      <div class="modal-body">
-        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
-        <h2>Edit channel</h2>
-        <p id="channel-edit-sub" class="modal-sub"></p>
-        <label class="field">
-          <span class="field-label">Channel name</span>
-          <span class="input-icon">
-            <svg id="channel-edit-icon" class="i sm"><use href="#i-hash"/></svg>
-            <input id="channel-edit-name" maxlength="32" required autocomplete="off">
-          </span>
-        </label>
-        <label class="field">
-          <span class="field-label">Category</span>
-          <input id="channel-edit-category" maxlength="24" autocomplete="off" list="category-options" placeholder="None">
-          <datalist id="category-options"></datalist>
-        </label>
-        <div id="channel-edit-private" class="channel-private" hidden>
-          <label class="row setting-row">
-            <span class="row-label">
-              <span class="row-title">Private channel</span>
-              <span class="row-sub">Only the roles you pick (and admins) can see it.</span>
-            </span>
-            <input id="channel-edit-private-on" type="checkbox" class="switch">
-          </label>
-          <div id="channel-edit-private-roles" class="private-roles"></div>
+  <dialog id="channel-edit-dialog" class="modal settings-modal channel-settings">
+    <button type="button" class="modal-close settings-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+    <form id="channel-edit-form" method="dialog" class="settings-layout">
+      <nav class="settings-nav">
+        <div class="settings-server">
+          <span class="channel-badge"><svg id="channel-edit-icon" class="i"><use href="#i-hash"/></svg></span>
+          <span class="settings-server-text"><strong id="channel-edit-title" class="ellipsis"></strong><span id="channel-edit-sub" class="ellipsis"></span></span>
         </div>
-        <label id="channel-edit-slow-row" class="row setting-row" hidden>
-          <span class="row-label">
-            <span class="row-title">Slowmode</span>
-            <span class="row-sub">How long each person waits between messages. Moderators don't.</span>
-          </span>
-          <select id="channel-edit-slow" class="row-select">
-            <option value="0">Off</option>
-            <option value="5">5 seconds</option>
-            <option value="10">10 seconds</option>
-            <option value="30">30 seconds</option>
-            <option value="60">1 minute</option>
-            <option value="300">5 minutes</option>
-            <option value="900">15 minutes</option>
-            <option value="3600">1 hour</option>
-          </select>
-        </label>
-        <label id="channel-edit-topic-field" class="field">
-          <span class="field-label">Topic</span>
-          <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>
-        </label>
-        <div id="channel-edit-voice" class="channel-voice-settings" hidden>
-          <label class="field">
-            <span class="field-label">User limit <output id="channel-edit-limit-value"></output></span>
-            <input id="channel-edit-limit" type="range" min="0" max="10" step="1">
-          </label>
-          <label class="row setting-row">
-            <span class="row-label">
-              <span class="row-title">AFK channel</span>
-              <span class="row-sub">People who are away this long are moved here, muted.</span>
-            </span>
-            <select id="channel-edit-afk" class="row-select">
-              <option value="0">Off</option>
-              <option value="5">After 5 minutes</option>
-              <option value="15">After 15 minutes</option>
-              <option value="30">After 30 minutes</option>
-              <option value="60">After 1 hour</option>
-            </select>
-          </label>
+        <button type="button" class="settings-tab active" data-ctab="overview"><svg class="i"><use href="#i-settings"/></svg><span>Overview</span></button>
+        <button type="button" id="ctab-permissions" class="settings-tab" data-ctab="permissions"><svg class="i"><use href="#i-lock"/></svg><span>Permissions</span></button>
+        <button type="button" id="ctab-moderation" class="settings-tab" data-ctab="moderation"><svg class="i"><use href="#i-shield"/></svg><span>Moderation</span></button>
+        <button type="button" id="ctab-voice" class="settings-tab" data-ctab="voice"><svg class="i"><use href="#i-volume"/></svg><span>Voice</span></button>
+        <div class="settings-nav-foot">
+          <button type="button" id="channel-delete" class="settings-tab danger"><svg class="i"><use href="#i-trash"/></svg><span>Delete channel</span></button>
         </div>
-        <label id="channel-edit-pictures-row" class="row setting-row">
-          <span class="row-label">
-            <span class="row-title">Allow pictures</span>
-            <span id="channel-edit-pictures-sub" class="row-sub">Members can share pictures in this channel.</span>
-          </span>
-          <input id="channel-edit-pictures" type="checkbox" class="switch">
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button type="button" class="btn-link close-dialog">Cancel</button>
-        <button type="submit" class="btn primary">Save changes</button>
+      </nav>
+      <div class="settings-content channel-settings-content">
+        <section data-cpanel="overview" class="settings-page">
+          <h2 class="page-title">Overview</h2>
+          <div class="card form-card">
+            <label class="field">
+              <span class="field-label">Channel name</span>
+              <span class="input-icon">
+                <svg id="channel-edit-name-icon" class="i sm"><use href="#i-hash"/></svg>
+                <input id="channel-edit-name" maxlength="32" required autocomplete="off">
+              </span>
+            </label>
+            <label id="channel-edit-topic-field" class="field">
+              <span class="field-label">Topic</span>
+              <textarea id="channel-edit-topic" rows="3" maxlength="200" placeholder="Let everyone know what this channel is for"></textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">Category</span>
+              <input id="channel-edit-category" maxlength="24" autocomplete="off" list="category-options" placeholder="None">
+              <datalist id="category-options"></datalist>
+            </label>
+          </div>
+          <div class="card">
+            <label id="channel-edit-pictures-row" class="row">
+              <span class="row-label">
+                <span class="row-title">Allow pictures</span>
+                <span id="channel-edit-pictures-sub" class="row-sub">Members can share pictures in this channel.</span>
+              </span>
+              <input id="channel-edit-pictures" type="checkbox" class="switch">
+            </label>
+          </div>
+        </section>
+
+        <section data-cpanel="permissions" class="settings-page" hidden>
+          <h2 class="page-title">Permissions</h2>
+          <div id="channel-edit-private" class="card" hidden>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Private channel</span>
+                <span class="row-sub">Only the roles you pick (and admins) can see it, and what's said in it.</span>
+              </span>
+              <input id="channel-edit-private-on" type="checkbox" class="switch">
+            </label>
+            <div id="channel-edit-private-roles" class="private-roles"></div>
+          </div>
+        </section>
+
+        <section data-cpanel="moderation" class="settings-page" hidden>
+          <h2 class="page-title">Moderation</h2>
+          <div class="card">
+            <label id="channel-edit-slow-row" class="row" hidden>
+              <span class="row-label">
+                <span class="row-title">Slowmode</span>
+                <span class="row-sub">How long each person waits between messages. Moderators don't.</span>
+              </span>
+              <select id="channel-edit-slow" class="row-select">
+                <option value="0">Off</option>
+                <option value="5">5 seconds</option>
+                <option value="10">10 seconds</option>
+                <option value="30">30 seconds</option>
+                <option value="60">1 minute</option>
+                <option value="300">5 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="3600">1 hour</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section data-cpanel="voice" class="settings-page" hidden>
+          <h2 class="page-title">Voice</h2>
+          <div id="channel-edit-voice" class="card" hidden>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">User limit</span>
+                <span class="row-sub">At most this many people at once. Moderators can still move people in.</span>
+              </span>
+              <span class="row-control slider-control">
+                <input id="channel-edit-limit" type="range" min="0" max="10" step="1">
+                <output id="channel-edit-limit-value"></output>
+              </span>
+            </label>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">AFK channel</span>
+                <span class="row-sub">People who are away this long are moved here, muted.</span>
+              </span>
+              <select id="channel-edit-afk" class="row-select">
+                <option value="0">Off</option>
+                <option value="5">After 5 minutes</option>
+                <option value="15">After 15 minutes</option>
+                <option value="30">After 30 minutes</option>
+                <option value="60">After 1 hour</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <div class="channel-save">
+          <button type="button" class="btn-link close-dialog">Cancel</button>
+          <button type="submit" class="btn primary sm">Save changes</button>
+        </div>
       </div>
     </form>
   </dialog>
@@ -696,13 +735,19 @@
     <button type="button" class="modal-close settings-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
     <div class="settings-layout">
       <nav class="settings-nav">
-        <div id="server-settings-name" class="settings-nav-label"></div>
-        <button type="button" class="settings-tab active" data-stab="overview">Overview</button>
-        <button type="button" class="settings-tab" data-stab="members">Members</button>
-        <button type="button" class="settings-tab" data-stab="invites">Invites</button>
-        <button type="button" class="settings-tab" data-stab="bans">Bans</button>
-        <button type="button" class="settings-tab" data-stab="roles">Roles</button>
-        <button type="button" class="settings-tab" data-stab="audit">Audit log</button>
+        <div class="settings-server">
+          <span id="server-settings-icon"></span>
+          <strong id="server-settings-name" class="ellipsis"></strong>
+        </div>
+        <div class="settings-nav-label">Server</div>
+        <button type="button" class="settings-tab active" data-stab="overview"><svg class="i"><use href="#i-settings"/></svg><span>Overview</span></button>
+        <button type="button" class="settings-tab" data-stab="roles"><svg class="i"><use href="#i-shield"/></svg><span>Roles</span></button>
+        <div class="settings-nav-label">People</div>
+        <button type="button" class="settings-tab" data-stab="members"><svg class="i"><use href="#i-users"/></svg><span>Members</span></button>
+        <button type="button" class="settings-tab" data-stab="invites"><svg class="i"><use href="#i-link"/></svg><span>Invites</span></button>
+        <button type="button" class="settings-tab" data-stab="bans"><svg class="i"><use href="#i-ban"/></svg><span>Bans</span></button>
+        <div id="server-mod-label" class="settings-nav-label">Moderation</div>
+        <button type="button" class="settings-tab" data-stab="audit"><svg class="i"><use href="#i-clock"/></svg><span>Audit log</span></button>
       </nav>
       <div class="settings-content">
         <form id="overview-form" data-spanel="overview">
@@ -743,7 +788,7 @@
         </form>
         <section data-spanel="members" hidden>
           <h2>Members</h2>
-          <p class="hint">Moderators can delete messages, pin and kick. Admins also manage channels, invites, bans and the server's look, and name moderators. Only the owner names admins.</p>
+          <p class="hint">Everyone who has joined. Moderators can delete messages, pin and kick; admins also run channels, invites, bans and roles.</p>
           <div class="member-tools">
             <input id="member-search" type="text" placeholder="Search members" autocomplete="off">
             <span id="member-count" class="member-count"></span>
@@ -763,9 +808,15 @@
         <section data-spanel="roles" hidden>
           <h2>Roles</h2>
           <p class="hint">Give people a colour, a place of their own in the member list, and what they may do. Higher roles come first.</p>
-          <div class="roles-layout">
+          <div id="roles-empty" class="empty-state" hidden>
+            <span class="empty-icon"><svg class="i"><use href="#i-shield"/></svg></span>
+            <strong>No roles yet</strong>
+            <p>Make one for your friends, your moderators or your team. Pick its colour and what it may do.</p>
+            <button id="role-new-empty" type="button" class="btn primary sm">Create role</button>
+          </div>
+          <div id="roles-layout" class="roles-layout">
             <div class="roles-side">
-              <button id="role-new" type="button" class="btn sm">Create role</button>
+              <div class="role-list-head"><span>Roles</span><button id="role-new" type="button" class="btn-link sm">+ Create</button></div>
               <ul id="role-list" class="role-list"></ul>
             </div>
             <form id="role-editor" class="role-editor" hidden>

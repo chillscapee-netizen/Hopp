@@ -3210,6 +3210,7 @@ $("invite-copy").addEventListener("click", async () => {
 
 function openServerSettings() {
   $("server-settings-name").textContent = activeServer()?.label ?? state.roster.server_name;
+  $("server-settings-icon").replaceChildren(serverIcon("settings-server-icon server-tint", activeServer()?.label ?? state.roster.server_name, state.roster.server_icon));
   resetOverview();
   showServerTab("overview");
   $("invite-list").replaceChildren(el("li", "admin-empty", "Loading…"));
@@ -3219,6 +3220,7 @@ function openServerSettings() {
   document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
   document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
   document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
+  $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden;
   openModal($("server-settings"));
   call("get_server_settings");
 }
@@ -6627,6 +6629,8 @@ function openChannelEdit(ch) {
   const text = ch.kind === "text";
   $("channel-edit-sub").textContent = `in ${activeServer()?.label ?? state.roster.server_name}`;
   $("channel-edit-icon").innerHTML = `<use href="#i-${text ? "hash" : "volume"}"/>`;
+  $("channel-edit-name-icon").innerHTML = `<use href="#i-${text ? "hash" : "volume"}"/>`;
+  $("channel-edit-title").textContent = ch.name;
   $("channel-edit-name").value = ch.name;
   $("channel-edit-topic").value = ch.topic ?? "";
   $("channel-edit-topic-field").hidden = !text;
@@ -6663,6 +6667,10 @@ function openChannelEdit(ch) {
     o.value = c;
     return o;
   }));
+  $("ctab-permissions").hidden = $("channel-edit-private").hidden;
+  $("ctab-moderation").hidden = $("channel-edit-slow-row").hidden;
+  $("ctab-voice").hidden = $("channel-edit-voice").hidden;
+  showChannelTab("overview");
   openModal($("channel-edit-dialog"));
   $("channel-edit-name").focus();
   $("channel-edit-name").select();
@@ -10947,6 +10955,8 @@ var roleColorPick = null;
 
 function renderRolesTab() {
   const roles = state.roster?.roles ?? [];
+  $("roles-empty").hidden = roles.length > 0;
+  $("roles-layout").hidden = roles.length === 0;
   $("role-list").replaceChildren(...(roles.length ? roles.map((r, i) => {
     const li = el("li", "role-row" + (editingRole === r.id ? " active" : ""));
     const dot = el("i", "role-dot");
@@ -11028,3 +11038,18 @@ $("role-delete").addEventListener("click", async () => {
   call("delete_role", { id: r.id });
 });
 $("channel-edit-private-on").addEventListener("change", (e) => ($("channel-edit-private-roles").hidden = !e.target.checked));
+
+// ---------- the channel settings window ----------
+
+function showChannelTab(tab) {
+  document.querySelectorAll("[data-ctab]").forEach((t) => t.classList.toggle("active", t.dataset.ctab === tab));
+  document.querySelectorAll("[data-cpanel]").forEach((p) => (p.hidden = p.dataset.cpanel !== tab));
+}
+document.querySelectorAll("[data-ctab]").forEach((t) => t.addEventListener("click", () => showChannelTab(t.dataset.ctab)));
+$("channel-delete").addEventListener("click", () => {
+  const ch = editingChannel;
+  if (!ch) return;
+  $("channel-edit-dialog").close();
+  deleteChannel(ch);
+});
+$("role-new-empty").addEventListener("click", () => call("create_role", { name: "new role", color: null, hoist: false, level: null }));

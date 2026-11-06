@@ -3225,3 +3225,33 @@ input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top:
 .channel-private { display: grid; gap: 6px; margin-bottom: 8px; }
 .private-roles { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 6px; }
 .private-role { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--hover); border-radius: 999px; color: var(--text-2); font-size: 13px; cursor: pointer; }
+
+/* ---------- server and channel settings, like your own ---------- */
+.settings-server { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 8px; color: var(--text); }
+.settings-server strong { font-size: 15px; }
+.settings-server-text { display: grid; min-width: 0; }
+.settings-server-text span { color: var(--muted); font-size: 12.5px; }
+.settings-server-icon { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; font-size: 14px; font-weight: 700; overflow: hidden; }
+.settings-server-icon img { width: 100%; height: 100%; object-fit: cover; }
+.channel-badge { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--hover); color: var(--muted); }
+#server-settings .settings-content { padding: 0 32px 56px; }
+#server-settings .settings-content > * { max-width: 720px; margin-left: auto; margin-right: auto; padding-top: 36px; }
+#server-settings h2 { margin: 0 0 6px; font-size: 24px; }
+#server-settings .settings-content .hint { margin: 0 0 22px; color: var(--muted); }
+/* Empty and loading lists: calm, no dashed boxes. */
+.admin-empty { padding: 28px 18px; border: none; border-radius: 12px; background: var(--side-2); color: var(--faint); text-align: center; }
+.empty-state { display: grid; justify-items: center; gap: 8px; padding: 40px 24px; border-radius: 14px; background: var(--side-2); text-align: center; }
+.empty-state strong { font-size: 16px; }
+.empty-state p { max-width: 380px; margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.empty-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: var(--hover); color: var(--muted); }
+.empty-icon .i { width: 24px; height: 24px; }
+.role-list-head { display: flex; justify-content: space-between; align-items: center; padding: 0 4px 6px 10px; color: var(--faint); font-size: 12.5px; font-weight: 600; }
+/* The channel window. */
+.channel-settings .settings-layout { height: 100%; }
+.channel-settings-content { position: relative; display: flex; flex-direction: column; padding: 0 32px; }
+.channel-settings-content .settings-page { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding-top: 36px; }
+.form-card { display: grid; gap: 16px; padding: 18px 16px; }
+.form-card .field { margin: 0; }
+.private-roles { padding: 4px 16px 16px; }
+.channel-save { position: sticky; bottom: 0; display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin: 24px -32px 0; padding: 14px 32px; background: var(--main); }
+.channel-settings-content .settings-page > .card + .card { margin-top: 16px; }
