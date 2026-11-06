@@ -3539,3 +3539,34 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .banner-swatch.active { border-color: var(--text); }
 .banner-row { align-items: flex-start; }
 .menu-item .status-swatch + .menu-text { flex: 1; text-align: left; }
+
+/* Adjusting a picture. */
+.crop-modal { width: min(480px, calc(100vw - 32px)); }
+.crop-stage { position: relative; width: 420px; max-width: 100%; margin: 14px auto 10px; overflow: hidden; border-radius: 12px; background: #000; }
+.crop-stage canvas { display: block; cursor: grab; touch-action: none; }
+.crop-stage canvas:active { cursor: grabbing; }
+.crop-frame { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 999px rgb(0 0 0 / 0.55); outline: 2px solid rgb(255 255 255 / 0.85); }
+.crop-frame.circle { border-radius: 50%; }
+.crop-frame.strip { border-radius: 10px; }
+.crop-zoom { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.crop-zoom input { flex: 1; }
+.crop-hint { margin: 6px 0 0; text-align: center; }
+
+/* What's new: the sparkle in the server list, and its page. */
+.rail-item.news .rail-icon { background: var(--layer-2); color: var(--yellow); }
+.rail-item.news:hover .rail-icon { background: var(--yellow); color: var(--app-solid); }
+.rail-item.news::before { display: none; }
+.news-dot { position: absolute; top: 2px; right: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 3px var(--app-solid); }
+.news-modal { width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 48px)); }
+.news-modal .modal-body { display: flex; flex-direction: column; max-height: inherit; overflow: hidden; }
+.news-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.news-head h2 { margin: 0; }
+.news-badge { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
+.news-badge .i { width: 24px; height: 24px; }
+.news-list { display: grid; gap: 12px; overflow-y: auto; padding-right: 4px; }
+.news-item { padding: 14px 16px; border-radius: 12px; background: var(--layer-2); }
+.news-item.latest { background: color-mix(in srgb, var(--yellow) 8%, var(--layer-2)); }
+.news-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.news-new { padding: 1px 8px; border-radius: 999px; background: var(--yellow); color: #1a1a1a; font-size: 11.5px; font-weight: 700; }
+.news-points { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.news-points li + li { margin-top: 3px; }

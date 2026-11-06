@@ -24,10 +24,10 @@ mkdirSync(download, { recursive: true });
 mkdirSync(update, { recursive: true });
 copyFileSync(setup, join(download, "Hopp-setup.exe"));
 copyFileSync(setup, join(download, name));
-// What's new, shown before updating (cloud/release-notes.json, by version).
-const notesFile = dir("../release-notes.json");
+// What's new, shown before updating (client/src/whats-new.json, by version; the app shows it too).
+const notesFile = dir("../../client/src/whats-new.json");
 const notes = (existsSync(notesFile) && JSON.parse(readFileSync(notesFile, "utf8"))[version]) || "A new version of Hopp.";
-if (notes === "A new version of Hopp.") console.warn(`No notes for ${version} in cloud/release-notes.json; people see a plain "A new version of Hopp."`);
+if (notes === "A new version of Hopp.") console.warn(`No notes for ${version} in client/src/whats-new.json; people see a plain "A new version of Hopp."`);
 const sig = setup + ".sig";
 if (existsSync(sig)) {
   writeFileSync(join(update, "latest.json"), JSON.stringify({

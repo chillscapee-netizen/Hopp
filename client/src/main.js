@@ -5029,7 +5029,8 @@ $("avatar-file").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   try {
-    const picture = await shrinkPicture(file, [[128, 0.85], [128, 0.7], [96, 0.7], [64, 0.7]], 38_000);
+    const picture = await adjustPicture(file, { shape: "circle", title: "Adjust your picture", sizes: [[128, 0.85], [128, 0.7], [96, 0.7], [64, 0.7]], limit: 38_000 });
+    if (!picture) return;
     await accountSend({ type: "set_profile", avatar: picture });
   } catch (err) {
     if (err instanceof Error) toast(err.message, true);
@@ -12022,45 +12023,194 @@ async function setBanner(banner) {
   }
 }
 
-/** A banner picture: cropped to a wide strip and made small. */
-function shrinkBanner(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      for (const [w, q] of [[600, 0.82], [600, 0.68], [480, 0.65], [360, 0.6]]) {
-        const h = Math.round(w * 0.35);
-        const c = document.createElement("canvas");
-        c.width = w;
-        c.height = h;
-        // Crop the middle to the strip's shape.
-        const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
-        const sw = w / scale;
-        const sh = h / scale;
-        c.getContext("2d").drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, 0, 0, w, h);
-        let data = c.toDataURL("image/webp", q);
-        if (!data.startsWith("data:image/webp")) data = c.toDataURL("image/jpeg", q);
-        if (data.length <= 78_000) return resolve(data);
-      }
-      reject(new Error("That picture is too large. Try a smaller one."));
-    };
-    const unreadable = () => reject(new Error("That file isn't a picture Hopp can read. Use PNG, JPEG or WebP."));
-    img.onerror = unreadable;
-    const reader = new FileReader();
-    reader.onload = () => (img.src = reader.result);
-    reader.onerror = unreadable;
-    reader.readAsDataURL(file);
-  });
-}
-
 $("banner-upload").addEventListener("click", () => $("banner-file").click());
 $("banner-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
   try {
-    await setBanner(await shrinkBanner(file));
+    const banner = await adjustPicture(file, { shape: "banner", title: "Adjust your banner", sizes: [[600, 0.82], [600, 0.68], [480, 0.65], [360, 0.6]], limit: 78_000 });
+    if (banner) await setBanner(banner);
   } catch (err) {
     if (err instanceof Error) toast(err.message, true);
   }
 });
 $("banner-remove").addEventListener("click", () => setBanner(null));
+
+// ---------- adjusting a picture before it's used ----------
+//
+// Your profile picture (a circle) or banner (a wide strip): drag to move it, zoom with the
+// slider or the wheel; what's inside the frame is what's saved.
+
+function adjustPicture(file, { shape, title, sizes, limit }) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const unreadable = () => reject(new Error("That file isn't a picture Hopp can read. Use PNG, JPEG or WebP."));
+    reader.onerror = unreadable;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = unreadable;
+      img.onload = () => openCrop(img, shape, title, sizes, limit, resolve, reject);
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function openCrop(img, shape, title, sizes, limit, resolve, reject) {
+  const dialog = $("crop-dialog");
+  const canvas = $("crop-canvas");
+  const stageW = 420;
+  const stageH = shape === "banner" ? 220 : 320;
+  // The frame: what will be kept.
+  const frameW = shape === "banner" ? 400 : 240;
+  const frameH = shape === "banner" ? Math.round(400 * 0.35) : 240;
+  canvas.width = stageW;
+  canvas.height = stageH;
+  $("crop-stage").style.height = stageH + "px";
+  const frame = $("crop-frame");
+  frame.className = "crop-frame " + (shape === "banner" ? "strip" : "circle");
+  frame.style.width = frameW + "px";
+  frame.style.height = frameH + "px";
+  $("crop-title").textContent = title;
+  // At zoom 1 the picture just covers the frame.
+  const base = Math.max(frameW / img.naturalWidth, frameH / img.naturalHeight);
+  let zoom = 1;
+  let x = 0; // the picture's centre, relative to the frame's centre (in stage pixels)
+  let y = 0;
+  const g = canvas.getContext("2d");
+  const clamp = () => {
+    const w = img.naturalWidth * base * zoom;
+    const h = img.naturalHeight * base * zoom;
+    const mx = Math.max(0, (w - frameW) / 2);
+    const my = Math.max(0, (h - frameH) / 2);
+    x = Math.max(-mx, Math.min(mx, x));
+    y = Math.max(-my, Math.min(my, y));
+  };
+  const draw = () => {
+    clamp();
+    const w = img.naturalWidth * base * zoom;
+    const h = img.naturalHeight * base * zoom;
+    g.clearRect(0, 0, stageW, stageH);
+    g.drawImage(img, stageW / 2 + x - w / 2, stageH / 2 + y - h / 2, w, h);
+  };
+  $("crop-zoom").value = "1";
+  $("crop-zoom").oninput = (e) => {
+    zoom = Number(e.target.value);
+    draw();
+  };
+  canvas.onwheel = (e) => {
+    e.preventDefault();
+    zoom = Math.max(1, Math.min(4, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+    $("crop-zoom").value = String(zoom);
+    draw();
+  };
+  canvas.onpointerdown = (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    const sx = e.clientX - x;
+    const sy = e.clientY - y;
+    canvas.onpointermove = (ev) => {
+      x = ev.clientX - sx;
+      y = ev.clientY - sy;
+      draw();
+    };
+    canvas.onpointerup = () => (canvas.onpointermove = null);
+  };
+  let done = false;
+  const finish = (value) => {
+    if (done) return;
+    done = true;
+    resolve(value);
+  };
+  $("crop-cancel").onclick = () => {
+    dialog.close();
+    finish(null);
+  };
+  dialog.onclose = () => finish(null);
+  $("crop-form").onsubmit = (e) => {
+    e.preventDefault();
+    // The part of the picture inside the frame, in the picture's own pixels.
+    const scale = base * zoom;
+    const sw = frameW / scale;
+    const sh = frameH / scale;
+    const sx = img.naturalWidth / 2 - x / scale - sw / 2;
+    const sy = img.naturalHeight / 2 - y / scale - sh / 2;
+    for (const [w, q] of sizes) {
+      const out = document.createElement("canvas");
+      out.width = w;
+      out.height = Math.round(w * (frameH / frameW));
+      out.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, out.width, out.height);
+      let data = out.toDataURL("image/webp", q);
+      if (!data.startsWith("data:image/webp")) data = out.toDataURL("image/jpeg", q);
+      if (data.length <= limit) {
+        finish(data);
+        dialog.close();
+        return;
+      }
+    }
+    dialog.close();
+    reject(new Error("That picture is too large. Try a smaller one."));
+  };
+  openModal(dialog);
+  draw();
+}
+
+// ---------- what's new ----------
+//
+// Every version's news, newest first, behind the sparkle at the bottom of the server list.
+// A dot shows until you've read the news of the version you're on.
+
+var whatsNew = null;
+async function loadWhatsNew() {
+  if (whatsNew) return whatsNew;
+  try {
+    whatsNew = await (await fetch("whats-new.json")).json();
+  } catch {
+    whatsNew = {};
+  }
+  return whatsNew;
+}
+
+function versionKey(v) {
+  return v.split(".").map((n) => n.padStart(5, "0")).join(".");
+}
+
+async function appVersion() {
+  try {
+    return (await invoke("app_version")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function renderNewsDot() {
+  const notes = await loadWhatsNew();
+  const newest = Object.keys(notes).sort((a, b) => versionKey(b).localeCompare(versionKey(a)))[0];
+  $("news-dot").hidden = !newest || load("newsSeen", "") === newest;
+}
+
+async function openWhatsNew() {
+  const notes = await loadWhatsNew();
+  const mine = await appVersion();
+  const versions = Object.keys(notes).sort((a, b) => versionKey(b).localeCompare(versionKey(a)));
+  $("news-version").textContent = mine ? "You have version " + mine : "";
+  $("news-list").replaceChildren(...versions.map((v, i) => {
+    const item = el("section", "news-item" + (i === 0 ? " latest" : ""));
+    const head = el("div", "news-item-head");
+    head.append(el("strong", "", "Version " + v));
+    if (i === 0) head.append(el("span", "news-new", "Latest"));
+    const list = el("ul", "news-points");
+    for (const line of notes[v].split("\n")) {
+      const text = line.replace(/^\s*•\s*/, "").trim();
+      if (text) list.append(el("li", "", text));
+    }
+    item.append(head, list);
+    return item;
+  }));
+  if (versions[0]) save("newsSeen", versions[0]);
+  $("news-dot").hidden = true;
+  openModal($("news-dialog"));
+}
+
+$("news-btn").addEventListener("click", openWhatsNew);
+renderNewsDot();

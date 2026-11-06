@@ -426,6 +426,7 @@ async fn main() -> anyhow::Result<()> {
             .filter_map(|g| Some((g["id"].as_str()?.to_string(), g["members"].as_array()?.iter().filter_map(|k| k.as_str().map(String::from)).collect())))
             .collect();
         let mut call: Option<BotCall> = None;
+        let mut greeted: std::collections::HashSet<String> = std::collections::HashSet::new();
         // A call we rang out: its id, key and who.
         let mut ringing: Option<(String, [u8; 32], String)> = None;
 
@@ -459,7 +460,9 @@ async fn main() -> anyhow::Result<()> {
                             println!("friend request from @{}", f["username"].as_str().unwrap_or("?"));
                             link.send(json!({ "type": "friend_accept", "key": key }));
                         }
-                        Some("friend") => {
+                        // Only a new friendship gets a hello: a friend changing their name or
+                        // picture sends the same message, and must not.
+                        Some("friend") if greeted.insert(key.clone()) && msg["request"].is_null() && f["since"].as_u64().is_some_and(|t| t + 60_000 > now_ms()) => {
                             println!("now friends with @{}", f["username"].as_str().unwrap_or("?"));
                             dm(&link, &me, &key, "Hi! I'm Hoppbot 🐰 Call me and I'll repeat what you say, write \"call me\" and I'll ring you, or send me an invite link and I'll join your server.");
                         }
@@ -658,4 +661,8 @@ mod tests {
         }
         panic!("the echo never came back ({chime} chime frames)");
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
