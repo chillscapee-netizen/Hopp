@@ -611,3 +611,59 @@ test("video handshakes pass between friends in a call, size-capped", async () =>
   assert.match((await a.d.waitFor((m) => m.type === "error")).message, /Bad call signal/);
   for (const x of [a, b]) x.d.close();
 });
+
+test("@everyone, @here and roles: moderators ping many, others only roles that allow it", async () => {
+  const serverId = crypto.randomBytes(12).toString("hex");
+  const alice = newKey();
+  const bob = newKey();
+  const carol = newKey();
+  const owner = await joinServer(serverId, "alice", alice, { create: "Pings" });
+  assert.ok(owner.welcome.features.includes("pings"));
+  owner.send({ type: "create_invite", max_uses: null, expires_in_hours: null });
+  const { invite } = await owner.waitFor((m) => m.type === "invite_created");
+  const b = await joinServer(serverId, "bob", bob, { invite: invite.code });
+  const c = await joinServer(serverId, "carol", carol, { invite: invite.code });
+  const general = owner.welcome.channels.find((x) => x.name === "general").id;
+
+  // Roles: one anyone may mention, one only moderators may.
+  owner.send({ type: "create_role", name: "Squad", color: null, hoist: false, level: null, mentionable: true });
+  const squad = (await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Squad"))).roles.find((r) => r.name === "Squad");
+  assert.equal(squad.mentionable, true);
+  owner.send({ type: "create_role", name: "Staff", color: null, hoist: false, level: null });
+  const staff = (await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Staff"))).roles.find((r) => r.name === "Staff");
+  owner.send({ type: "assign_role", public_key: bob.pub, role: squad.id, on: true });
+  owner.send({ type: "assign_role", public_key: bob.pub, role: staff.id, on: true });
+  await owner.waitFor((m) => m.type === "user_updated" && m.user.public_key === bob.pub && m.user.roles?.length === 2);
+
+  // Bob leaves the server window; his account hears.
+  b.close();
+  await sleep(200);
+  const account = await Device.open(bob, "Bob");
+
+  // Carol isn't a moderator: her @everyone is plain text, and Staff becomes a name.
+  c.send({ type: "send_chat", channel: general, text: `@everyone and <@&${staff.id}> look` });
+  const plain = await owner.waitFor((m) => m.type === "chat" && m.message.author_key === carol.pub);
+  assert.equal(plain.message.text, `@​everyone and @Staff look`);
+  const quiet = await account.waitFor((m) => m.type === "channel_activity");
+  assert.equal(quiet.mention, false);
+
+  // A role anyone may mention pings its people.
+  c.send({ type: "send_chat", channel: general, text: `<@&${squad.id}> game?` });
+  const role = await account.waitFor((m) => m.type === "channel_activity" && m.mention);
+  assert.equal(role.crowd, false);
+  assert.equal(role.preview, "@Squad game?");
+  account.inbox = [];
+
+  // The owner's @everyone pings everyone, marked as such.
+  owner.send({ type: "send_chat", channel: general, text: "@everyone meeting now" });
+  const crowd = await account.waitFor((m) => m.type === "channel_activity" && m.mention);
+  assert.equal(crowd.crowd, true);
+  assert.equal(crowd.preview, "@everyone meeting now");
+
+  // @here is only for who's here: Bob isn't.
+  account.inbox = [];
+  owner.send({ type: "send_chat", channel: general, text: "@here quick one" });
+  await sleep(500);
+  assert.ok(!account.inbox.some((m) => m.type === "channel_activity" && m.mention), "away people aren't pinged by @here");
+  for (const d of [owner, c, account]) d.close();
+});

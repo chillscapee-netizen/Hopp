@@ -868,13 +868,16 @@ fn update_channel(
 
 /// Admins: the server's own roles.
 #[tauri::command]
-fn create_role(state: State<'_, AppState>, name: String, color: Option<String>, hoist: bool, level: Option<String>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::CreateRole { name, color, hoist, level }))
+fn create_role(state: State<'_, AppState>, name: String, color: Option<String>, hoist: bool, level: Option<String>, mentionable: Option<bool>) -> CmdResult {
+    let mentionable = mentionable.unwrap_or(false);
+    with_conn(&state, |c| c.control.send(ClientMsg::CreateRole { name, color, hoist, level, mentionable }))
 }
 
 #[tauri::command]
-fn update_role(state: State<'_, AppState>, id: u32, name: String, color: Option<String>, hoist: bool, level: Option<String>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateRole { id, name, color, hoist, level }))
+#[allow(clippy::too_many_arguments)]
+fn update_role(state: State<'_, AppState>, id: u32, name: String, color: Option<String>, hoist: bool, level: Option<String>, mentionable: Option<bool>) -> CmdResult {
+    let mentionable = mentionable.unwrap_or(false);
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateRole { id, name, color, hoist, level, mentionable }))
 }
 
 #[tauri::command]

@@ -110,6 +110,9 @@ pub struct RoleInfo {
     pub level: Option<String>,
     #[serde(default)]
     pub position: i32,
+    /// Anyone may @mention it (moderators always may).
+    #[serde(default)]
+    pub mentionable: bool,
 }
 
 /// One line of a server's audit log: who did what, to whom, when.
@@ -344,8 +347,23 @@ pub enum ClientMsg {
         private_roles: Option<Vec<u32>>,
     },
     /// Admins, on servers whose welcome lists "roles": a new role.
-    CreateRole { name: String, color: Option<String>, hoist: bool, level: Option<String> },
-    UpdateRole { id: u32, name: String, color: Option<String>, hoist: bool, level: Option<String> },
+    CreateRole {
+        name: String,
+        color: Option<String>,
+        hoist: bool,
+        level: Option<String>,
+        #[serde(default)]
+        mentionable: bool,
+    },
+    UpdateRole {
+        id: u32,
+        name: String,
+        color: Option<String>,
+        hoist: bool,
+        level: Option<String>,
+        #[serde(default)]
+        mentionable: bool,
+    },
     DeleteRole { id: u32 },
     /// Every role id, highest first.
     ReorderRoles { order: Vec<u32> },

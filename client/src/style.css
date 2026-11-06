@@ -3309,3 +3309,10 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
   border-radius: 0;
   border-left: 1px solid var(--line);
 }
+
+/* @everyone, @here and roles in the picker and in messages. */
+.mention-at { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--layer-2); color: var(--text-2); font-weight: 700; font-size: 13px; }
+.mention-at.role { background: color-mix(in srgb, var(--role) 25%, transparent); color: var(--role); }
+.mention-at.role .i { width: 14px; height: 14px; }
+.mention.role-mention { background: color-mix(in srgb, var(--role, var(--link)) 16%, transparent); color: color-mix(in srgb, var(--role, var(--link)) 70%, var(--text)); }
+.mention.role-mention.mine { background: color-mix(in srgb, var(--role, var(--link)) 28%, transparent); }

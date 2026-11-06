@@ -1095,7 +1095,7 @@ export class StromAccount extends DurableObject<Env> {
 
   async channelActivity(m: {
     server: string; server_name: string; channel: number; channel_name: string; id: number; at: number;
-    author_key: string; author_name: string; mention: boolean; preview: string | null;
+    author_key: string; author_name: string; mention: boolean; crowd?: boolean; preview: string | null;
   }): Promise<void> {
     if (m.author_key === this.meta("key")) return this.markRead(m.server, m.channel, m.id);
     if (this.friend(m.author_key)?.state === "blocked") return;
@@ -1116,6 +1116,7 @@ export class StromAccount extends DurableObject<Env> {
       author_key: m.author_key,
       author_name: m.author_name,
       mention: m.mention,
+      crowd: !!m.crowd,
       preview: m.preview,
     });
   }

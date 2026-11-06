@@ -78,7 +78,10 @@ const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
 interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[] }
-interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number }
+interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number; mentionable: boolean }
+/** @everyone and @here as words of their own. */
+const CROWD = /(^|[^\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/gu;
+const ROLE_MENTION = /<@&(\d+)>/g;
 const MAX_ROLES = 50;
 const ROLE_COLOR = /^#[0-9a-f]{6}$/i;
 const MAX_CATEGORY_LEN = 24;
@@ -247,6 +250,8 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
     if (!channelColumns.has("slowmode")) this.sql.exec("ALTER TABLE channels ADD COLUMN slowmode INTEGER");
     if (!channelColumns.has("private_roles")) this.sql.exec("ALTER TABLE channels ADD COLUMN private_roles TEXT");
+    const roleColumns = new Set(this.sql.exec("PRAGMA table_info(roles)").toArray().map((c) => String(c.name)));
+    if (!roleColumns.has("mentionable")) this.sql.exec("ALTER TABLE roles ADD COLUMN mentionable INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
@@ -486,9 +491,23 @@ export class StromServer extends DurableObject<Env> {
       keys.push(String(row.key));
       names.set(String(row.key), String(row.name));
     }
+    const ch = this.channels().find((c) => c.id === m.channel);
+    const visible = keys.filter((key) => this.canSee(key, ch));
+    keys.length = 0;
+    keys.push(...visible);
+    const here = new Set(this.members().map(([, s]) => s.key));
     const mentioned = new Set([...m.text.matchAll(MENTION)].map((x) => x[1]));
     if (m.reply) mentioned.add(m.reply.author_key);
-    const preview = plainText(m.text).replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`).slice(0, 200);
+    const roleIds = new Set([...m.text.matchAll(ROLE_MENTION)].map((x) => Number(x[1])));
+    if (roleIds.size) for (const r of this.sql.exec("SELECT key, role FROM member_roles").toArray()) if (roleIds.has(Number(r.role))) mentioned.add(String(r.key));
+    // Many at once: everyone who can see it, or everyone who's here right now.
+    const crowd = new Set<string>();
+    for (const [, , word] of m.text.matchAll(CROWD)) for (const key of word === "everyone" ? keys : keys.filter((k) => here.has(k))) crowd.add(key);
+    const roleNames = new Map(this.customRoles().map((r) => [r.id, r.name]));
+    const preview = plainText(m.text)
+      .replace(MENTION, (_, key) => `@${names.get(key) ?? "someone"}`)
+      .replace(ROLE_MENTION, (_, id) => `@${roleNames.get(Number(id)) ?? "deleted-role"}`)
+      .slice(0, 200);
     const activity = {
       server: `cloud:${serverId}`,
       server_name: this.meta("name") ?? "",
@@ -502,14 +521,14 @@ export class StromServer extends DurableObject<Env> {
     // Each call to an account counts against Cloudflare's free daily limit, so they're few:
     // people in the server already have the message, and the author has read it. Everyone
     // else hears once that a channel has news, until they next come in; mentions always.
-    const here = new Set(this.members().map(([, s]) => s.key));
     const told = new Set(this.sql.exec("SELECT key FROM notified WHERE channel = ?", m.channel).toArray().map((r) => String(r.key)));
     for (const key of keys) {
       if (key === m.author_key) continue;
-      const mention = mentioned.has(key);
+      const mention = mentioned.has(key) || crowd.has(key);
       if (!mention && (here.has(key) || told.has(key))) continue;
       if (!here.has(key)) this.sql.exec("INSERT OR IGNORE INTO notified (key, channel) VALUES (?, ?)", key, m.channel);
-      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, preview });
+      // "Only by @everyone/@here", so people who turned those off can skip them.
+      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, crowd: !mentioned.has(key) && crowd.has(key), preview });
       this.ctx.waitUntil(call.catch(() => {}));
     }
   }
@@ -725,7 +744,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings"],
       roles: this.customRoles(),
     });
     for (const ch of channels) {
@@ -737,14 +756,30 @@ export class StromServer extends DurableObject<Env> {
 
   /** The server's own roles, highest first. */
   private customRoles(): RoleInfo[] {
-    return this.sql.exec("SELECT id, name, color, hoist, level, position FROM roles ORDER BY position DESC, id").toArray().map((r) => ({
+    return this.sql.exec("SELECT id, name, color, hoist, level, position, mentionable FROM roles ORDER BY position DESC, id").toArray().map((r) => ({
       id: Number(r.id),
       name: String(r.name),
       color: r.color === null ? null : String(r.color),
       hoist: !!r.hoist,
       level: r.level === "admin" || r.level === "mod" ? (r.level as "admin" | "mod") : null,
       position: Number(r.position),
+      mentionable: !!r.mentionable,
     }));
+  }
+
+  /**
+   * Who may ping many at once: moderators may use @everyone, @here and any role; others only
+   * roles that allow it. Anything else stays in the text as plain words that ping nobody.
+   */
+  private allowPings(text: string, myRank: number): string {
+    if (myRank >= RANK.mod) return text;
+    const roles = new Map(this.customRoles().map((r) => [r.id, r]));
+    return text
+      .replace(CROWD, (_, before, word) => `${before}@\u200b${word}`)
+      .replace(ROLE_MENTION, (all, id) => {
+        const r = roles.get(Number(id));
+        return r?.mentionable ? all : `@${r?.name ?? "deleted-role"}`;
+      });
   }
 
   private rolesOf(key: string): number[] {
@@ -811,7 +846,7 @@ export class StromServer extends DurableObject<Env> {
         if (lv === "admin" && !owner) return fail("Only the owner can make admin roles.");
         const n = name(msg.name) || "new role";
         const top = Number(this.sql.exec("SELECT max(position) AS p FROM roles").toArray()[0]?.p ?? 0);
-        this.sql.exec("INSERT INTO roles (name, color, hoist, level, position) VALUES (?, ?, ?, ?, ?)", n, color(msg.color), msg.hoist ? 1 : null, lv, top + 1);
+        this.sql.exec("INSERT INTO roles (name, color, hoist, level, position, mentionable) VALUES (?, ?, ?, ?, ?, ?)", n, color(msg.color), msg.hoist ? 1 : null, lv, top + 1, msg.mentionable ? 1 : null);
         this.audit(user.name, "create_role", n, null);
         changed();
         return true;
@@ -823,7 +858,7 @@ export class StromServer extends DurableObject<Env> {
         const lv = level(msg.level);
         if ((lv === "admin" || role.level === "admin") && !owner) return fail("Only the owner can change admin roles.");
         const n = name(msg.name) || role.name;
-        this.sql.exec("UPDATE roles SET name = ?, color = ?, hoist = ?, level = ? WHERE id = ?", n, color(msg.color), msg.hoist ? 1 : null, lv, role.id);
+        this.sql.exec("UPDATE roles SET name = ?, color = ?, hoist = ?, level = ?, mentionable = ? WHERE id = ?", n, color(msg.color), msg.hoist ? 1 : null, lv, msg.mentionable ? 1 : null, role.id);
         this.audit(user.name, "update_role", n, null);
         changed();
         // Its level decides what its people may do.
@@ -982,7 +1017,7 @@ export class StromServer extends DurableObject<Env> {
         });
       case "send_chat": {
         const ch = this.channel(Number(msg.channel));
-        const text = String(msg.text ?? "").trim();
+        const text = this.allowPings(String(msg.text ?? "").trim(), myRank);
         // Voice channels have a chat too, for the people in them.
         if (ch?.kind !== "text" && ch?.kind !== "voice") return this.error(ws, "That channel doesn't exist.");
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
@@ -1043,7 +1078,7 @@ export class StromServer extends DurableObject<Env> {
       case "edit_message": {
         const channel = Number(msg.channel);
         const id = Number(msg.id);
-        const text = String(msg.text ?? "").trim();
+        const text = this.allowPings(String(msg.text ?? "").trim(), myRank);
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const m = this.message(channel, id);
         if (!m) return this.error(ws, "That message no longer exists.");

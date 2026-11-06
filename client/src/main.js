@@ -1494,6 +1494,7 @@ function openServerMenu(server, x, y) {
       ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
         label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
       })),
+      { label: "Suppress @everyone and @here", check: crowdQuiet(server.address), action: (on) => setCrowdQuiet(server, on) },
       "sep",
       active
         ? { label: "Disconnect", icon: "logout", action: disconnect }
@@ -2512,6 +2513,8 @@ var LINK_ONE = new RegExp(LINK_PATTERN.source, "i");
 var INLINE_RULES = [
   ["code", /`([^`\n]+)`/],
   ["mention", /<@([0-9a-f]{64})>/],
+  ["role", /<@&(\d+)>/],
+  ["crowd", /(?<![\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/u],
   ["link", LINK_ONE],
   ["spoiler", /\|\|([\s\S]+?)\|\|/],
   ["bold", /\*\*([\s\S]+?)\*\*/],
@@ -2535,6 +2538,8 @@ function renderInline(text, out) {
     const inner = m[1] ?? m[2] ?? "";
     if (kind === "code") out.append(el("code", "inline-code", inner));
     else if (kind === "mention") out.append(el("span", "mention" + (inner === state.account?.publicKey ? " me" : ""), `@${nameForKey(inner)}`));
+    else if (kind === "role") out.append(roleMentionNode(Number(inner)));
+    else if (kind === "crowd") out.append(pingsOn() ? el("span", "mention" + (crowdQuiet(currentServer()?.address) ? "" : " me"), m[0]) : m[0]);
     else if (kind === "link") out.append(linkNode(m[0]));
     else {
       const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : "span", kind === "spoiler" ? "spoiler" : "");
@@ -4492,7 +4497,7 @@ listen("account", (e) => {
       break;
     case "channel_activity": {
       const fresh = mergeRead(m);
-      if (fresh) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ? previewText(m.preview) : "Mentioned you", mention: m.mention });
+      if (fresh) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ? previewText(m.preview) : "Mentioned you", mention: m.mention && !(m.crowd && crowdQuiet(m.server)) });
       renderUnread();
       return;
     }
@@ -4985,6 +4990,7 @@ function mergeSync(remote) {
       dms: { ...remote.notify.dms },
       pinned: { ...remote.notify.pinned },
       friendGroups: { ...remote.notify.friendGroups },
+      quiet: { ...remote.notify.quiet },
     };
     save("notify", JSON.stringify(prefs.notify));
   }
@@ -5597,7 +5603,12 @@ function currentServer() {
 }
 
 function mentionsMe(text) {
-  return !!state.account && text.includes(`<@${state.account.publicKey}>`);
+  if (!state.account) return false;
+  if (text.includes(`<@${state.account.publicKey}>`)) return true;
+  if (!pingsOn()) return false;
+  const mine = meUser()?.roles ?? [];
+  for (const [, id] of text.matchAll(/<@&(\d+)>/g)) if (mine.includes(Number(id))) return true;
+  return CROWD_WORD.test(text) && !crowdQuiet(currentServer()?.address);
 }
 
 /** A message that mentions you or answers one of yours. */
@@ -5607,7 +5618,7 @@ function mentionsMeIn(m) {
 
 /** Message text as a person would read it: mentions become @names. */
 function plainText(text) {
-  return text.replace(MENTION, (_, key) => `@${nameForKey(key)}`);
+  return text.replace(MENTION, (_, key) => `@${nameForKey(key)}`).replace(/<@&(\d+)>/g, (_, id) => `@${roleById(Number(id))?.name ?? "deleted-role"}`);
 }
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
@@ -5865,6 +5876,7 @@ function mentionCandidates(query) {
   };
   for (const u of [...(state.roster?.users ?? [])].sort(byName)) add(keyOf(u), u.name);
   for (const list of state.chats.values()) for (const m of [...list].reverse()) add(m.author_key, m.sender_name);
+  out.unshift(...crowdCandidates(q));
   return out.sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
 }
 
@@ -5894,7 +5906,13 @@ function updateMentionPicker() {
     const row = el("button", "mention-option" + (i === mentionPicker.index ? " active" : ""));
     row.type = "button";
     if (item.emoji) row.append(el("span", "mention-emoji", item.emoji), el("span", "mention-name ellipsis", `:${item.name}:`));
-    else row.append(avatar(item.name, "s24", undefined, pictureFor(item.key)), el("span", "mention-name ellipsis", item.name));
+    else if (item.crowd) row.append(el("span", "mention-at", "@"), el("span", "mention-name ellipsis", "@" + item.name));
+    else if (item.role) {
+      const dot = el("span", "mention-at role");
+      dot.style.setProperty("--role", item.role.color ?? "var(--faint)");
+      dot.append(icon("shield"));
+      row.append(dot, el("span", "mention-name ellipsis", "@" + item.name));
+    } else row.append(avatar(item.name, "s24", undefined, pictureFor(item.key)), el("span", "mention-name ellipsis", item.name));
     if (item.username) row.append(el("span", "mention-user ellipsis", item.username));
     row.addEventListener("mouseenter", () => {
       mentionPicker.index = i;
@@ -5903,7 +5921,7 @@ function updateMentionPicker() {
     row.addEventListener("click", () => pickMention(item));
     return row;
   });
-  pop.replaceChildren(el("div", "mention-head", items[0]?.emoji ? "Emoji" : "Members"), ...rows);
+  pop.replaceChildren(el("div", "mention-head", items[0]?.emoji ? "Emoji" : items.some((i) => i.crowd || i.role) ? "Mentions" : "Members"), ...rows);
   pop.hidden = false;
 }
 
@@ -5921,6 +5939,17 @@ function pickMention(item) {
   }
   const label = `@${item.name}`;
   const end = chatInput.selectionStart;
+  // @everyone and @here are words of their own; nothing to swap on sending.
+  if (item.crowd) {
+    chatInput.value = chatInput.value.slice(0, mentionPicker.start) + label + " " + chatInput.value.slice(end);
+    const at = mentionPicker.start + label.length + 1;
+    chatInput.setSelectionRange(at, at);
+    mentionPicker.open = false;
+    $("mention-picker").hidden = true;
+    chatInput.focus();
+    autosize();
+    return;
+  }
   chatInput.value = chatInput.value.slice(0, mentionPicker.start) + label + " " + chatInput.value.slice(end);
   const caret = mentionPicker.start + label.length + 1;
   chatInput.setSelectionRange(caret, caret);
@@ -11003,6 +11032,7 @@ function openRole(r, keepEdits) {
   if (keepEdits && document.activeElement?.closest?.("#role-editor")) return;
   $("role-name").value = r.name;
   $("role-hoist").checked = r.hoist;
+  $("role-mentionable").checked = !!r.mentionable;
   $("role-level").value = r.level ?? "";
   // Admin-level roles are the owner's to give.
   $("role-level").querySelector('option[value="admin"]').disabled = !can("own");
@@ -11028,7 +11058,7 @@ $("role-new").addEventListener("click", () => call("create_role", { name: "new r
 $("role-editor").addEventListener("submit", (e) => {
   e.preventDefault();
   if (editingRole === null) return;
-  call("update_role", { id: editingRole, name: $("role-name").value.trim() || "role", color: roleColorPick, hoist: $("role-hoist").checked, level: $("role-level").value || null });
+  call("update_role", { id: editingRole, name: $("role-name").value.trim() || "role", color: roleColorPick, hoist: $("role-hoist").checked, level: $("role-level").value || null, mentionable: $("role-mentionable").checked });
 });
 $("role-delete").addEventListener("click", async () => {
   const r = state.roster.roles.find((x) => x.id === editingRole);
@@ -11054,3 +11084,57 @@ $("channel-delete").addEventListener("click", () => {
   deleteChannel(ch);
 });
 $("role-new-empty").addEventListener("click", () => call("create_role", { name: "new role", color: null, hoist: false, level: null }));
+
+// ---------- @everyone, @here and role mentions ----------
+//
+// Moderators may ping everyone who can see a channel (@everyone), everyone who's here right
+// now (@here) and any role; others only roles that allow it. The server turns the rest into
+// plain words, so they look like text and ping nobody. Per server, people can turn @everyone
+// and @here off for themselves.
+
+var CROWD_WORD = /(?<![\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/u;
+
+function pingsOn() {
+  return !!state.roster?.features?.includes("pings");
+}
+
+function roleById(id) {
+  return state.roster?.roles?.find((r) => r.id === id);
+}
+
+function crowdQuiet(address) {
+  return !!address && !!prefs.notify.quiet?.[address];
+}
+
+function setCrowdQuiet(s, on) {
+  prefs.notify.quiet = { ...prefs.notify.quiet };
+  if (on) prefs.notify.quiet[s.address] = true;
+  else delete prefs.notify.quiet[s.address];
+  saveNotify();
+  toast(on ? "@everyone and @here won't notify you in " + s.label + "." : "@everyone and @here notify you again in " + s.label + ".");
+}
+
+/** @everyone, @here and roles you may mention, for the picker. */
+function crowdCandidates(q) {
+  if (!pingsOn()) return [];
+  const out = [];
+  const mod = can("moderate");
+  if (mod) {
+    for (const [name, sub] of [["everyone", "Everyone who can see this channel"], ["here", "Everyone online right now"]]) {
+      if (name.startsWith(q)) out.push({ key: name, name, crowd: true, username: sub });
+    }
+  }
+  for (const r of state.roster?.roles ?? []) {
+    if ((mod || r.mentionable) && r.name.toLowerCase().includes(q)) out.push({ key: "&" + r.id, name: r.name, role: r, username: "Role" });
+  }
+  return out;
+}
+
+/** A role mention in a message: in the role's colour, lit when it's one of yours. */
+function roleMentionNode(id) {
+  const r = roleById(id);
+  const mine = (meUser()?.roles ?? []).includes(id);
+  const node = el("span", "mention role-mention" + (mine ? " mine" : ""), "@" + (r?.name ?? "deleted-role"));
+  if (r?.color) node.style.setProperty("--role", r.color);
+  return node;
+}
