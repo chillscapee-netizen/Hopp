@@ -10,10 +10,11 @@
   check("the compass opens a page of its own", $("shell").classList.contains("news") && getComputedStyle($("news-view")).display !== "none" && !document.querySelector("dialog[open]"));
   check("the sidebar lists its sections", document.querySelectorAll("#sidebar-body .news-nav").length === 7 && $("sidebar-title").textContent === "Discover");
   const items = [...document.querySelectorAll("#news-body .news-release")];
-  check("what's new: every version, newest first", items.length >= 5 && items[0].textContent.includes("Version 0.2.8") && !!items[0].querySelector(".news-new"));
+  check("what's new: every version, newest first", items.length >= 5 && items[0].textContent.includes("Version 0.2.9") && !!items[0].querySelector(".news-new"));
   check("reading it clears the dot", $("news-dot").hidden);
   [...document.querySelectorAll(".news-nav")].find((b) => b.textContent.includes("Voice, video")).click();
   await wait(80);
+  check("a short guide has no list under it", !document.querySelector("#sidebar-body .news-part"));
   check("a guide opens in the page", $("news-title").textContent === "Voice, video and calls" && document.querySelectorAll("#news-body .news-card").length >= 3);
   [...document.querySelectorAll(".news-nav")].find((b) => b.textContent.includes("About Hopp")).click();
   await wait(80);

@@ -12257,11 +12257,11 @@ var NEWS_GUIDES = {
   ],
 };
 
-/** The parts of a section, for the quick list under it in the sidebar: [anchor, label]. */
+/** The parts of About Hopp, for the quick list under it in the sidebar: [anchor, label]. */
 function newsParts(key) {
-  if (key === "news") return newsVersions().map((v) => ["v-" + v.replaceAll(".", "-"), "Version " + v]);
-  if (key === "about") return [...NEWS_ABOUT.map(([id, title]) => [id, title]), ["limits", "Hopp Cloud, honestly"], ["own", "Your own server"]];
-  return (NEWS_GUIDES[key] ?? []).map(([title], i) => ["g-" + i, title]);
+  // Only the long page gets a quick list; short ones are seen at a glance.
+  if (key !== "about") return [];
+  return [...NEWS_ABOUT.map(([id, title]) => [id, title]), ["limits", "Hopp Cloud, honestly"], ["own", "Your own server"]];
 }
 
 function renderNewsNav(body, head) {
@@ -12282,7 +12282,7 @@ function renderNewsNav(body, head) {
     });
     rows.push(b);
     // The open section folds out its parts: a click scrolls right to one.
-    if (current) {
+    if (current && newsParts(key).length) {
       const parts = el("div", "news-parts");
       for (const [anchor, text] of newsParts(key)) {
         const p = el("button", "news-part", text);
