@@ -7,7 +7,7 @@ const out = fileURLToPath(new URL("../public/", import.meta.url));
 const parts = fileURLToPath(new URL("../site/", import.meta.url));
 const DL = "/download/Hopp-setup.exe";
 const ARROW = `<svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>`;
-const PAGES = [["features", "Features"], ["about", "About"], ["privacy", "Privacy"], ["help", "Help"], ["whats-new", "What's new"]];
+const PAGES = [["features", "Features"], ["limits", "Limits"], ["about", "About"], ["privacy", "Privacy"], ["help", "Help"], ["whats-new", "What's new"]];
 
 function page(file, current, title, description, body) {
   const nav = PAGES.map(([f, label]) => `<a href="/${f}.html"${f === current ? ' class="here"' : ""}>${label}</a>`).join("");
@@ -38,7 +38,7 @@ ${body}
 <footer class="foot">
   <div class="foot-brand"><a class="brand" href="/"><img src="/site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
   <div><h4>Hopp</h4><a href="/features.html">Features</a><a href="/whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
-  <div><h4>Learn more</h4><a href="/about.html">About Hopp</a><a href="/privacy.html">Privacy &amp; safety</a><a href="/help.html">Help</a></div>
+  <div><h4>Learn more</h4><a href="/about.html">About Hopp</a><a href="/limits.html">Limits</a><a href="/privacy.html">Privacy &amp; safety</a><a href="/help.html">Help</a></div>
 </footer>
 <script src="/site/site.js"></script>
 </body>
@@ -51,6 +51,17 @@ const head = (kicker, h1, lead) => `<section class="page-head"><span class="kick
 // ---------- the drawn app (no names, no words) ----------
 const APP = readFileSync(parts + "app.part.html", "utf8");
 
+const LIMITS = [
+  ["A few hours", "Busy days", "The free plan has a daily limit for the whole of Hopp Cloud. On a very busy day it can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe meanwhile."],
+  ["1,000", "Messages kept per channel", "Each channel keeps its newest 1,000 messages, and each conversation between friends its newest 5,000. Storage is what a free plan has least of."],
+  ["40 a day", "Pictures", "Hopp makes pictures small (about 300 KB at most). You can share 40 a day in each server and 40 a day with friends, and a server keeps up to 100 MB of them."],
+  ["10", "People in voice", "Voice and video go straight between the people talking, not through a server. That keeps calls free and private, but everyone sends to everyone, and past 10 people a home connection can't keep up."],
+  ["25", "People in a group", "Group conversations are encrypted for each person in them, so they stay small."],
+  ["12 a day", "Relay sign-ins", "When two people can't reach each other directly, voice goes through a relay. That costs, so each person gets 12 sign-ins a day; one lasts all day."],
+  ["1 a second", "Spam protection", "A burst of 5 messages, then one a second. 10 new servers and 30 friend requests a day per person. It keeps bots and spam out, not you."],
+];
+const limitRows = () => LIMITS.map(([v, w, why]) => `<div class="limit"><span class="value">${v}</span><div><strong>${w}</strong><p>${why}</p></div></div>`).join("\n    ");
+
 // ---------- home ----------
 const home = `
 <section class="hero">
@@ -60,7 +71,7 @@ const home = `
     <p class="lead">Talk in voice channels, call each other, share your screen and keep the chat going. Hopp is free, all of it, with no ads and no tracking.</p>
     <div class="actions">
       <a class="btn" href="${DL}">${ARROW}Download for Windows</a>
-      <span class="meta"><span class="version-line">Free</span><br>About 5 MB · Windows 10 and 11</span>
+      <span class="meta"><span class="version-line">Free</span><br>About 5 MB · Windows 10 and 11 · <a href="/limits.html">Limits</a></span>
     </div>
   </div>
   ${APP}
@@ -77,6 +88,18 @@ const home = `
     <a href="/features.html#friends" class="block"><span class="shape s-friends"><i></i><i></i></span><h3>Friends</h3><p>Messages and groups between friends, end-to-end encrypted.</p></a>
     <a href="/features.html#roles" class="block"><span class="shape s-roles"><i></i><i></i><i></i></span><h3>Roles and moderation</h3><p>Colours, private channels, timeouts, slowmode and an audit log.</p></a>
     <a href="/features.html#yours" class="block"><span class="shape s-yours"><i></i><i></i><i></i></span><h3>Make it yours</h3><p>Themes, a banner, a custom status, nicknames and Hopp's own sounds.</p></a>
+  </div>
+</section>
+
+<section class="home-limits">
+  <div class="words">
+    <span class="kicker">Limits</span>
+    <h2 class="section-title">Free, with a few limits</h2>
+    <p>Hopp Cloud runs on a free plan. That keeps Hopp free with no ads, but a free plan only does so much. These are the limits, out in the open.</p>
+    <a class="more-link" href="/limits.html">Why each one is there</a>
+  </div>
+  <div class="limit-chips">
+    ${LIMITS.map(([v, w]) => `<div><strong>${v}</strong><span>${w}</span></div>`).join("\n    ")}
   </div>
 </section>
 
@@ -104,10 +127,12 @@ const home = `
   </ol>
 </section>
 
+
+
 <section class="values">
   <div><h3>Free, all of it</h3><p>Screen sharing, cameras, uploads and every look. Nothing to unlock, ever.</p></div>
   <div><h3>Private</h3><p>Messages and calls between friends are end-to-end encrypted. <a href="/privacy.html">How it works</a></p></div>
-  <div><h3>Honest</h3><p>Hopp Cloud runs on a free plan, so it has a few limits. <a href="/about.html#limits">Here's every one, and why</a></p></div>
+  <div><h3>Beta</h3><p>Hopp works every day but it's still young: expect bugs and changes. <a href="/about.html#beta">What beta means</a></p></div>
 </section>
 
 <section class="split">
@@ -203,15 +228,7 @@ ${feat("more", "And more", "The little things", "Small things that make it nice 
 ])}`;
 
 // ---------- about ----------
-const LIMITS = [
-  ["A few hours", "Busy days", "The free plan has a daily limit for the whole of Hopp Cloud. On a very busy day it can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe meanwhile."],
-  ["1,000", "Messages kept per channel", "Each channel keeps its newest 1,000 messages, and each conversation between friends its newest 5,000. Storage is what a free plan has least of."],
-  ["40 a day", "Pictures", "Hopp makes pictures small (about 300 KB at most). You can share 40 a day in each server and 40 a day with friends, and a server keeps up to 100 MB of them."],
-  ["10", "People in voice", "Voice and video go straight between the people talking, not through a server. That keeps calls free and private, but everyone sends to everyone, and past 10 people a home connection can't keep up."],
-  ["25", "People in a group", "Group conversations are encrypted for each person in them, so they stay small."],
-  ["12 a day", "Relay sign-ins", "When two people can't reach each other directly, voice goes through a relay. That costs, so each person gets 12 sign-ins a day; one lasts all day."],
-  ["1 a second", "Spam protection", "A burst of 5 messages, then one a second. 10 new servers and 30 friend requests a day per person. It keeps bots and spam out, not you."],
-];
+
 const about = head("About", "What Hopp is", "Hopp is an app for talking, playing and hanging out with your friends. Servers, voice channels, calls, cameras and screen sharing, all in one small app.") + `
 <section class="prose" id="why">
   <h2>Why I made Hopp</h2>
@@ -244,11 +261,9 @@ const about = head("About", "What Hopp is", "Hopp is an app for talking, playing
   <p>Servers made in Hopp run on Hopp Cloud, which uses a free plan. Calls and voice don't go through it at all: they go straight between you and your friends. That's how Hopp can be free with no ads and nothing to pay. A free plan only does so much each day and only stores so much, so Hopp keeps a few limits.</p>
 </section>
 
-<section class="limits-page" id="limits">
-  <h2>Every limit, and why</h2>
-  <div class="limits">
-    ${LIMITS.map(([v, w, why]) => `<div class="limit"><span class="value">${v}</span><div><strong>${w}</strong><p>${why}</p></div></div>`).join("\n    ")}
-  </div>
+<section class="prose" id="limits">
+  <h2>The limits</h2>
+  <p>Every limit Hopp Cloud has, and why it's there, is on its own page: <a href="/limits.html">Limits</a>.</p>
 </section>
 
 <section class="prose">
@@ -310,10 +325,27 @@ const help = head("Help", "Questions and answers", "The most common questions. C
   <h2>Hopp itself</h2>
   ${Q("What does beta mean?", "Hopp works and you can use it every day, but it's still young: you'll find bugs, and things can change as it gets better. Your account and messages are kept between versions. <a href=\"/about.html#beta\">More about the beta</a>")}
   ${Q("Something is broken. How do I report it?", "In Hopp, open Settings, then App, and press <b>Copy</b> next to <b>Debug info</b>. Send it, with what happened, to the person who invited you or to whoever runs your server.")}
-  ${Q("Is it really free?", "Yes, all of it. Hopp Cloud runs on a free plan, which is why it has <a href=\"/about.html#limits\">a few limits</a>.")}
+  ${Q("Is it really free?", "Yes, all of it. Hopp Cloud runs on a free plan, which is why it has <a href=\"/limits.html\">a few limits</a>.")}
+  ${Q("What are the limits?", "Channels keep their newest 1,000 messages, up to 10 people talk in a voice channel, pictures are 40 a day, and on a very busy day Hopp Cloud can pause for a few hours. <a href=\"/limits.html\">Every limit, and why</a>")}
   ${Q("How do updates work?", "When a new version is ready, the arrow at the top of Hopp turns green. You choose when to install it.")}
   ${Q("Hopp Cloud seems to be down", "On a very busy day the free plan's daily limit can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe; it comes back by itself.")}
   ${Q("Can I run my own server?", "Yes. In the app, press <b>+</b> and choose <b>Run your own server</b> to see how. It has no limits beyond your own computer.")}
+</section>`;
+
+// ---------- limits ----------
+const limitsPage = head("Limits", "Every limit, and why", "Hopp is free, all of it. To stay that way, Hopp Cloud runs on a free plan, and a free plan only does so much each day and only stores so much. Here is every limit, out in the open.") + `
+<section class="limits-page">
+  <div class="limits">
+    ${limitRows()}
+  </div>
+</section>
+<section class="prose">
+  <h2>What doesn't count</h2>
+  <p>Calls and voice don't go through Hopp Cloud: they go straight between you and your friends, so talking doesn't use anything up. Screen sharing and cameras go the same way.</p>
+  <h2>Want no limits?</h2>
+  <p>Run your own server. It runs on a computer of yours, keeps what you want, and nothing goes through Hopp Cloud. In the app, press <b>+</b> in the server list and choose <b>Run your own server</b>.</p>
+  <h2>Will they change?</h2>
+  <p>Hopp is in beta. If a limit changes, it says so here and on <a href="/whats-new.html">What's new</a>.</p>
 </section>`;
 
 // ---------- what's new ----------
@@ -322,6 +354,7 @@ const news = head("What's new", "Better every week", "Every version of Hopp and 
 
 writeFileSync(out + "index.html", page("index", "", "Hopp: hang out with your friends", "Hopp is a free app to talk, play and hang out with your friends. Voice channels, calls, cameras and screen sharing. No ads, no tracking.", home));
 writeFileSync(out + "features.html", page("features", "features", "Features · Hopp", "Everything Hopp can do: servers, voice channels, calls, screen sharing, chat, friends, roles and themes.", features));
+writeFileSync(out + "limits.html", page("limits", "limits", "Limits · Hopp", "Every limit Hopp Cloud has, and why it is there.", limitsPage));
 writeFileSync(out + "about.html", page("about", "about", "About · Hopp", "What Hopp is, how it stays free, and every limit and why.", about));
 writeFileSync(out + "privacy.html", page("privacy", "privacy", "Privacy & safety · Hopp", "What's encrypted in Hopp, what Hopp Cloud keeps, and how you stay in control.", privacy));
 writeFileSync(out + "help.html", page("help", "help", "Help · Hopp", "Answers to the most common questions about Hopp.", help));
