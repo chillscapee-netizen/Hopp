@@ -1021,7 +1021,7 @@ function serverById(id) {
 }
 
 function isActiveServer(id) {
-  return !state.atHome && (id === state.activeId || id === state.connectingId);
+  return !state.atHome && !state.atNews && (id === state.activeId || id === state.connectingId);
 }
 
 function railServer(s, folder) {
@@ -1093,7 +1093,8 @@ function railFolder(f) {
 var railOpening = null;
 
 function renderRail() {
-  $("home-btn").classList.toggle("active", state.atHome || (!state.activeId && !state.connectingId));
+  $("home-btn").classList.toggle("active", !state.atNews && (state.atHome || (!state.activeId && !state.connectingId)));
+  $("news-btn").classList.toggle("active", !!state.atNews);
   normalizeRail();
   if (typeof renderHomeBadge === "function" && state.conversations) renderHomeBadge();
   $("server-list").replaceChildren(
@@ -1986,6 +1987,8 @@ function renderAll() {
   const loading = !on && !!connectingServer();
   $("shell").classList.toggle("offline", !on && !loading);
   $("shell").classList.toggle("loading", loading);
+  $("shell").classList.toggle("news", !!state.atNews);
+  if (state.atNews) renderNews();
   $("topbar-title").textContent = on ? activeServer()?.label ?? state.roster.server_name : loading ? connectingServer().label : "Hopp";
   renderRail();
   renderSidebar();
@@ -2082,6 +2085,7 @@ function category(label, onAdd) {
 function renderSidebar() {
   const body = $("sidebar-body");
   const head = $("sidebar-head");
+  if (state.atNews) return renderNewsNav(body, head);
   const pending = !online() && connectingServer();
   if (pending) {
     $("sidebar-title").textContent = pending.label;
@@ -12158,12 +12162,15 @@ function openCrop(img, shape, title, sizes, limit, resolve, reject) {
   draw();
 }
 
-// ---------- what's new ----------
+// ---------- Discover Hopp ----------
 //
-// Every version's news, newest first, behind the sparkle at the bottom of the server list.
-// A dot shows until you've read the news of the version you're on.
+// A page of its own behind the compass at the bottom of the server list, like Discord's
+// Discovery: what's new in every version, guides to what Hopp can do, and about Hopp. The
+// sidebar lists the sections; a dot on the compass until you've read the latest news.
 
 var whatsNew = null;
+var newsSection = "news";
+
 async function loadWhatsNew() {
   if (whatsNew) return whatsNew;
   try {
@@ -12178,42 +12185,142 @@ function versionKey(v) {
   return v.split(".").map((n) => n.padStart(5, "0")).join(".");
 }
 
-async function appVersion() {
-  try {
-    return (await invoke("app_version")) ?? null;
-  } catch {
-    return null;
-  }
+function newsVersions() {
+  return Object.keys(whatsNew ?? {}).sort((a, b) => versionKey(b).localeCompare(versionKey(a)));
 }
 
 async function renderNewsDot() {
-  const notes = await loadWhatsNew();
-  const newest = Object.keys(notes).sort((a, b) => versionKey(b).localeCompare(versionKey(a)))[0];
+  await loadWhatsNew();
+  const newest = newsVersions()[0];
   $("news-dot").hidden = !newest || load("newsSeen", "") === newest;
 }
 
-async function openWhatsNew() {
-  const notes = await loadWhatsNew();
-  const mine = await appVersion();
-  const versions = Object.keys(notes).sort((a, b) => versionKey(b).localeCompare(versionKey(a)));
-  $("news-version").textContent = mine ? "You have version " + mine : "";
-  $("news-list").replaceChildren(...versions.map((v, i) => {
-    const item = el("section", "news-item" + (i === 0 ? " latest" : ""));
-    const head = el("div", "news-item-head");
-    head.append(el("strong", "", "Version " + v));
-    if (i === 0) head.append(el("span", "news-new", "Latest"));
-    const list = el("ul", "news-points");
-    for (const line of notes[v].split("\n")) {
-      const text = line.replace(/^\s*•\s*/, "").trim();
-      if (text) list.append(el("li", "", text));
-    }
-    item.append(head, list);
-    return item;
+var NEWS_SECTIONS = [
+  ["news", "What's new", "compass"],
+  ["start", "Getting started", "user-plus"],
+  ["voice", "Voice, video and calls", "volume"],
+  ["servers", "Servers and roles", "server"],
+  ["privacy", "Privacy and safety", "lock"],
+  ["keys", "Shortcuts", "keyboard"],
+  ["about", "About Hopp", "logo"],
+];
+
+function renderNewsNav(body, head) {
+  $("sidebar-title").textContent = "Discover";
+  head.disabled = true;
+  body.classList.remove("stale");
+  body.replaceChildren(...NEWS_SECTIONS.map(([key, label, ic]) => {
+    const b = el("button", "channel-row news-nav" + (newsSection === key ? " current" : ""));
+    b.type = "button";
+    b.append(icon(ic), el("span", "ellipsis", label));
+    b.addEventListener("click", () => {
+      newsSection = key;
+      renderSidebar();
+      renderNews();
+      $("news-body").scrollTop = 0;
+    });
+    return b;
   }));
-  if (versions[0]) save("newsSeen", versions[0]);
-  $("news-dot").hidden = true;
-  openModal($("news-dialog"));
 }
 
-$("news-btn").addEventListener("click", openWhatsNew);
+/** Guides: a few short articles each, plain and friendly. */
+var NEWS_GUIDES = {
+  start: [
+    ["Add your friends", "Go Home, open Add friend and type their username. Once they accept, you can message and call them, and invite them anywhere with one click."],
+    ["Make a server", "Press + in the server list and pick Create a server. It's on Hopp Cloud, free and always on. Invite people with a link, or straight from your friends list."],
+    ["Join one", "Got an invite link? Press + and Join a server, or just click the link in a chat."],
+    ["Make it yours", "Settings → Profile: your picture, a banner, About me. Click your name at the bottom left for your status and a custom status."],
+  ],
+  voice: [
+    ["Voice channels", "Click a voice channel to join. Everyone shows as a tile; click a camera or a screen to put it in the middle, and use full screen when you want to watch."],
+    ["Camera and screen", "The buttons under your voice panel turn on your camera, share your screen, or play a sound from the soundboard for everyone in the channel."],
+    ["Calls with friends", "Open a conversation and press the phone or the camera at the top. The call sits above your messages; drag its edge to make it bigger."],
+    ["Hearing people right", "Right-click someone for their volume. Settings → Voice & audio picks your microphone and headset, noise suppression and push to talk."],
+  ],
+  servers: [
+    ["Channels", "Text channels for chatting and voice channels for talking; every voice channel has a chat of its own. Right-click a channel to edit it."],
+    ["Roles", "Server settings → Roles: give people a colour, their own heading in the member list, and what they may do. Private channels only chosen roles can see."],
+    ["Keeping it friendly", "Moderators can time people out, use slowmode, move or mute people in voice, and everything is in the audit log."],
+    ["Nicknames", "Change nickname in the server menu gives you a name for just that server."],
+  ],
+  privacy: [
+    ["Your messages", "Direct messages and group chats are end-to-end encrypted: only the people in them can read them, not even Hopp Cloud."],
+    ["Calls", "Voice and video go straight between you and the people you talk to whenever the network allows."],
+    ["Who can reach you", "Settings → Privacy & safety decides who may send you friend requests. Block anyone from their menu."],
+    ["Your Hopp ID", "You sign in with a key kept on your computer. Back up your recovery phrase in Settings → Password & security."],
+  ],
+  keys: [
+    ["Getting around", "Ctrl+K jumps to any server, channel or friend. Alt+↑ and Alt+↓ move between channels. Ctrl+F searches the chat you're in."],
+    ["In voice", "Ctrl+M mutes you, Ctrl+D deafens you. Push to talk uses the key you pick in Settings → Keybinds."],
+    ["Writing", "↑ in an empty message box edits your last message. Type : for emoji and @ to mention someone. Esc marks a channel read."],
+  ],
+};
+
+async function renderNews() {
+  await loadWhatsNew();
+  const body = $("news-body");
+  const label = NEWS_SECTIONS.find(([k]) => k === newsSection)?.[1] ?? "Discover";
+  $("news-title").textContent = label;
+  const page = el("div", "news-page");
+  if (newsSection === "news") {
+    const versions = newsVersions();
+    const hero = el("div", "news-hero");
+    hero.append(el("span", "news-kicker", "What's new"), el("h1", "", "Hopp " + (versions[0] ?? "")), el("p", "", "Everything that's new and better, version by version."));
+    page.append(hero);
+    versions.forEach((v, i) => {
+      const item = el("article", "news-item" + (i === 0 ? " latest" : ""));
+      const h = el("div", "news-item-head");
+      h.append(el("h2", "", "Version " + v));
+      if (i === 0) h.append(el("span", "news-new", "Latest"));
+      const list = el("ul", "news-points");
+      for (const line of whatsNew[v].split("\n")) {
+        const text = line.replace(/^\s*•\s*/, "").trim();
+        if (text) list.append(el("li", "", text));
+      }
+      item.append(h, list);
+      page.append(item);
+    });
+    if (versions[0]) save("newsSeen", versions[0]);
+    $("news-dot").hidden = true;
+  } else if (newsSection === "about") {
+    const hero = el("div", "news-hero");
+    const mark = el("span", "news-logo");
+    mark.append(icon("logo"));
+    hero.append(mark, el("h1", "", "Hopp"), el("p", "", "Voice, video and chat for you and your friends. Free, with no ads and no tracking."));
+    page.append(hero);
+    const card = el("article", "news-item");
+    card.append(el("h2", "", "Version " + (updates.version || "?")));
+    const sub = el("p", "news-text", updates.found ? "Hopp " + updates.found.version + " is ready to install." : "Hopp checks for new versions by itself; you choose when to install them.");
+    const check = el("button", "btn sm" + (updates.found ? " primary" : ""), updates.found ? "Restart and update" : "Check for updates");
+    check.type = "button";
+    check.addEventListener("click", () => (updates.found ? installUpdate() : checkForUpdate(true).then(renderNews)));
+    card.append(sub, check);
+    page.append(card);
+  } else {
+    const hero = el("div", "news-hero");
+    hero.append(el("span", "news-kicker", "Guide"), el("h1", "", label));
+    page.append(hero);
+    for (const [title, text] of NEWS_GUIDES[newsSection] ?? []) {
+      const item = el("article", "news-item");
+      item.append(el("h2", "", title), el("p", "news-text", text));
+      page.append(item);
+    }
+  }
+  body.replaceChildren(page);
+}
+
+function openDiscover() {
+  closePopovers();
+  saveDraft();
+  state.atNews = true;
+  renderAll();
+}
+
+$("news-btn").addEventListener("click", openDiscover);
+// Anything else in the server list (Home, a server, Add) leaves the page.
+$("server-list").parentElement.addEventListener("click", (e) => {
+  if (!state.atNews || e.target.closest("#news-btn") || !e.target.closest(".rail-item")) return;
+  state.atNews = false;
+  setTimeout(renderAll, 0);
+}, true);
 renderNewsDot();
