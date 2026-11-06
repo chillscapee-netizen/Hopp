@@ -12226,9 +12226,20 @@ function renderNewsNav(body, head) {
 /** About Hopp: what it is and what it stands for. */
 var NEWS_ABOUT = [
   ["A place to hang out", "Hopp is where you and your friends talk, play and share: servers with text and voice channels, calls, cameras and screens, and messages between friends."],
-  ["Free, all of it", "Everything in Hopp is free: screen sharing in full quality, cameras, profile banners, uploads and every look. There is nothing to unlock."],
+  ["Free, all of it", "Everything in Hopp is free: screen sharing in full quality, cameras, profile banners, uploads and every look. There is nothing to unlock. To keep it that way, Hopp Cloud has a few limits; they're all below."],
   ["Private by design", "Messages between friends are end-to-end encrypted, your Hopp ID is a key that stays on your computer, and calls go straight between you whenever they can. No ads and no tracking."],
   ["Light and fast", "Hopp is a small download, starts quickly and switches between servers at once. Updates come when you choose to install them."],
+];
+
+/** Every limit Hopp Cloud has, and why (the numbers are the cloud's own). */
+var CLOUD_LIMITS = [
+  ["Busy days", "The free plan has a daily limit for the whole of Hopp Cloud. On a very busy day it can be reached, and Hopp Cloud pauses for a few hours. Your messages and servers are safe meanwhile."],
+  ["1,000 messages per channel", "Each channel keeps its newest 1,000 messages, and each conversation between friends its newest 5,000. Storage is what a free plan has least of."],
+  ["Pictures", "Hopp makes pictures small before they're sent (about 300 KB at most). You can share 40 a day in each server and 40 a day with friends, and a server keeps up to 100 MB of them. Again: storage."],
+  ["10 people in voice", "Voice and video go straight between the people talking, not through a server. That keeps calls free and private, but everyone sends to everyone, and past 10 people a home connection can't keep up. The same goes for group calls."],
+  ["25 people in a group", "Group conversations are encrypted for each person in them, so they stay small."],
+  ["The relay", "When two people can't reach each other directly (some networks block it), voice goes through a relay instead. That costs, so each person gets 12 relay sign-ins a day; one lasts all day, so that is plenty."],
+  ["Spam protection", "A burst of 5 messages, then one a second. 10 new servers and 30 friend requests a day per person. This keeps bots and spam out, not you."],
 ];
 
 /** Guides: a few short articles each, plain and friendly. */
@@ -12301,6 +12312,20 @@ async function renderNews() {
       item.append(el("h2", "", title), el("p", "news-text", text));
       page.append(item);
     }
+    // Hopp Cloud, honestly: the limits, and why each one is there.
+    const honest = el("div", "news-hero news-section");
+    honest.append(el("span", "news-kicker", "Hopp Cloud, honestly"), el("h2", "", "Why there are limits"), el("p", "", "Hopp Cloud runs on a free plan. That's how Hopp stays free, with no ads and nothing to pay. A free plan only does so much each day and only stores so much, so Hopp keeps things small and shares them fairly. Here is every limit, and why it's there."));
+    page.append(honest);
+    const list = el("article", "news-item news-limits");
+    for (const [what, why] of CLOUD_LIMITS) {
+      const row = el("div", "news-limit");
+      row.append(el("strong", "", what), el("span", "", why));
+      list.append(row);
+    }
+    page.append(list);
+    const own = el("article", "news-item");
+    own.append(el("h2", "", "No limits of your own"), el("p", "news-text", "Want none of these? Press + in the server list and pick Run your own server: it runs on your computer, keeps what you want, and nothing goes through Hopp Cloud."));
+    page.append(own);
     page.append(el("p", "news-version", "Hopp " + (updates.version || "")));
   } else {
     const hero = el("div", "news-hero");

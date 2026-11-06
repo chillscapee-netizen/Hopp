@@ -3582,3 +3582,10 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .news-text { margin: 0 0 12px; color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
 .news-text:last-child { margin-bottom: 0; }
 .news-version { margin: 8px 0 0; color: var(--faint); font-size: 13px; text-align: center; }
+.news-section { margin-top: 18px; }
+.news-section h2 { margin: 0; font-size: 22px; }
+.news-limits { display: grid; gap: 14px; }
+.news-limit { display: grid; gap: 3px; }
+.news-limit strong { font-size: 14.5px; }
+.news-limit span { color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.news-limit + .news-limit { padding-top: 14px; border-top: 1px solid var(--line); }
