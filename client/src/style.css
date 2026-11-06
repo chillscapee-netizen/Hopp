@@ -3316,3 +3316,10 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .mention-at.role .i { width: 14px; height: 14px; }
 .mention.role-mention { background: color-mix(in srgb, var(--role, var(--link)) 16%, transparent); color: color-mix(in srgb, var(--role, var(--link)) 70%, var(--text)); }
 .mention.role-mention.mine { background: color-mix(in srgb, var(--role, var(--link)) 28%, transparent); }
+
+/* The profile card: who they are, and one way onward. */
+.user-card-actions { display: grid; gap: 8px; margin-top: 14px; }
+.user-card-note { color: var(--faint); font-size: 13px; text-align: center; }
+/* Setting rows in dialogs: soft, no outline. */
+.setting-row { border: none; background: var(--layer-2); }
+.theme-pic-side { background: transparent !important; }

@@ -2367,7 +2367,9 @@ function renderChannelView() {
   const view = state.view;
   $("chat-channel").textContent = view === null ? "No text channels" : channelName(view);
   const topic = view === null ? null : channel(view)?.topic;
-  $("chat-topic").textContent = topic || `${r.users.length} online`;
+  // A voice channel says who is in it; the server count belongs to text channels.
+  const inVoice = view !== null && isVoiceChannel(view) ? r.users.filter((u) => u.voice_channel === view).length : null;
+  $("chat-topic").textContent = topic || (inVoice === null ? `${r.users.length} online` : inVoice ? `${inVoice} in voice` : "Nobody in voice yet");
   $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
   $("chat-input").placeholder = composerHint(view);
@@ -3506,6 +3508,7 @@ $("deafen-btn").addEventListener("click", () => {
 // ---------- user settings ----------
 
 function openSettings(tab) {
+  syncThemePage();
   showTab(tab);
   renderSettingsMe();
   refreshDevices();
@@ -4211,10 +4214,8 @@ function openUserCard(user, anchor) {
   const sub = $("user-card-sub");
   if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
   else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
-  const actOn = can("moderate") && outranks(user);
-  $("user-mod").hidden = !actOn;
-  $("user-ban").hidden = !can("manage");
   renderUserRole(user);
+  renderCardActions(user);
   syncUserCard();
   // Open beside the row, like a profile card.
   const r = anchor.getBoundingClientRect();
@@ -4242,11 +4243,31 @@ function syncUserCard() {
     line.className = "user-card-connection " + connectionGrade(q);
     line.replaceChildren(signalBars(connectionGrade(q)), el("span", "", connectionText(q)));
   }
-  const vol = userVolume(cardUser) ?? 100;
-  $("user-volume").value = vol;
-  $("user-volume-value").textContent = `${vol}%`;
-  const btn = $("user-mute");
-  btn.textContent = vol === 0 ? "Unmute for me" : "Mute for me";
+}
+
+/** The card's one way onward: write to them, or become friends first. */
+function renderCardActions(user) {
+  const box = $("user-card-actions");
+  const key = keyOf(user);
+  const friend = key ? state.friends?.get(key) : null;
+  const button = (label, primary, onClick) => {
+    const b = el("button", "btn full" + (primary ? " primary" : ""), label);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      closePopovers();
+      onClick();
+    });
+    return b;
+  };
+  const items = [];
+  if (user.session_id !== state.roster?.me && key) {
+    if (friend?.state === "friend") items.push(button("Message", true, () => openDm(key)));
+    else if (friend?.state === "incoming") items.push(button("Accept friend request", true, () => accountSend({ type: "friend_accept", key }).catch(() => {})));
+    else if (friend?.state === "outgoing") items.push(el("span", "user-card-note", "Friend request sent"));
+    else if (friend?.state !== "blocked") items.push(button("Add friend", false, () => accountSend({ type: "friend_request", key }).then(() => toast(`Friend request sent to ${user.name}.`), () => {})));
+  }
+  box.replaceChildren(...items);
+  box.hidden = !items.length;
 }
 
 function setUserVolume(vol) {
@@ -4280,9 +4301,6 @@ async function removeUser(ban) {
   if (ok) call("kick", { sessionId: user.session_id, ban, deleteHours: history ? Number(confirmDialog.choice) : null });
 }
 
-$("user-volume").addEventListener("input", (e) => setUserVolume(Number(e.target.value)));
-$("user-mute").addEventListener("click", () => setUserVolume((userVolume(cardUser) ?? 100) === 0 ? 100 : 0));
-$("user-kick").addEventListener("click", () => removeUser(false));
 $("user-role").addEventListener("change", (e) => {
   const user = cardUser;
   setRole({ public_key: user.public_key, name: user.name }, e.target.value || null);
@@ -4292,7 +4310,6 @@ $("user-transfer").addEventListener("click", () => {
   closePopovers();
   transferOwnership({ public_key: user.public_key, name: user.name });
 });
-$("user-ban").addEventListener("click", () => removeUser(true));
 document.addEventListener("mousedown", (e) => {
   if ([...document.querySelectorAll(".popover")].some((p) => !p.hidden && p.contains(e.target))) return;
   if (e.target.closest("#sidebar-head, .split-more")) return;
@@ -7990,9 +8007,7 @@ function renderUserRole(user) {
     return opt;
   }));
   select.value = roleOf(user) ?? "";
-  $("user-transfer").hidden = !isOwner() || !isCloud(activeServer()) || user.session_id === state.roster?.me;
-  // Kick/ban sit beside the role when there's both.
-  $("user-mod").classList.toggle("single", $("user-ban").hidden);
+  $("user-transfer").hidden = true;
 }
 
 async function setRole(member, role) {
@@ -9177,23 +9192,26 @@ function openUserMenu(u, row, e) {
         else accountSend({ type: "friend_request", key }).then(() => toast(`Friend request sent to ${u.name}.`), () => {});
       } });
     }
-    // Their volume, right here: drag it down (or up, to 200%).
-    items.push("sep", {
-      label: "User volume",
-      slider: { value: vol, min: 0, max: 200, step: 5, format: (v) => v + "%", onInput: (v) => {
+    // How you hear them: drag it down (or up, to 200%). Only for someone in voice.
+    if (u.voice_channel !== null) {
+      items.push("sep", {
+        label: "User volume",
+        slider: { value: vol, min: 0, max: 200, step: 5, format: (v) => v + "%", onInput: (v) => {
+          cardUser = u;
+          setUserVolume(v);
+        } },
+      });
+      items.push({ label: "Mute", check: vol === 0, action: (on) => {
         cardUser = u;
-        setUserVolume(v);
-      } },
-    });
-    items.push({ label: "Mute", check: vol === 0, action: (on) => {
-      cardUser = u;
-      setUserVolume(on ? 0 : 100);
-    } });
+        setUserVolume(on ? 0 : 100);
+      } });
+    }
     if (can("moderate") && outranks(u)) {
       items.push(...voiceModItems(u));
-      items.push(...timeoutItems(u));
-      items.push(...roleItems(u));
+      const roles = roleItems(u);
+      if (roles.length) items.push("sep", ...roles);
       items.push("sep");
+      items.push(...timeoutItems(u));
       items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
         removeUser(false);
@@ -9202,6 +9220,9 @@ function openUserMenu(u, row, e) {
         cardUser = u;
         removeUser(true);
       } });
+    }
+    if (isOwner() && isCloud(activeServer()) && key) {
+      items.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership({ public_key: u.public_key, name: u.name }) });
     }
   }
   openMenu(items, e.clientX, e.clientY);
@@ -9816,6 +9837,8 @@ function renderThemes() {
 
 /** The page follows the settings without being rebuilt. */
 function syncThemePage() {
+  // Your own colours show when you pick "Your own"; the ready themes need nothing more.
+  if ($("theme-editor")) $("theme-editor").hidden = prefs.theme !== "custom";
   for (const n of document.querySelectorAll(".theme-card, .gradient-swatch")) n.classList.toggle("active", n.dataset.theme === prefs.theme);
   const custom = document.querySelector('.theme-card[data-theme="custom"]');
   if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
@@ -10889,8 +10912,8 @@ var TIMEOUTS = [["60 seconds", 1], ["5 minutes", 5], ["10 minutes", 10], ["1 hou
 
 function timeoutItems(u) {
   if (!modTools()) return [];
-  if (timedOutUntil(u)) return [{ label: "Remove timeout", action: () => call("timeout_member", { sessionId: u.session_id, minutes: 0 }) }];
-  return [{ label: "Timeout", submenu: TIMEOUTS.map(([label, minutes]) => ({ label, action: () => call("timeout_member", { sessionId: u.session_id, minutes }) })) }];
+  if (timedOutUntil(u)) return [{ label: `Remove timeout`, icon: "clock", action: () => call("timeout_member", { sessionId: u.session_id, minutes: 0 }) }];
+  return [{ label: `Timeout ${u.name}`, danger: true, submenu: TIMEOUTS.map(([label, minutes]) => ({ label, action: () => call("timeout_member", { sessionId: u.session_id, minutes }) })) }];
 }
 
 /** What the message box says: where you write, slowmode, or your timeout. */

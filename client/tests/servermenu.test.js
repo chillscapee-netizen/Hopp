@@ -34,11 +34,17 @@
   const kim = state.roster.users.find((u) => u.name === "Sara");
   const row = [...document.querySelectorAll("li.member, .member")].find((x) => x.textContent.includes("Sara"));
   row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
-  check("a person's menu has profile, mention, mute and moderation", ["Profile", "Mention", "Mute", "Kick Sara", "Ban Sara"].every((t) => items().includes(t)));
-  check("with a volume slider right there", !!document.querySelector("#server-menu .menu-slider input[type=range]"));
+  check("a person's menu has profile, mention and moderation", ["Profile", "Mention", "Kick Sara", "Ban Sara"].every((t) => items().includes(t)));
+  check("hard steps come together, near the end", items().join("|").includes("Kick Sara|Ban Sara") && items().at(-1) === "Transfer ownership", items().join(" | "));
+  check("no volume for someone not in voice", !items().includes("Mute") && !document.querySelector("#server-menu .menu-slider"));
   [...$("server-menu").querySelectorAll(".menu-item")].find((b) => b.textContent === "Mention").click();
   check("Mention puts @name in the box", $("chat-input").value.includes("@Sara "));
   $("chat-input").value = "";
+
+  // Someone in voice: their volume and mute, right there.
+  [...document.querySelectorAll("li.member, .member")].find((x) => x.textContent.includes("Elin")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+  check("someone in voice has volume and mute", items().includes("Mute") && !!document.querySelector("#server-menu .menu-slider input[type=range]"));
+  closePopovers();
 
   // Voice channels: everyone gets a menu.
   const lobby = [...document.querySelectorAll(".channel-row")].find((x) => x.textContent.includes("Gaming"));

@@ -27,6 +27,9 @@
   check("the card follows", document.querySelector(".theme-card.active")?.dataset.theme === "light");
 
   // Your own colour: the picker is the same element all along, so it stays open while you drag.
+  document.querySelector('.theme-card[data-theme="custom"]').click();
+  await wait(30);
+  check("your own colours show when you pick Your own", !$("theme-editor").hidden);
   const picker = document.getElementById("theme-a");
   picker.focus();
   picker.value = "#ff2a6d";
