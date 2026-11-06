@@ -7983,7 +7983,10 @@ function setBar(bar, show) {
 function renderUpdates() {
   const installing = updates.status === "installing";
   const btn = $("update-btn");
-  // Always there: grey when Hopp is up to date, green when a newer one is ready.
+  // Only there when a newer version is ready (or installing): you choose when. Checking by
+  // hand is in Settings → App.
+  btn.hidden = !updates.found && !installing;
+  if (btn.hidden) closeUpdatePop();
   btn.classList.toggle("ready", !!updates.found);
   btn.setAttribute("aria-label", updates.found ? "Update available" : "Updates");
   btn.dataset.tip = updates.found ? `Hopp ${updates.found.version} is ready` : `Hopp ${updates.version} · up to date`;
