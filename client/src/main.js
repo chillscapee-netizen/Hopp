@@ -1260,7 +1260,6 @@ $("server-list").addEventListener("pointerdown", (e) => {
       document.body.append(line);
       node.classList.add("dragging");
       document.body.classList.add("rail-dragging");
-      tip.hidden = true;
       scrollTimer = setInterval(autoScroll, 16);
       window.addEventListener("keydown", cancelOnEsc, true);
     }
@@ -1393,7 +1392,7 @@ function removeServer(server) {
 function openMenu(items, x, y, above) {
   const menu = $("server-menu");
   // A tooltip left over from the button that opened the menu would sit on top of it.
-  document.getElementById("tooltip").hidden = true;
+
   delete menu.dataset.owner;
   menu.classList.toggle("wide", items.some((i) => i.checked !== undefined));
   menu.replaceChildren(...menuItems(items));
@@ -2389,7 +2388,6 @@ function renderChannelView() {
   // A voice channel says who is in it; the server count belongs to text channels.
   const inVoice = view !== null && isVoiceChannel(view) ? r.users.filter((u) => u.voice_channel === view).length : null;
   $("chat-topic").textContent = topic || (inVoice === null ? `${r.users.length} online` : inVoice ? `${inVoice} in voice` : "Nobody in voice yet");
-  $("chat-topic").title = topic || "";
   $("composer").hidden = view === null;
   $("chat-input").placeholder = composerHint(view);
   $("chat-input").disabled = !!timedOutUntil(meUser());
@@ -2565,7 +2563,7 @@ function renderInline(text, out) {
     else {
       const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : "span", kind === "spoiler" ? "spoiler" : "");
       if (kind === "spoiler") {
-        node.title = "Spoiler: click to show";
+        node.setAttribute("aria-label", "Spoiler: click to show");
         node.addEventListener("click", () => node.classList.add("shown"));
       }
       renderInline(inner, node);
@@ -2579,7 +2577,6 @@ function linkNode(href) {
   // Invites read as what they are, not as a long address.
   const invite = shortInviteCode(href) !== null || /^(?:hopp|strom):\/\//i.test(href);
   const a = el("a", invite ? "msg-link msg-invite-link" : "msg-link", invite ? "Server invite" : href);
-  if (invite) a.title = href;
   a.href = href;
   a.addEventListener("click", (e) => {
     e.preventDefault();
@@ -4339,37 +4336,15 @@ document.addEventListener("mousedown", (e) => {
   closePopovers();
 });
 
-// ---------- tooltips ----------
-
-const tip = $("tooltip");
-/** Icons that say what they are: no tooltip, just the icon (the words stay for screen readers). */
-var PLAIN_ICONS = "#soundboard-btn, .icon-btn, .composer-icon, .split-main, .split-more, .panel-btn, .call-btn, .reply-cancel, .win-btn, .msg-actions button, .rail-item.home, .rail-item.add, .voice-action, .category-add, .channel-row";
+// ---------- no tooltips ----------
+//
+// Hopp shows no tooltips: nothing pops up on hover. What a button does stays in its words for
+// screen readers (its data-tip becomes its aria-label).
 
 document.addEventListener("mouseover", (e) => {
   const target = e.target.closest("[data-tip]");
-  if (!target || !target.dataset.tip) return;
-  if (target.matches(PLAIN_ICONS)) {
-    if (!target.getAttribute("aria-label")) target.setAttribute("aria-label", target.dataset.tip);
-    return;
-  }
-  tip.textContent = target.dataset.tip;
-  tip.hidden = false;
-  const anchor = target.querySelector(".rail-icon") ?? target;
-  const r = anchor.getBoundingClientRect();
-  if (target.dataset.tipPos === "right") {
-    tip.style.left = `${r.right + 12}px`;
-    tip.style.top = `${r.top + r.height / 2 - tip.offsetHeight / 2}px`;
-  } else {
-    const x = r.left + r.width / 2 - tip.offsetWidth / 2;
-    tip.style.left = `${Math.max(8, Math.min(x, window.innerWidth - tip.offsetWidth - 8))}px`;
-    tip.style.top = `${r.top - tip.offsetHeight - 8}px`;
-  }
+  if (target?.dataset.tip && !target.getAttribute("aria-label")) target.setAttribute("aria-label", target.dataset.tip);
 });
-document.addEventListener("mouseout", (e) => {
-  const target = e.target.closest("[data-tip]");
-  if (target && !target.contains(e.relatedTarget)) tip.hidden = true;
-});
-document.addEventListener("mousedown", () => (tip.hidden = true));
 
 // ---------- keyboard ----------
 
@@ -6311,7 +6286,7 @@ function renderPickerBody(body, q) {
     for (const [emoji, words] of list) {
       const b = el("button", "emoji-option", emoji);
       b.type = "button";
-      b.title = words ? `:${words.split(" ")[0]}:` : "";
+      b.setAttribute("aria-label", words ? `:${words.split(" ")[0]}:` : "");
       b.addEventListener("click", () => pick(emoji));
       g.append(b);
     }
@@ -6351,7 +6326,7 @@ function renderGifs(body, q) {
       heights[i] += gif.width ? gif.height / gif.width : 1;
       const b = el("button", "gif-option");
       b.type = "button";
-      b.title = gif.title;
+      b.setAttribute("aria-label", gif.title);
       const img = el("img");
       img.src = gif.preview;
       img.alt = gif.title;
@@ -9088,7 +9063,6 @@ function fileCard(peer, m) {
   badge.append(icon(risky ? "shield" : "download"));
   const info = el("div", "file-info");
   const title = el("strong", "ellipsis", name);
-  title.title = name;
   const sub = el("span", "file-sub");
   info.append(title, sub);
   const action = el("div", "file-action");
