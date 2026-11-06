@@ -1485,16 +1485,18 @@ function openServerMenu(server, x, y) {
         ? [
             "sep",
             { label: "Server settings", icon: "settings", action: () => onServer(server, openServerSettings) },
-            { label: "Create text channel", icon: "hash", action: () => onServer(server, () => openChannelDialog("text")) },
-            { label: "Create voice channel", icon: "volume", action: () => onServer(server, () => openChannelDialog("voice")) },
+            { label: "Create channel", icon: "plus", action: () => onServer(server, () => openChannelDialog("text")) },
           ]
         : []),
       "sep",
-      { heading: "Notifications" },
-      ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
-        label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
-      })),
-      { label: "Suppress @everyone and @here", check: crowdQuiet(server.address), action: (on) => setCrowdQuiet(server, on) },
+      // Notifications fold out to the side: one row here, the choices there.
+      { label: "Notifications", submenu: [
+        ...[["all", "All messages"], ["mentions", "Only @mentions"], ["none", "Nothing"]].map(([level, label]) => ({
+          label, checked: serverLevel(server) === level, action: () => setServerLevel(server, level),
+        })),
+        "sep",
+        { label: "Suppress @everyone and @here", check: crowdQuiet(server.address), action: (on) => setCrowdQuiet(server, on) },
+      ] },
       "sep",
       active
         ? { label: "Disconnect", icon: "logout", action: disconnect }
@@ -3084,15 +3086,7 @@ $("sidebar-head").addEventListener("click", (e) => {
   e.stopPropagation();
   const head = $("sidebar-head");
   const r = head.getBoundingClientRect();
-  const items = [{ label: "Invite people", icon: "user-plus", action: openInvite }];
-  if (can("manage")) {
-    items.push({ label: "Server settings", icon: "settings", action: openServerSettings });
-    items.push("sep");
-    items.push({ label: "Create text channel", icon: "hash", action: () => openChannelDialog("text") });
-    items.push({ label: "Create voice channel", icon: "volume", action: () => openChannelDialog("voice") });
-  }
-  items.push("sep", { label: "Disconnect", icon: "logout", danger: true, action: disconnect });
-  openMenu(items, r.left + 8, r.bottom + 4);
+  openServerMenu(activeServer(), r.left + 8, r.bottom + 4);
   $("server-menu").style.width = `${r.width - 16}px`;
   head.classList.add("open");
 });
@@ -3539,6 +3533,9 @@ function renderProfilePreview() {
   $("profile-name").textContent = name;
   $("profile-display").textContent = name;
   $("profile-handle").textContent = state.me?.username ? `@${state.me.username}` : "";
+  const bio = state.me?.bio ?? "";
+  $("profile-bio").textContent = bio || "Nothing yet. Say a little about yourself.";
+  $("profile-bio").classList.toggle("muted", !bio);
 }
 
 /** Colours the profile banner after the picture's average colour, softened into the grey. */
@@ -4216,6 +4213,10 @@ function openUserCard(user, anchor) {
   else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
   renderUserRole(user);
   renderCardActions(user);
+  // What they wrote about themselves, when known.
+  const bio = (keyOf(user) === state.account?.publicKey ? state.me?.bio : profiles.get(keyOf(user))?.bio) ?? "";
+  $("user-card-bio").textContent = bio;
+  $("user-card-bio").hidden = !bio;
   syncUserCard();
   // Open beside the row, like a profile card.
   const r = anchor.getBoundingClientRect();
@@ -4545,6 +4546,7 @@ listen("account", (e) => {
     case "profile":
       state.me = { ...state.me, ...m.me };
       renderPictures();
+      if ($("settings").open) renderProfilePreview();
       if ($("username-dialog").open && m.me.username) $("username-dialog").close();
       if ($("welcome-dialog").open) renderWelcomeAvatar();
       break;
@@ -11175,4 +11177,11 @@ function roleMentionNode(id) {
 $("invites-create").addEventListener("click", () => {
   openInvite();
   $("invite-dialog").addEventListener("close", () => { if ($("server-settings").open) call("get_server_settings"); }, { once: true });
+});
+
+// About me: a line or two that friends and people in your servers see on your card.
+$("bio-edit").addEventListener("click", async () => {
+  const text = await askText({ title: "About me", label: "About me", value: state.me?.bio ?? "", hint: "Up to 190 characters. Friends and people in your servers see it on your card." });
+  if (text === null || text === undefined) return;
+  accountSend({ type: "set_profile", bio: text.trim() }).catch((err) => toast(friendlyError(err), true));
 });

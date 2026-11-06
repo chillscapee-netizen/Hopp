@@ -7,7 +7,8 @@
 
   openServerMenu(crew, 10, 10);
   check("Invite people is first", items()[0] === "Invite people");
-  check("owner gets settings and channels", ["Server settings", "Create text channel", "Create voice channel"].every((t) => items().includes(t)));
+  check("owner gets settings and channels", ["Server settings", "Create channel"].every((t) => items().includes(t)));
+  check("notifications fold out from one row", items().includes("Notifications") && !items().includes("All messages"));
   [...$("server-menu").querySelectorAll(".menu-item")].find((b) => b.textContent === "Invite people").click();
   await wait(100);
   check("Invite people opens the invite dialog", $("invite-dialog").open);

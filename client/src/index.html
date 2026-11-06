@@ -1001,7 +1001,7 @@
       <div class="settings-content">
 
         <section data-panel="profile" class="settings-page">
-          <h2 class="page-title">My Hopp ID</h2>
+          <h2 class="page-title">Profile</h2>
           <p id="account-offline" class="row-note hint" hidden>Connecting to your account… Your username, picture and friends show up in a moment.</p>
 
           <div class="account-card">
@@ -1041,6 +1041,13 @@
                   <span id="profile-username" class="field-row-value"></span>
                 </span>
                 <button id="profile-username-btn" type="button" class="btn sm">Edit</button>
+              </div>
+              <div class="field-row">
+                <span class="row-label">
+                  <span class="field-row-title">About me</span>
+                  <span id="profile-bio" class="field-row-value"></span>
+                </span>
+                <button id="bio-edit" type="button" class="btn sm">Edit</button>
               </div>
               <div class="field-row">
                 <span class="row-label">
@@ -1428,6 +1435,7 @@
       <span id="user-card-avatar-slot"></span>
       <div id="user-card-name" class="user-card-name"></div>
       <div id="user-card-sub" class="user-card-sub"></div>
+      <p id="user-card-bio" class="user-card-bio" hidden></p>
       <div id="user-card-roles" class="user-card-roles" hidden></div>
       <div id="user-card-connection" class="user-card-connection" hidden></div>
       <div id="user-role-wrap" class="user-role" hidden>

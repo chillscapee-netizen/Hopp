@@ -3325,3 +3325,4 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .theme-pic-side { background: transparent !important; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .page-head h2 { margin: 0 !important; }
+.user-card-bio { margin: 10px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
