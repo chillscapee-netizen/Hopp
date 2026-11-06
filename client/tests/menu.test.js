@@ -22,17 +22,17 @@
 
   // The submenu: open it, pass over another row on the way, and reach it.
   const sub = document.getElementById("server-submenu");
-  item("Move to").dispatchEvent(new MouseEvent("mouseenter"));
+  item("Voice").dispatchEvent(new MouseEvent("mouseenter"));
   await wait(20);
-  check("Move to opens its submenu", !sub.hidden && sub.textContent.includes("Gaming"));
-  item("Disconnect").dispatchEvent(new MouseEvent("mouseenter"));
+  check("Voice opens its submenu, with where to move them", !sub.hidden && sub.textContent.includes("Server mute") && sub.textContent.includes("Gaming"));
+  item("Profile").dispatchEvent(new MouseEvent("mouseenter"));
   await wait(100);
   sub.dispatchEvent(new MouseEvent("mouseenter"));
   sub.querySelector(".menu-item").dispatchEvent(new MouseEvent("mouseenter"));
   await wait(400);
   check("passing a row on the way doesn't close it", !sub.hidden);
   commands.move_voice = (a) => sent.push({ type: "move_voice", ...a });
-  sub.querySelector(".menu-item").click();
+  [...sub.querySelectorAll(".menu-item")].find((b) => b.textContent.trim() === "Gaming").click();
   await wait(30);
   check("choosing a channel moves them", sent.some((m) => m.type === "move_voice" && m.sessionId === elin.session_id) && menu.hidden && sub.hidden);
   report();

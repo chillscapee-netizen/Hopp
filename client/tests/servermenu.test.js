@@ -34,8 +34,11 @@
   const kim = state.roster.users.find((u) => u.name === "Sara");
   const row = [...document.querySelectorAll("li.member, .member")].find((x) => x.textContent.includes("Sara"));
   row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
-  check("a person's menu has profile, mention and moderation", ["Profile", "Mention", "Kick Sara", "Ban Sara"].every((t) => items().includes(t)));
-  check("hard steps come together, near the end", items().join("|").includes("Kick Sara|Ban Sara") && items().at(-1) === "Transfer ownership", items().join(" | "));
+  check("a person's menu is short: profile, mention, and moderation folded away", ["Profile", "Mention", "Moderation"].every((t) => items().includes(t)) && !items().includes("Kick Sara"), items().join(" | "));
+  document.querySelector("#server-menu .menu-item.has-sub:last-child, #server-menu .has-sub")?.dispatchEvent(new MouseEvent("mouseenter"));
+  [...$("server-menu").querySelectorAll(".menu-item")].find((b) => b.textContent.trim() === "Moderation").dispatchEvent(new MouseEvent("mouseenter"));
+  const subItems = [...$("server-submenu").querySelectorAll(".menu-item")].map((b) => b.textContent.trim());
+  check("Moderation holds kick, ban and transfer, in that order", subItems.join("|") === "Kick Sara|Ban Sara|Transfer ownership", subItems.join(" | "));
   check("no volume for someone not in voice", !items().includes("Mute") && !document.querySelector("#server-menu .menu-slider"));
   [...$("server-menu").querySelectorAll(".menu-item")].find((b) => b.textContent === "Mention").click();
   check("Mention puts @name in the box", $("chat-input").value.includes("@Sara "));

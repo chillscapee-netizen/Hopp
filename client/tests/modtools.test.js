@@ -13,11 +13,16 @@
   [...document.querySelectorAll("li.member, .member")].find((x) => x.textContent.includes("Sara")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 600, clientY: 200 }));
   await wait(30);
   const item = (t) => [...document.querySelectorAll("#server-menu .menu-item, #server-submenu .menu-item")].find((b) => b.textContent.trim() === t);
-  item("Timeout Sara").dispatchEvent(new MouseEvent("mouseenter"));
+  item("Moderation").dispatchEvent(new MouseEvent("mouseenter"));
   await wait(20);
-  check("Timeout offers durations", ["60 seconds", "10 minutes", "1 week"].every((t) => !!item(t)));
+  check("Moderation folds out timeout, kick and ban", ["Timeout Sara", "Kick Sara"].every((t) => !!item(t)));
+  item("Timeout Sara").click();
+  await wait(50);
+  const lengths = [...document.getElementById("confirm-choice").options].map((o) => o.textContent);
+  check("Timeout asks how long", !document.getElementById("confirm-choice-row").hidden && ["60 seconds", "10 minutes", "1 week"].every((t) => lengths.includes(t)));
   sent.length = 0;
-  item("10 minutes").click();
+  document.getElementById("confirm-ok").click();
+  await wait(50);
   check("choosing one times them out", sent.some((m) => m.type === "timeout_member" && m.sessionId === sara.session_id && m.minutes === 10));
 
   // Timed out yourself: the box says so and won't take text.

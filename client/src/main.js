@@ -9206,24 +9206,24 @@ function openUserMenu(u, row, e) {
         setUserVolume(on ? 0 : 100);
       } });
     }
-    if (can("moderate") && outranks(u)) {
-      items.push(...voiceModItems(u));
-      const roles = roleItems(u);
-      if (roles.length) items.push("sep", ...roles);
-      items.push("sep");
-      items.push(...timeoutItems(u));
-      items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
+    // What a moderator can do, folded into three short groups that open to the side.
+    const mod = can("moderate") && outranks(u);
+    const hard = [];
+    if (mod) {
+      hard.push(...timeoutItems(u));
+      hard.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
         removeUser(false);
       } });
-      if (can("manage")) items.push({ label: `Ban ${u.name}`, icon: "ban", danger: true, action: () => {
+      if (can("manage")) hard.push({ label: `Ban ${u.name}`, icon: "ban", danger: true, action: () => {
         cardUser = u;
         removeUser(true);
       } });
     }
-    if (isOwner() && isCloud(activeServer()) && key) {
-      items.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership({ public_key: u.public_key, name: u.name }) });
-    }
+    if (isOwner() && isCloud(activeServer()) && key) hard.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership({ public_key: u.public_key, name: u.name }) });
+    const groups = [...(mod ? roleItems(u) : []), ...(mod ? voiceModItems(u) : [])];
+    if (hard.length) groups.push({ label: "Moderation", submenu: hard[0] === "sep" ? hard.slice(1) : hard });
+    if (groups.length) items.push("sep", ...groups);
   }
   openMenu(items, e.clientX, e.clientY);
 }
@@ -10473,13 +10473,14 @@ function voiceModItems(u) {
   const others = voiceChannels().filter((c) => c.id !== u.voice_channel);
   // What the server says now (the menu may stay open across changes).
   const latest = () => state.roster?.users.find((x) => x.session_id === u.session_id) ?? u;
-  return [
-    "sep",
+  const moves = others.map((c) => ({ label: c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) }));
+  return [{ label: "Voice", submenu: [
     { label: "Server mute", check: !!u.server_muted, action: (on) => call("server_mute", { sessionId: u.session_id, muted: on, deafened: !!latest().server_deafened }) },
     { label: "Server deafen", check: !!u.server_deafened, action: (on) => call("server_mute", { sessionId: u.session_id, muted: !!latest().server_muted, deafened: on }) },
-    ...(others.length ? [{ label: "Move to", submenu: others.map((c) => ({ label: c.name, icon: "volume", action: () => call("move_voice", { sessionId: u.session_id, channel: c.id }) })) }] : []),
-    { label: "Disconnect", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
-  ];
+    ...(moves.length ? ["sep", { heading: "Move to" }, ...moves] : []),
+    "sep",
+    { label: "Disconnect", icon: "logout", danger: true, action: () => call("disconnect_voice", { sessionId: u.session_id }) },
+  ] }];
 }
 
 /** Moderators drag people between voice channels. */
@@ -10913,7 +10914,15 @@ var TIMEOUTS = [["60 seconds", 1], ["5 minutes", 5], ["10 minutes", 10], ["1 hou
 function timeoutItems(u) {
   if (!modTools()) return [];
   if (timedOutUntil(u)) return [{ label: `Remove timeout`, icon: "clock", action: () => call("timeout_member", { sessionId: u.session_id, minutes: 0 }) }];
-  return [{ label: `Timeout ${u.name}`, danger: true, submenu: TIMEOUTS.map(([label, minutes]) => ({ label, action: () => call("timeout_member", { sessionId: u.session_id, minutes }) })) }];
+  return [{ label: `Timeout ${u.name}`, icon: "clock", danger: true, action: async () => {
+    const ok = await confirmDialog({
+      title: `Timeout ${u.name}`,
+      text: `${u.name} can't write, react or talk until it ends. You can lift it early from their menu.`,
+      ok: "Timeout",
+      choice: { label: "How long", options: TIMEOUTS.map(([label, minutes]) => [String(minutes), label]), value: "10" },
+    });
+    if (ok) call("timeout_member", { sessionId: u.session_id, minutes: Number(confirmDialog.choice) });
+  } }];
 }
 
 /** What the message box says: where you write, slowmode, or your timeout. */
