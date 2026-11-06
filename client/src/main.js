@@ -9659,6 +9659,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
       frame: at(-9), "side-2": at(-6), side: at(-4), main: at(0), elev: at(-7), "elev-2": at(-11), "elev-3": at(-15), deep: at(-5),
       border: at(-11), "border-strong": at(-17), "border-active": at(-25), "border-focus": at(-32), "focus-ring": at(-35),
       hover: "rgb(0 0 0 / 0.05)", active: "rgb(0 0 0 / 0.08)", "msg-hover": "rgb(0 0 0 / 0.03)",
+      layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", "app-solid": at(-6),
       text: tint(12), "text-2": tint(22), muted: tint(38), faint: tint(53),
       link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#1f9d63", yellow: "#b7791f", red: "#d93a40", scheme: "light",
     };
@@ -9667,12 +9668,13 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
     frame: at(-6.7), "side-2": at(-3.9), side: at(-2.1), main: at(0), elev: at(4.3), "elev-2": at(8.2), "elev-3": at(12.4), deep: at(-7.8),
     border: at(4.3), "border-strong": at(10.4), "border-active": at(16.3), "border-focus": at(20.4), "focus-ring": at(21.5),
     hover: "rgb(255 255 255 / 0.05)", active: "rgb(255 255 255 / 0.09)", "msg-hover": "rgb(0 0 0 / 0.06)",
+    layer: "rgb(255 255 255 / 0.045)", "layer-2": "rgb(255 255 255 / 0.065)", sink: "rgb(0 0 0 / 0.16)", "app-solid": at(-4.5),
     text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(57),
     link: "#8ab4f8", "primary-hover": "#ffffff", "name-s": "22%", "name-l": "80%", green: "#3ccf8e", yellow: "#f0b232", red: "#f2555a", scheme: "dark",
   };
 }
 
-var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "frame-bg", "sheet-bg", "side-bg"];
+var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "app-bg"];
 
 /** What to paint: a preset, a colour theme, or your own. */
 function themeSpec() {
@@ -9689,9 +9691,8 @@ function specTokens(spec) {
     const u = themeTokens(spec.b, spec);
     // Light and dark don't mix: the second colour follows the first.
     if (u.scheme === t.scheme) {
-      t["frame-bg"] = "linear-gradient(160deg, " + t.frame + ", " + u.frame + ")";
-      t["sheet-bg"] = "linear-gradient(160deg, " + t.main + ", " + u.main + ")";
-      t["side-bg"] = "linear-gradient(180deg, " + t["side-2"] + ", " + u["side-2"] + ")";
+      // One background for the whole window: the colours fade across it, under everything.
+      t["app-bg"] = "linear-gradient(135deg, " + t["app-solid"] + " 0%, " + u["app-solid"] + " 100%)";
     }
   }
   return t;
@@ -9733,11 +9734,11 @@ function saveCustom(change) {
 function themePicture(spec) {
   const t = specTokens(spec);
   const pic = el("span", "theme-pic");
-  pic.style.background = t["frame-bg"] ?? t.frame;
+  pic.style.background = t["app-bg"] ?? t["app-solid"];
   const side = el("span", "theme-pic-side");
-  side.style.background = t["side-bg"] ?? t["side-2"];
+  side.style.background = "transparent";
   const main = el("span", "theme-pic-main");
-  main.style.background = t["sheet-bg"] ?? t.main;
+  main.style.background = t.layer;
   for (const w of [70, 45]) {
     const line = el("i");
     line.style.width = w + "%";

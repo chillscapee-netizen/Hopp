@@ -19,7 +19,7 @@
   cards.find((c) => c.dataset.theme === "light").click();
   await wait(50);
   check("Light grey turns the app light", css("color-scheme") === "light" && bodyBg() !== midBg);
-  const [r, g, b] = getComputedStyle(document.querySelector(".frame")).backgroundColor.match(/\d+/g).map(Number);
+  const [r, g, b] = getComputedStyle(document.querySelector(".shell")).backgroundColor.match(/\d+/g).map(Number);
   check("with a light background", r > 200 && g > 200 && b > 200, `${r} ${g} ${b}`);
   const text = getComputedStyle(document.body).color.match(/\d+/g).map(Number);
   check("and dark text", text[0] < 60, text.join(" "));
@@ -65,7 +65,7 @@
   second.value = "#2a6dff";
   second.dispatchEvent(new Event("input"));
   await wait(50);
-  check("a second colour makes a fade", css("--sheet-bg").startsWith("linear-gradient"));
+  check("a second colour makes a fade", css("--app-bg").startsWith("linear-gradient"));
   const contrast = document.getElementById("theme-contrast");
   contrast.value = "100";
   contrast.dispatchEvent(new Event("input"));
@@ -73,12 +73,12 @@
   check("contrast spreads the shades", css("--frame") !== "" && document.getElementById("theme-contrast-value").textContent === "100%");
   document.getElementById("theme-b-clear").click();
   await wait(50);
-  check("one colour again: no fade", !css("--sheet-bg"));
+  check("one colour again: no fade", !css("--app-bg"));
 
   // Colour themes.
   document.querySelector('.gradient-swatch[data-theme="dusk"]').click();
   await wait(50);
-  check("a colour theme fades between its colours", prefs.theme === "dusk" && css("--frame-bg").startsWith("linear-gradient") && document.querySelector(".gradient-swatch.active")?.dataset.theme === "dusk");
+  check("a colour theme fades between its colours", prefs.theme === "dusk" && css("--app-bg").startsWith("linear-gradient") && document.querySelector(".gradient-swatch.active")?.dataset.theme === "dusk");
 
   // Chat text size and spacing.
   const size = document.getElementById("chat-size");
@@ -92,7 +92,7 @@
   size.value = "15";
   size.dispatchEvent(new Event("input"));
   await wait(50);
-  check("Mid grey clears every colour", !root.style.getPropertyValue("--main") && !root.style.getPropertyValue("--sheet-bg") && bodyBg() === midBg);
+  check("Mid grey clears every colour", !root.style.getPropertyValue("--main") && !root.style.getPropertyValue("--app-bg") && bodyBg() === midBg);
   document.getElementById("settings").close();
   report();
 })();

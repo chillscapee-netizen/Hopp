@@ -3069,9 +3069,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .invite-card-kicker { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 
 /* Colour themes: fading backgrounds when a theme has two colours. */
-body { background: var(--frame-bg, var(--frame)); }
-.frame { background: var(--sheet-bg, var(--main)); }
-.sidebar, .members { background: var(--side-bg, var(--side-2)); }
 .gradient-list { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
 .gradient-swatch { width: 44px; height: 44px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
 .gradient-swatch:hover { transform: scale(1.06); }
@@ -3255,3 +3252,46 @@ input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top:
 .private-roles { padding: 4px 16px 16px; }
 .channel-save { position: sticky; bottom: 0; display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin: 24px -32px 0; padding: 14px 32px; background: var(--main); }
 .channel-settings-content .settings-page > .card + .card { margin-top: 16px; }
+
+/* ---------- Flow: one background for the whole window ----------
+   The window is one surface: a colour theme fades across all of it, from the server list to
+   the member list. The sidebar and member list sit right on it; the conversation is a soft,
+   slightly lighter sheet on top, see-through, so the colours carry on underneath. */
+:root {
+  --app-solid: #333338;
+  --layer: rgb(255 255 255 / 0.035);
+  --layer-2: rgb(255 255 255 / 0.065);
+}
+body, .shell { background: var(--app-bg, var(--app-solid)); }
+.topbar, .rail, .frame, .sidebar, .members, .main-head, .sidebar-head, .user-panel, .voice-panel { background: transparent; }
+.frame { border: none; border-radius: 0; overflow: visible; }
+.sidebar { border-right: none; }
+.members { border-left: none; }
+.sidebar-head, .main-head { border-bottom: none; }
+.channel-view, .home-view {
+  min-height: 0;
+  margin: 0 8px 8px 0;
+  border-radius: 16px;
+  background: var(--layer);
+  overflow: hidden;
+}
+/* Rings around status dots and speaking avatars match the window, not a panel. */
+.status-dot { border-color: var(--app-solid); }
+.sidebar, .members { --speak-gap: var(--app-solid); }
+/* Your own row and the message box: the same soft layer, no lines. */
+.user-panel { --panel: var(--layer-2); background: var(--layer-2); border: none; border-radius: 12px; }
+.user-panel .status-dot { border-color: var(--app-solid); }
+.composer-box { background: var(--layer-2); border: none; }
+.composer-box:focus-within { border: none; background: color-mix(in srgb, var(--layer-2) 100%, rgb(255 255 255 / 0.02)); }
+/* Empty cards: soft, no dashes. */
+.empty-cta { border: none; background: var(--layer); border-radius: 14px; }
+/* Selected and hovered rows read on any colour. */
+.channel-row:hover, .dm-row:hover, .member:hover { background: var(--hover); }
+/* Cards, search and reactions are layers too, so the colours carry on beneath them. */
+:root { --layer: rgb(255 255 255 / 0.045); --sink: rgb(0 0 0 / 0.16); }
+.link-card { background: var(--sink); }
+.head-search { background: var(--sink); }
+.reaction { background: var(--layer-2); border-color: transparent; }
+.reaction.mine { background: color-mix(in srgb, var(--link) 22%, transparent); border-color: transparent; }
+.rail-item.home .rail-icon, .rail-item.add .rail-icon { background: var(--layer-2); }
+.rail-item.home.active .rail-icon { background: var(--text); }
