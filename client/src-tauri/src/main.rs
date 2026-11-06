@@ -861,8 +861,35 @@ fn update_channel(
     user_limit: Option<u8>,
     afk_after: Option<u16>,
     slowmode: Option<u32>,
+    private_roles: Option<Vec<u32>>,
 ) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after, slowmode }))
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles }))
+}
+
+/// Admins: the server's own roles.
+#[tauri::command]
+fn create_role(state: State<'_, AppState>, name: String, color: Option<String>, hoist: bool, level: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::CreateRole { name, color, hoist, level }))
+}
+
+#[tauri::command]
+fn update_role(state: State<'_, AppState>, id: u32, name: String, color: Option<String>, hoist: bool, level: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateRole { id, name, color, hoist, level }))
+}
+
+#[tauri::command]
+fn delete_role(state: State<'_, AppState>, id: u32) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::DeleteRole { id }))
+}
+
+#[tauri::command]
+fn reorder_roles(state: State<'_, AppState>, order: Vec<u32>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::ReorderRoles { order }))
+}
+
+#[tauri::command]
+fn assign_role(state: State<'_, AppState>, public_key: String, role: u32, on: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::AssignRole { public_key, role, on }))
 }
 
 /// Moderators: times someone out (0 minutes lifts it).
@@ -1492,6 +1519,11 @@ fn main() {
             reorder_channels,
             idle_seconds,
             timeout_member,
+            create_role,
+            update_role,
+            delete_role,
+            reorder_roles,
+            assign_role,
             get_audit_log,
             set_loopback,
             local_address,

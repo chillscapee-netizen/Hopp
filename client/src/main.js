@@ -1736,6 +1736,8 @@ listen("roster", (e) => {
   syncScreen();
   syncMedia();
   renderAll();
+  // The Roles tab follows changes as they come.
+  if ($("server-settings").open && !document.querySelector('[data-spanel="roles"]').hidden) renderRolesTab();
 });
 
 listen("voice", (e) => {
@@ -2084,7 +2086,7 @@ function renderSidebar() {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
     row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
-    row.append(icon("hash"), el("span", "ellipsis", ch.name));
+    row.append(icon(ch.private_roles?.length ? "lock" : "hash"), el("span", "ellipsis", ch.name));
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
@@ -2237,7 +2239,10 @@ function userRow(u, className, size, sub) {
   // The member list is just who is here: avatar with a status dot, name, crown.
   row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
-  nameLine.append(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name));
+  const nameEl = el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name);
+  const tint = roleColor(u);
+  if (tint) nameEl.style.color = tint;
+  nameLine.append(nameEl);
   const role = roleOf(u);
   if (role) {
     const mark = role === "owner" ? icon("crown", "crown") : icon("shield", `role-mark ${role}`);
@@ -2395,12 +2400,18 @@ function renderMembers() {
     if (!seen || (seen.voice_channel === null && u.voice_channel !== null)) byKey.set(id, u);
   }
   const users = [...byKey.values()].sort(byName);
-  const groups = [
-    ["Owner", users.filter((u) => roleOf(u) === "owner")],
-    ["Admins", users.filter((u) => roleOf(u) === "admin")],
-    ["Moderators", users.filter((u) => roleOf(u) === "mod")],
-    ["Online", users.filter((u) => !roleOf(u))],
-  ];
+  // Each person under their highest role that's shown separately; the rest as before.
+  const hoisted = (state.roster.roles ?? []).filter((r) => r.hoist);
+  const placed = new Set();
+  const groups = [["Owner", users.filter((u) => roleOf(u) === "owner")]];
+  for (const u of groups[0][1]) placed.add(u);
+  for (const r of hoisted) {
+    const list = users.filter((u) => !placed.has(u) && u.roles?.includes(r.id));
+    list.forEach((u) => placed.add(u));
+    groups.push([r.name, list]);
+  }
+  const rest = users.filter((u) => !placed.has(u));
+  groups.push(["Admins", rest.filter((u) => roleOf(u) === "admin")], ["Moderators", rest.filter((u) => roleOf(u) === "mod")], ["Online", rest.filter((u) => !roleOf(u))]);
   const items = [];
   for (const [label, list] of groups) {
     if (list.length === 0) continue;
@@ -2657,7 +2668,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     } else {
       const head = el("div", "msg-head");
       const author = el("span", "msg-author", m.sender_name);
-      author.style.color = `hsl(${hue(m.sender_name)} var(--name-s) var(--name-l))`;
+      author.style.color = roleColorByKey(m.author_key) ?? `hsl(${hue(m.sender_name)} var(--name-s) var(--name-l))`;
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
         const pin = icon("pin", "xs msg-pin");
@@ -2704,7 +2715,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews]);
+    li.dataset.sig = JSON.stringify([grouped, day, m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key)]);
     items.push(li);
     prev = m;
   }
@@ -3207,10 +3218,12 @@ function openServerSettings() {
   $("member-search").value = "";
   document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
   document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
+  document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
   openModal($("server-settings"));
   call("get_server_settings");
 }
 function showServerTab(tab) {
+  if (tab === "roles") renderRolesTab();
   if (tab === "audit") {
     $("audit-list").replaceChildren(el("li", "admin-empty", "Loading…"));
     call("get_audit_log");
@@ -4205,6 +4218,15 @@ function openUserCard(user, anchor) {
 }
 
 function syncUserCard() {
+  const roles = (state.roster?.roles ?? []).filter((r) => cardUser?.roles?.includes(r.id));
+  $("user-card-roles").hidden = !roles.length;
+  $("user-card-roles").replaceChildren(...roles.map((r) => {
+    const chip = el("span", "role-chip");
+    const dot = el("i", "role-dot");
+    dot.style.background = r.color ?? "var(--faint)";
+    chip.append(dot, r.name);
+    return chip;
+  }));
   // In voice with us: how the connection to them is.
   const q = cardUser.voice_channel !== null && cardUser.voice_channel === myVoice() ? state.quality.get(cardUser.session_id) : undefined;
   const line = $("user-card-connection");
@@ -6620,6 +6642,21 @@ function openChannelEdit(ch) {
   $("channel-edit-limit-value").textContent = ch.user_limit ? ch.user_limit + " people" : "No limit";
   $("channel-edit-afk").value = String(ch.afk_after ?? 0);
   $("channel-edit-slow-row").hidden = !modTools();
+  const rolesHere = rolesOn() ? state.roster.roles ?? [] : [];
+  $("channel-edit-private").hidden = !rolesOn() || !can("manage");
+  $("channel-edit-private-on").checked = !!ch.private_roles?.length;
+  $("channel-edit-private-roles").hidden = !ch.private_roles?.length;
+  $("channel-edit-private-roles").replaceChildren(...(rolesHere.length ? rolesHere.map((r) => {
+    const label = el("label", "private-role");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = r.id;
+    box.checked = !!ch.private_roles?.includes(r.id);
+    const dot = el("i", "role-dot");
+    dot.style.background = r.color ?? "var(--faint)";
+    label.append(box, dot, r.name);
+    return label;
+  }) : [el("p", "hint", "Make a role first (Server settings → Roles), then pick it here.")]));
   $("channel-edit-slow").value = String(ch.slowmode ?? 0);
   $("category-options").replaceChildren(...[...new Set(state.roster.channels.map((c) => c.category).filter(Boolean))].map((c) => {
     const o = el("option");
@@ -6645,9 +6682,12 @@ $("channel-edit-form").addEventListener("submit", () => {
   const afkAfter = voiceSettings ? Number($("channel-edit-afk").value) : null;
   const voiceSame = !voiceSettings || (userLimit === (editingChannel.user_limit ?? 0) && afkAfter === (editingChannel.afk_after ?? 0));
   const slowmode = modTools() ? Number($("channel-edit-slow").value) : null;
+  const privateOn = !$("channel-edit-private").hidden && $("channel-edit-private-on").checked;
+  const privateRoles = $("channel-edit-private").hidden ? null : privateOn ? [...document.querySelectorAll("#channel-edit-private-roles input:checked")].map((b) => Number(b.value)) : [];
+  const privateSame = privateRoles === null || JSON.stringify(privateRoles) === JSON.stringify(editingChannel.private_roles ?? []);
   const slowSame = slowmode === null || slowmode === (editingChannel.slowmode ?? 0);
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame && slowSame) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter, slowmode });
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame && slowSame && privateSame) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter, slowmode, privateRoles: privateSame ? null : privateRoles });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -7904,7 +7944,8 @@ function roleSelect(target, onChange) {
 function renderUserRole(user) {
   const roles = rolesICanGive(user);
   const wrap = $("user-role-wrap");
-  wrap.hidden = roles.length === 0;
+  // With the server's own roles, those decide (given from the Roles menu); the old picker would only confuse.
+  wrap.hidden = roles.length === 0 || rolesOn();
   const select = $("user-role");
   select.replaceChildren(...roles.map((r) => {
     const opt = el("option", "", r ? ROLE_LABEL[r] : "Member");
@@ -9114,6 +9155,7 @@ function openUserMenu(u, row, e) {
     if (can("moderate") && outranks(u)) {
       items.push(...voiceModItems(u));
       items.push(...timeoutItems(u));
+      items.push(...roleItems(u));
       items.push("sep");
       items.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
@@ -10865,3 +10907,124 @@ setInterval(() => {
   const me = meUser();
   if (me?.timed_out_until && !timedOutUntil(me) && $("chat-input").disabled) renderChannelView();
 }, 5000);
+
+// ---------- roles ----------
+//
+// A server's own roles: a colour for names, a heading of their own in the member list, and
+// what they may do (nothing extra, moderate, or run the server). Private channels show
+// only to the roles picked (and admins).
+
+function rolesOn() {
+  return !!state.roster?.features?.includes("roles");
+}
+
+/** The colour of someone's highest role that has one. */
+function roleColor(u) {
+  if (!u?.roles?.length) return null;
+  return (state.roster.roles ?? []).find((r) => r.color && u.roles.includes(r.id))?.color ?? null;
+}
+function roleColorByKey(key) {
+  return roleColor(state.roster?.users.find((u) => keyOf(u) === key));
+}
+
+/** "Roles" in someone's menu, for admins: tick to give, untick to take. */
+function roleItems(u) {
+  const roles = state.roster?.roles ?? [];
+  if (!rolesOn() || !can("manage") || !roles.length || !keyOf(u)) return [];
+  return [{
+    label: "Roles",
+    submenu: roles.map((r) => ({
+      label: r.name,
+      check: !!u.roles?.includes(r.id),
+      action: (on) => call("assign_role", { publicKey: keyOf(u), role: r.id, on }),
+    })),
+  }];
+}
+
+var ROLE_COLORS = ["#e5484d", "#f76b15", "#ffc53d", "#46a758", "#12a594", "#0090ff", "#6e56cf", "#d6409f", "#8d8d86", null];
+var editingRole = null;
+var roleColorPick = null;
+
+function renderRolesTab() {
+  const roles = state.roster?.roles ?? [];
+  $("role-list").replaceChildren(...(roles.length ? roles.map((r, i) => {
+    const li = el("li", "role-row" + (editingRole === r.id ? " active" : ""));
+    const dot = el("i", "role-dot");
+    dot.style.background = r.color ?? "var(--faint)";
+    const count = state.roster.users.filter((u) => u.roles?.includes(r.id)).length;
+    li.append(dot, el("span", "role-row-name ellipsis", r.name), el("span", "role-row-count", count ? String(count) : ""));
+    const move = (d) => {
+      const order = roles.map((x) => x.id);
+      const j = i + d;
+      if (j < 0 || j >= order.length) return;
+      [order[i], order[j]] = [order[j], order[i]];
+      call("reorder_roles", { order });
+    };
+    const up = el("button", "role-move");
+    up.type = "button";
+    up.setAttribute("aria-label", "Higher");
+    up.append(icon("chevron"));
+    up.addEventListener("click", (e) => {
+      e.stopPropagation();
+      move(-1);
+    });
+    const down = el("button", "role-move down");
+    down.type = "button";
+    down.setAttribute("aria-label", "Lower");
+    down.append(icon("chevron"));
+    down.addEventListener("click", (e) => {
+      e.stopPropagation();
+      move(1);
+    });
+    li.append(up, down);
+    li.addEventListener("click", () => openRole(r));
+    return li;
+  }) : [el("li", "admin-empty", "No roles yet.")]));
+  const current = roles.find((r) => r.id === editingRole);
+  if (current) openRole(current, true);
+  else $("role-editor").hidden = true;
+}
+
+function openRole(r, keepEdits) {
+  editingRole = r.id;
+  document.querySelectorAll(".role-row").forEach((n, i) => n.classList.toggle("active", state.roster.roles[i]?.id === r.id));
+  $("role-editor").hidden = false;
+  if (keepEdits && document.activeElement?.closest?.("#role-editor")) return;
+  $("role-name").value = r.name;
+  $("role-hoist").checked = r.hoist;
+  $("role-level").value = r.level ?? "";
+  // Admin-level roles are the owner's to give.
+  $("role-level").querySelector('option[value="admin"]').disabled = !can("own");
+  roleColorPick = r.color;
+  renderRoleColors();
+}
+
+function renderRoleColors() {
+  $("role-colors").replaceChildren(...ROLE_COLORS.map((c) => {
+    const b = el("button", "role-swatch" + (c === roleColorPick ? " active" : "") + (c ? "" : " none"));
+    b.type = "button";
+    b.setAttribute("aria-label", c ?? "No colour");
+    if (c) b.style.background = c;
+    b.addEventListener("click", () => {
+      roleColorPick = c;
+      renderRoleColors();
+    });
+    return b;
+  }));
+}
+
+$("role-new").addEventListener("click", () => call("create_role", { name: "new role", color: null, hoist: false, level: null }));
+$("role-editor").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (editingRole === null) return;
+  call("update_role", { id: editingRole, name: $("role-name").value.trim() || "role", color: roleColorPick, hoist: $("role-hoist").checked, level: $("role-level").value || null });
+});
+$("role-delete").addEventListener("click", async () => {
+  const r = state.roster.roles.find((x) => x.id === editingRole);
+  if (!r) return;
+  const ok = await confirmDialog({ title: "Delete " + r.name, text: "Everyone with this role loses it. Private channels only it could see stay for admins.", ok: "Delete role" });
+  if (!ok) return;
+  editingRole = null;
+  call("delete_role", { id: r.id });
+});
+$("channel-edit-private-on").addEventListener("change", (e) => ($("channel-edit-private-roles").hidden = !e.target.checked));

@@ -758,3 +758,40 @@ test("timeouts, slowmode, bans that delete history, and the audit log", async ()
   owner.close();
   bob.close();
 });
+
+test("roles: colours and levels, and private channels nobody else sees", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("roles"));
+  const general = channelId(owner, "general");
+  const bob = await join(id, "bob", { invite });
+  const carol = await join(id, "carol", { invite });
+  const bobKey = bob.key.pub;
+  // A role with moderator rights.
+  owner.send({ type: "create_role", name: "Crew", color: "#46a758", hoist: true, level: "mod" });
+  const made = await bob.waitFor((m) => m.type === "roles_updated");
+  const crew = made.roles[0];
+  assert.deepEqual([crew.name, crew.color, crew.hoist, crew.level], ["Crew", "#46a758", true, "mod"]);
+  // Bob can't hand out roles; the owner can.
+  bob.send({ type: "assign_role", public_key: bobKey, role: crew.id, on: true });
+  assert.match(await errorOf(bob), /admins/);
+  owner.send({ type: "assign_role", public_key: bobKey, role: crew.id, on: true });
+  const marked = await carol.waitFor((m) => m.type === "user_updated" && m.user.public_key === bobKey && m.user.roles?.includes(crew.id));
+  assert.equal(marked.user.role, "mod", "the role's level counts");
+  // A private channel for Crew only.
+  owner.send({ type: "create_channel", name: "crew-only", kind: "text" });
+  const listed = await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "crew-only"));
+  const secret = listed.channels.find((c) => c.name === "crew-only").id;
+  owner.send({ type: "update_channel", channel: secret, name: "crew-only", private_roles: [crew.id] });
+  await carol.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === secret));
+  await bob.waitFor((m) => m.type === "chat_history" && m.channel === secret);
+  bob.send({ type: "send_chat", channel: secret, text: "crew plans" });
+  await bob.waitFor((m) => m.type === "chat" && m.message.text === "crew plans");
+  owner.send({ type: "send_chat", channel: general, text: "public hello" });
+  await carol.waitFor((m) => m.type === "chat" && m.message.text === "public hello");
+  assert.ok(!carol.inbox.some((m) => m.type === "chat" && m.message.channel === secret), "carol never gets the private messages");
+  carol.send({ type: "load_older", channel: secret, before: 1e9 });
+  assert.match(await errorOf(carol), /doesn't exist/);
+  carol.send({ type: "search", query: "crew plans" });
+  assert.deepEqual((await carol.waitFor((m) => m.type === "search_results")).messages, []);
+  for (const c of [owner, bob, carol]) c.close();
+});

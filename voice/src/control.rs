@@ -60,6 +60,8 @@ pub struct Roster {
     pub users: Vec<User>,
     /// What the server can do beyond the basics, like "search".
     pub features: Vec<String>,
+    /// The server's own roles, highest first.
+    pub roles: Vec<strom_shared::RoleInfo>,
 }
 
 impl Roster {
@@ -73,6 +75,7 @@ impl Roster {
             }
             ServerMsg::UserLeft { session_id } => self.users.retain(|u| u.session_id != *session_id),
             ServerMsg::ChannelsUpdated { channels } => self.channels = channels.clone(),
+            ServerMsg::RolesUpdated { roles } => self.roles = roles.clone(),
             ServerMsg::ServerUpdated { name, icon, pictures_off } => {
                 self.pictures_off = *pictures_off;
                 self.server_name = name.clone();
@@ -227,8 +230,8 @@ pub async fn connect(address: &str, identity: &Identity, invite: Option<&str>, c
     };
     writer.send(&ClientMsg::Auth { signature: identity.sign_challenge(&nonce) }).await?;
     let (roster, udp_token, udp_port) = match reader.answer().await? {
-        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon, pictures_off, features } => {
-            (Roster { server_name, server_icon, pictures_off, me: session_id, channels, users, features }, udp_token, udp_port)
+        ServerMsg::Welcome { server_name, session_id, udp_token, udp_port, channels, users, server_icon, pictures_off, features, roles } => {
+            (Roster { server_name, server_icon, pictures_off, me: session_id, channels, users, features, roles }, udp_token, udp_port)
         }
         ServerMsg::Error { message } => anyhow::bail!(message),
         other => anyhow::bail!("unexpected message during login: {other:?}"),
@@ -287,12 +290,12 @@ mod tests {
     use super::*;
 
     fn user(id: SessionId, voice: Option<ChannelId>) -> User {
-        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None }
+        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None, roles: vec![] }
     }
 
     #[test]
     fn roster_tracks_presence_and_channels() {
-        let mut r = Roster { server_name: String::new(), server_icon: None, pictures_off: false, me: 1, channels: vec![], users: vec![user(1, None)], features: vec![] };
+        let mut r = Roster { server_name: String::new(), server_icon: None, pictures_off: false, me: 1, channels: vec![], users: vec![user(1, None)], features: vec![], roles: vec![] };
         r.apply(&ServerMsg::UserJoined { user: user(2, None) });
         r.apply(&ServerMsg::UserUpdated { user: user(2, Some(1)) });
         assert_eq!(r.users, vec![user(1, None), user(2, Some(1))]);
@@ -300,7 +303,7 @@ mod tests {
         assert_eq!(r.users, vec![user(1, None)]);
         assert_eq!(r.me().unwrap().session_id, 1);
 
-        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None }];
+        let channels = vec![Channel { id: 4, name: "klipp".into(), kind: ChannelKind::Text, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None, private_roles: None }];
         r.apply(&ServerMsg::ChannelsUpdated { channels: channels.clone() });
         assert_eq!(r.channels, channels);
     }

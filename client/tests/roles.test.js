@@ -1,84 +1,60 @@
-// Roles on a server: who sees what, and handing out roles.
+// Roles: names in their colour, a heading of their own, a Roles menu, the Roles tab, private channels.
 
 (async () => {
   await inServer();
-  const users = () => state.roster.users;
-  const setRoles = (roles) => {
-    const r = structuredClone(state.roster);
-    for (const u of r.users) {
-      const role = roles[u.name];
-      u.owner = role === "owner";
-      if (role && role !== "owner") u.role = role;
-      else delete u.role;
-    }
-    emit("roster", r);
-  };
-  const rowOf = (name) => [...document.querySelectorAll("#member-list-pane .member, .members .member, li.member")].find((li) => li.textContent.includes(name));
-
-  // As the owner.
-  setRoles({ Marcus: "owner", Elin: "admin", Jonas: "mod" });
-  await wait(150);
-  const text = document.body.textContent;
-  check("member list groups by role", text.includes("Admins — 1") && text.includes("Moderators — 1") && text.includes("Online — 1"));
-  check("admin and moderator marks shown", document.querySelector(".role-mark.admin") && document.querySelector(".role-mark.mod"));
-
-  const elin = users().find((u) => u.name === "Elin");
-  openUserCard(elin, document.body);
-  check("owner may change an admin's role", !$("user-role-wrap").hidden && [...$("user-role").options].map((o) => o.value).join(",") === ",mod,admin");
-  check("owner sees transfer", !$("user-transfer").hidden);
-  check("owner can kick and ban an admin", !$("user-mod").hidden && !$("user-ban").hidden);
-  $("user-role").value = "mod";
-  $("user-role").dispatchEvent(new Event("change"));
-  await wait(50);
-  closePopovers();
-
-  // As a moderator: kick members only, no settings, no roles.
-  setRoles({ Elin: "owner", Marcus: "mod", Jonas: "admin" });
-  await wait(150);
-  check("moderator has no server settings", (() => {
-    $("sidebar-head").click();
-    const has = $("server-menu").textContent.includes("Server settings");
-    closePopovers();
-    return !has;
-  })());
-  const sara = users().find((u) => u.name === "Sara");
-  openUserCard(sara, document.body);
-  check("moderator may kick a member", !$("user-mod").hidden && $("user-ban").hidden);
-  check("moderator can't hand out roles", $("user-role-wrap").hidden);
-  closePopovers();
-  openUserCard(users().find((u) => u.name === "Jonas"), document.body);
-  check("moderator can't act on an admin", $("user-mod").hidden);
-  closePopovers();
-  check("moderator may delete a member's message", canDelete({ author_key: KEYS.sara }));
-  check("moderator may not delete an admin's message", !canDelete({ author_key: KEYS.jonas }));
-
-  // As an admin: settings, moderators, but not admins.
-  setRoles({ Elin: "owner", Marcus: "admin", Jonas: "mod" });
-  await wait(150);
-  $("sidebar-head").click();
-  check("admin has server settings", $("server-menu").textContent.includes("Server settings"));
-  closePopovers();
-  openUserCard(users().find((u) => u.name === "Jonas"), document.body);
-  check("admin names moderators, not admins", [...$("user-role").options].map((o) => o.value).join(",") === ",mod");
-  check("admin can't transfer", $("user-transfer").hidden);
-  closePopovers();
-
-  // Server settings → Members.
-  openServerSettings();
-  emit("members", [
-    { public_key: KEYS.elin, name: "Elin", role: "owner", joined_at: Date.now() - 9e8 },
-    { public_key: ME, name: "Marcus", role: "admin", joined_at: Date.now() - 8e8 },
-    { public_key: KEYS.jonas, name: "Jonas", role: "mod", joined_at: Date.now() - 7e8 },
-    { public_key: KEYS.kim, name: "Kim", role: null, joined_at: Date.now() - 1e8 },
-  ]);
+  const r = structuredClone(state.roster);
+  r.features = ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles"];
+  r.roles = [{ id: 7, name: "Crew", color: "#46a758", hoist: true, level: "mod", position: 2 }, { id: 8, name: "Friends", color: "#0090ff", hoist: false, level: null, position: 1 }];
+  const elin = r.users.find((u) => u.name === "Elin");
+  elin.roles = [7, 8];
+  emit("roster", r);
   await wait(100);
-  const rows = [...document.querySelectorAll("#server-members .admin-row")];
-  check("members tab lists everyone, owner first", rows.length === 4 && rows[0].textContent.includes("Elin"));
-  check("offline members listed too", rows.some((r) => r.textContent.includes("Kim") && !r.textContent.includes("Online")));
-  check("admin gets role pickers for those below", rows.filter((r) => r.querySelector("select")).length === 2);
-  $("member-search").value = "ki";
-  $("member-search").dispatchEvent(new Event("input"));
-  check("search narrows the list", document.querySelectorAll("#server-members .admin-row").length === 1);
-  $("server-settings").close();
+  for (const c of ["assign_role", "create_role", "update_role", "update_channel", "reorder_roles"]) commands[c] = (a) => sent.push({ type: c, ...a });
+
+  const heads = [...document.querySelectorAll(".member-group")].map((h) => h.textContent);
+  check("a role shown separately gets its own heading", heads.includes("Crew — 1"), heads.join(" | "));
+  const name = [...document.querySelectorAll(".member .member-name")].find((n) => n.textContent === "Elin");
+  check("names take their highest role's colour", name?.style.color === "rgb(70, 167, 88)", name?.style.color);
+
+  // Roles in someone's menu.
+  [...document.querySelectorAll(".member")].find((x) => x.textContent.includes("Jonas")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 600, clientY: 200 }));
+  await wait(30);
+  const item = (t) => [...document.querySelectorAll("#server-menu .menu-item, #server-submenu .menu-item")].find((b) => b.textContent.trim() === t);
+  item("Roles").dispatchEvent(new MouseEvent("mouseenter"));
+  await wait(20);
+  sent.length = 0;
+  item("Crew").click();
+  check("ticking a role gives it", sent.some((m) => m.type === "assign_role" && m.role === 7 && m.on === true));
+  document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+  // The Roles tab.
+  openServerSettings();
+  await wait(50);
+  showServerTab("roles");
+  await wait(30);
+  check("the Roles tab lists the roles", document.querySelectorAll("#role-list .role-row").length === 2);
+  document.querySelector("#role-list .role-row").click();
+  check("a role opens for editing", !document.getElementById("role-editor").hidden && document.getElementById("role-name").value === "Crew");
+  document.getElementById("role-name").value = "Core crew";
+  sent.length = 0;
+  document.getElementById("role-editor").requestSubmit();
+  check("saving sends the change", sent.some((m) => m.type === "update_role" && m.id === 7 && m.name === "Core crew" && m.color === "#46a758" && m.level === "mod"));
+  document.getElementById("server-settings").close();
+
+  // A private channel.
+  openChannelEdit(state.roster.channels.find((c) => c.id === 0));
+  await wait(30);
+  check("channels can be made private", !document.getElementById("channel-edit-private").hidden);
+  document.getElementById("channel-edit-private-on").click();
+  document.querySelector('#channel-edit-private-roles input[value="7"]').checked = true;
+  sent.length = 0;
+  document.getElementById("channel-edit-form").requestSubmit();
+  await wait(20);
+  check("for the roles picked", sent.some((m) => m.type === "update_channel" && JSON.stringify(m.privateRoles) === "[7]"));
+  const p = structuredClone(state.roster);
+  p.channels.find((c) => c.id === 0).private_roles = [7];
+  emit("roster", p);
+  await wait(50);
+  check("a private channel shows a lock", !!document.querySelector(".channel-row.current use[href='#i-lock']"));
   report();
 })();

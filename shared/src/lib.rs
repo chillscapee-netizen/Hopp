@@ -51,6 +51,9 @@ pub struct Channel {
     /// Seconds between each person's messages here (moderators aren't held to it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slowmode: Option<u32>,
+    /// A private channel: only people with one of these roles (and admins) see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_roles: Option<Vec<u32>>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -88,6 +91,25 @@ pub struct User {
     /// Timed out by a moderator until then (milliseconds since 1970): no writing, reacting or voice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_out_until: Option<u64>,
+    /// The server's roles they have (ids of `RoleInfo`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<u32>,
+}
+
+/// A role a server made: a name and colour for its people, a place of its own in the member
+/// list if `hoist`, and what it lets them do (`level`: "mod", "admin" or none).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoleInfo {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub hoist: bool,
+    #[serde(default)]
+    pub level: Option<String>,
+    #[serde(default)]
+    pub position: i32,
 }
 
 /// One line of a server's audit log: who did what, to whom, when.
@@ -155,6 +177,8 @@ pub struct Member {
     pub role: Option<String>,
     #[serde(default)]
     pub joined_at: u64,
+    #[serde(default)]
+    pub roles: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -315,7 +339,18 @@ pub enum ClientMsg {
         /// Seconds between each person's messages; `Some(0)` turns it off; `None` leaves it.
         #[serde(default)]
         slowmode: Option<u32>,
+        /// Roles that may see the channel (`Some(empty)`: everyone); `None` leaves it.
+        #[serde(default)]
+        private_roles: Option<Vec<u32>>,
     },
+    /// Admins, on servers whose welcome lists "roles": a new role.
+    CreateRole { name: String, color: Option<String>, hoist: bool, level: Option<String> },
+    UpdateRole { id: u32, name: String, color: Option<String>, hoist: bool, level: Option<String> },
+    DeleteRole { id: u32 },
+    /// Every role id, highest first.
+    ReorderRoles { order: Vec<u32> },
+    /// Gives someone a role, or takes it away.
+    AssignRole { public_key: String, role: u32, on: bool },
     /// Owner only: every channel id, in the new order.
     ReorderChannels { order: Vec<ChannelId> },
     /// Allowed for the author and the owner.
@@ -406,6 +441,9 @@ pub enum ServerMsg {
         /// older server for something it doesn't know.
         #[serde(default)]
         features: Vec<String>,
+        /// The server's own roles, highest first.
+        #[serde(default)]
+        roles: Vec<RoleInfo>,
     },
     /// The owner renamed the server or changed its picture.
     ServerUpdated {
@@ -449,6 +487,8 @@ pub enum ServerMsg {
     Bans { bans: Vec<Ban> },
     /// The newest audit log entries first.
     AuditLog { entries: Vec<AuditEntry> },
+    /// The server's roles changed (highest first).
+    RolesUpdated { roles: Vec<RoleInfo> },
     Members { members: Vec<Member> },
     Error { message: String },
     Pong,

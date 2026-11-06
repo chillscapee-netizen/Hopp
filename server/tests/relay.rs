@@ -653,10 +653,10 @@ async fn leaving_needs_a_new_invite_to_come_back() {
 async fn owner_renames_and_reorders_channels() {
     let mut server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
-    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()), category: None, no_pictures: None, user_limit: None, afk_after: None, slowmode: None }).await;
+    alice.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Chat".into(), topic: Some("x".into()), category: None, no_pictures: None, user_limit: None, afk_after: None, slowmode: None, private_roles: None }).await;
     assert!(alice.error().await.contains("owner"));
 
-    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()), category: Some(" Info ".into()), no_pictures: None, user_limit: None, afk_after: None, slowmode: None }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: GENERAL, name: "Main Chat".into(), topic: Some(" Say hi ".into()), category: Some(" Info ".into()), no_pictures: None, user_limit: None, afk_after: None, slowmode: None, private_roles: None }).await;
     let ServerMsg::ChannelsUpdated { channels } = alice.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { .. })).await else { unreachable!() };
     let general = channels.iter().find(|c| c.id == GENERAL).unwrap();
     assert_eq!((general.name.as_str(), general.topic.as_deref(), general.category.as_deref()), ("main-chat", Some("Say hi"), Some("Info")));
@@ -758,14 +758,14 @@ async fn voice_channels_have_their_own_chat() {
 async fn voice_channels_can_have_a_user_limit_and_one_afk_channel() {
     let mut server = start_server().await;
     let mut alice = FakeClient::connect(&server, "alice").await;
-    server.admin.send(ClientMsg::UpdateChannel { channel: LOBBY, name: "Lobby".into(), topic: None, category: None, no_pictures: None, user_limit: Some(1), afk_after: None, slowmode: None }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: LOBBY, name: "Lobby".into(), topic: None, category: None, no_pictures: None, user_limit: Some(1), afk_after: None, slowmode: None, private_roles: None }).await;
     server.admin.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { channels } if channels.iter().any(|c| c.user_limit == Some(1)))).await;
     server.admin.join_voice(LOBBY).await;
     alice.send(ClientMsg::JoinVoice { channel: LOBBY }).await;
     assert!(alice.error().await.contains("full"));
     // One AFK channel: setting another moves the mark.
-    server.admin.send(ClientMsg::UpdateChannel { channel: LOBBY, name: "Lobby".into(), topic: None, category: None, no_pictures: None, user_limit: None, afk_after: Some(15), slowmode: None }).await;
-    server.admin.send(ClientMsg::UpdateChannel { channel: GAMING, name: "Gaming".into(), topic: None, category: None, no_pictures: None, user_limit: None, afk_after: Some(5), slowmode: None }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: LOBBY, name: "Lobby".into(), topic: None, category: None, no_pictures: None, user_limit: None, afk_after: Some(15), slowmode: None, private_roles: None }).await;
+    server.admin.send(ClientMsg::UpdateChannel { channel: GAMING, name: "Gaming".into(), topic: None, category: None, no_pictures: None, user_limit: None, afk_after: Some(5), slowmode: None, private_roles: None }).await;
     let ServerMsg::ChannelsUpdated { channels } = server.admin.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { channels } if channels.iter().any(|c| c.afk_after == Some(5)))).await else { unreachable!() };
     assert_eq!(channels.iter().filter(|c| c.afk_after.is_some()).count(), 1);
 }

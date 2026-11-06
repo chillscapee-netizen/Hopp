@@ -437,6 +437,16 @@
           <input id="channel-edit-category" maxlength="24" autocomplete="off" list="category-options" placeholder="None">
           <datalist id="category-options"></datalist>
         </label>
+        <div id="channel-edit-private" class="channel-private" hidden>
+          <label class="row setting-row">
+            <span class="row-label">
+              <span class="row-title">Private channel</span>
+              <span class="row-sub">Only the roles you pick (and admins) can see it.</span>
+            </span>
+            <input id="channel-edit-private-on" type="checkbox" class="switch">
+          </label>
+          <div id="channel-edit-private-roles" class="private-roles"></div>
+        </div>
         <label id="channel-edit-slow-row" class="row setting-row" hidden>
           <span class="row-label">
             <span class="row-title">Slowmode</span>
@@ -691,6 +701,7 @@
         <button type="button" class="settings-tab" data-stab="members">Members</button>
         <button type="button" class="settings-tab" data-stab="invites">Invites</button>
         <button type="button" class="settings-tab" data-stab="bans">Bans</button>
+        <button type="button" class="settings-tab" data-stab="roles">Roles</button>
         <button type="button" class="settings-tab" data-stab="audit">Audit log</button>
       </nav>
       <div class="settings-content">
@@ -748,6 +759,43 @@
           <h2>Bans</h2>
           <p class="hint">Banned Hopp IDs can't rejoin, not even with an invite.</p>
           <ul id="ban-list" class="admin-list"></ul>
+        </section>
+        <section data-spanel="roles" hidden>
+          <h2>Roles</h2>
+          <p class="hint">Give people a colour, a place of their own in the member list, and what they may do. Higher roles come first.</p>
+          <div class="roles-layout">
+            <div class="roles-side">
+              <button id="role-new" type="button" class="btn sm">Create role</button>
+              <ul id="role-list" class="role-list"></ul>
+            </div>
+            <form id="role-editor" class="role-editor" hidden>
+              <label class="field">
+                <span class="field-label">Name</span>
+                <input id="role-name" maxlength="32" autocomplete="off">
+              </label>
+              <span class="field-label">Colour</span>
+              <div id="role-colors" class="role-colors"></div>
+              <label class="row setting-row">
+                <span class="row-label">
+                  <span class="row-title">Show separately</span>
+                  <span class="row-sub">People with this role get their own heading in the member list.</span>
+                </span>
+                <input id="role-hoist" type="checkbox" class="switch">
+              </label>
+              <label class="field">
+                <span class="field-label">What they may do</span>
+                <select id="role-level">
+                  <option value="">Just the colour and the place in the list</option>
+                  <option value="mod">Moderate: kick, time out, mute, move, delete messages</option>
+                  <option value="admin">Run the server: also channels, roles, bans, settings</option>
+                </select>
+              </label>
+              <div class="role-editor-foot">
+                <button id="role-delete" type="button" class="btn-link danger-soft">Delete role</button>
+                <button type="submit" class="btn primary sm">Save</button>
+              </div>
+            </form>
+          </div>
         </section>
         <section data-spanel="audit" hidden>
           <h2>Audit log</h2>
@@ -1322,6 +1370,7 @@
       <span id="user-card-avatar-slot"></span>
       <div id="user-card-name" class="user-card-name"></div>
       <div id="user-card-sub" class="user-card-sub"></div>
+      <div id="user-card-roles" class="user-card-roles" hidden></div>
       <div id="user-card-connection" class="user-card-connection" hidden></div>
       <div class="divider"></div>
       <label class="field">

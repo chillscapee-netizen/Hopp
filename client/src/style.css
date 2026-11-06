@@ -3198,3 +3198,30 @@ input[type=range]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top:
 .audit-when { flex: none; color: var(--faint); font-size: 12.5px; }
 #confirm-choice-row { margin-top: 14px; }
 .voice-actions.sound-only { grid-template-columns: 1fr; }
+
+/* ---------- roles ---------- */
+.role-dot { flex: none; display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.user-card-roles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.role-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px; background: var(--hover); border-radius: 999px; color: var(--text-2); font-size: 12.5px; }
+.roles-layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
+.roles-side { display: grid; gap: 10px; }
+.role-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.role-row { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; border-radius: 8px; color: var(--text-2); cursor: pointer; }
+.role-row:hover { background: var(--hover); }
+.role-row.active { background: var(--active); color: var(--text); }
+.role-row-name { flex: 1; min-width: 0; }
+.role-row-count { color: var(--faint); font-size: 12px; }
+.role-move { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; background: none; border: none; border-radius: 6px; color: var(--faint); cursor: pointer; opacity: 0; }
+.role-row:hover .role-move { opacity: 1; }
+.role-move:hover { background: var(--hover); color: var(--text); }
+.role-move .i { width: 14px; height: 14px; transform: rotate(180deg); }
+.role-move.down .i { transform: none; }
+.role-editor { display: grid; gap: 12px; padding: 16px; background: var(--side-2); border-radius: 12px; }
+.role-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+.role-swatch { width: 28px; height: 28px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; }
+.role-swatch.active { border-color: var(--text); }
+.role-swatch.none { background: transparent; box-shadow: inset 0 0 0 2px var(--border-strong); }
+.role-editor-foot { display: flex; justify-content: space-between; align-items: center; }
+.channel-private { display: grid; gap: 6px; margin-bottom: 8px; }
+.private-roles { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 6px; }
+.private-role { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--hover); border-radius: 999px; color: var(--text-2); font-size: 13px; cursor: pointer; }

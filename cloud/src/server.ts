@@ -77,7 +77,10 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[] }
+interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number }
+const MAX_ROLES = 50;
+const ROLE_COLOR = /^#[0-9a-f]{6}$/i;
 const MAX_CATEGORY_LEN = 24;
 const MAX_TOPIC_LEN = 200;
 interface User {
@@ -96,12 +99,14 @@ interface User {
   server_deafened?: boolean;
   /** Timed out until then (ms). */
   timed_out_until?: number;
+  /** The server's own roles they have. */
+  roles?: number[];
 }
 /** Who may do what: the owner names admins, admins name moderators. */
 type Role = "owner" | "admin" | "mod";
 const RANK: Record<string, number> = { owner: 3, admin: 2, mod: 1 };
 const rank = (role: Role | null | undefined) => (role ? RANK[role] : 0);
-interface Member { public_key: string; name: string; role: Role | null; joined_at: number }
+interface Member { public_key: string; name: string; role: Role | null; joined_at: number; roles: number[] }
 interface Reply { id: number; sender_name: string; author_key: string; text: string }
 interface Reaction { emoji: string; keys: string[] }
 interface ChatMessage {
@@ -220,6 +225,8 @@ export class StromServer extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, banned_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS member_roles (key TEXT NOT NULL, role INTEGER NOT NULL, PRIMARY KEY (key, role));
       CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, channel INTEGER NOT NULL, sender INTEGER NOT NULL,
@@ -239,6 +246,7 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("user_limit")) this.sql.exec("ALTER TABLE channels ADD COLUMN user_limit INTEGER");
     if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
     if (!channelColumns.has("slowmode")) this.sql.exec("ALTER TABLE channels ADD COLUMN slowmode INTEGER");
+    if (!channelColumns.has("private_roles")) this.sql.exec("ALTER TABLE channels ADD COLUMN private_roles TEXT");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
@@ -357,7 +365,7 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles FROM channels ORDER BY coalesce(position, id + 100000), id")
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
@@ -367,6 +375,7 @@ export class StromServer extends DurableObject<Env> {
         if (r.user_limit) c.user_limit = Number(r.user_limit);
         if (r.afk_after) c.afk_after = Number(r.afk_after);
         if (r.slowmode) c.slowmode = Number(r.slowmode);
+        if (r.private_roles) c.private_roles = JSON.parse(String(r.private_roles));
         return c;
       });
   }
@@ -386,7 +395,11 @@ export class StromServer extends DurableObject<Env> {
   private roleOf(key: string): Role | null {
     if (this.meta("owner") === key) return "owner";
     const r = this.sql.exec("SELECT role FROM accounts WHERE key = ?", key).toArray()[0]?.role;
-    return r === "admin" || r === "mod" ? r : null;
+    // The server's own roles can carry moderator or admin rights too: the highest counts.
+    const levels = this.sql.exec("SELECT r.level FROM roles r JOIN member_roles m ON m.role = r.id WHERE m.key = ? AND r.level IS NOT NULL", key).toArray().map((x) => String(x.level));
+    if (r === "admin" || levels.includes("admin")) return "admin";
+    if (r === "mod" || levels.includes("mod")) return "mod";
+    return null;
   }
 
   private memberList(): Member[] {
@@ -399,6 +412,7 @@ export class StromServer extends DurableObject<Env> {
         name: String(r.name),
         role: r.key === owner ? "owner" : r.role === "admin" || r.role === "mod" ? (r.role as Role) : null,
         joined_at: Number(r.created_at),
+        roles: this.rolesOf(String(r.key)),
       }));
   }
 
@@ -694,10 +708,12 @@ export class StromServer extends DurableObject<Env> {
     };
     const role = this.roleOf(key);
     if (role) user.role = role;
+    const custom = this.rolesOf(key);
+    if (custom.length) user.roles = custom;
     const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now, joinedAt: now };
     this.broadcast({ type: "user_joined", user });
     ws.serializeAttachment(joined);
-    const channels = this.channels();
+    const channels = this.channelsFor(key);
     this.send(ws, {
       type: "welcome",
       server_name: this.meta("name"),
@@ -709,11 +725,153 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles"],
+      roles: this.customRoles(),
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
     }
+  }
+
+  // ---------- roles and private channels ----------
+
+  /** The server's own roles, highest first. */
+  private customRoles(): RoleInfo[] {
+    return this.sql.exec("SELECT id, name, color, hoist, level, position FROM roles ORDER BY position DESC, id").toArray().map((r) => ({
+      id: Number(r.id),
+      name: String(r.name),
+      color: r.color === null ? null : String(r.color),
+      hoist: !!r.hoist,
+      level: r.level === "admin" || r.level === "mod" ? (r.level as "admin" | "mod") : null,
+      position: Number(r.position),
+    }));
+  }
+
+  private rolesOf(key: string): number[] {
+    return this.sql.exec("SELECT role FROM member_roles WHERE key = ?", key).toArray().map((r) => Number(r.role));
+  }
+
+  /** Whether someone may see a channel: everyone, unless it's private to some roles (admins always). */
+  private canSee(key: string | undefined, ch: Channel | undefined): boolean {
+    if (!ch?.private_roles?.length || !key) return true;
+    if (rank(this.roleOf(key)) >= RANK.admin) return true;
+    const mine = new Set(this.rolesOf(key));
+    return ch.private_roles.some((r) => mine.has(r));
+  }
+
+  private channelsFor(key: string | undefined): Channel[] {
+    return this.channels().filter((c) => this.canSee(key, c));
+  }
+
+  /** Something about a channel's people changed: each person gets the channels they may see (and their history, if asked). */
+  private channelsChanged(withHistory = false) {
+    for (const [ws, s] of this.members()) {
+      const mine = this.channelsFor(s.key);
+      this.send(ws, { type: "channels_updated", channels: mine });
+      if (withHistory) for (const ch of mine) this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
+    }
+  }
+
+  /** Sent only to the people who may see the channel. */
+  private broadcastChannel(channel: number, msg: object, except?: WebSocket) {
+    const ch = this.channels().find((c) => c.id === channel);
+    for (const [ws, s] of this.members()) if (ws !== except && this.canSee(s.key, ch)) this.send(ws, msg);
+  }
+
+  /** Someone's roles changed: their name card follows, everywhere. */
+  private memberRolesChanged(key: string) {
+    const roles = this.rolesOf(key);
+    const role = this.roleOf(key);
+    for (const [ws, s] of this.members().filter(([, m]) => m.key === key)) {
+      // The roles and what they allow, in one update.
+      this.updateUser(ws, s, (u) => {
+        if (roles.length) u.roles = roles;
+        else delete u.roles;
+        u.owner = role === "owner";
+        if (role) u.role = role;
+        else delete u.role;
+      });
+    }
+    this.rolesChanged();
+  }
+
+  /** Role handling: create, change, delete, order, give. Admins only; admin-level roles are the owner's. */
+  private onRoles(ws: WebSocket, s: Session, msg: ClientMsg, owner: boolean, myRank: number): boolean {
+    const user = s.user!;
+    const fail = (text: string) => (this.error(ws, text), true);
+    const level = (v: unknown) => (v === "admin" || v === "mod" ? v : null);
+    const color = (v: unknown) => (typeof v === "string" && ROLE_COLOR.test(v) ? v.toLowerCase() : null);
+    const name = (v: unknown) => String(v ?? "").trim().slice(0, 32);
+    const changed = () => this.broadcast({ type: "roles_updated", roles: this.customRoles() });
+    switch (msg.type) {
+      case "create_role": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        if (this.customRoles().length >= MAX_ROLES) return fail(`A server has at most ${MAX_ROLES} roles.`);
+        const lv = level(msg.level);
+        if (lv === "admin" && !owner) return fail("Only the owner can make admin roles.");
+        const n = name(msg.name) || "new role";
+        const top = Number(this.sql.exec("SELECT max(position) AS p FROM roles").toArray()[0]?.p ?? 0);
+        this.sql.exec("INSERT INTO roles (name, color, hoist, level, position) VALUES (?, ?, ?, ?, ?)", n, color(msg.color), msg.hoist ? 1 : null, lv, top + 1);
+        this.audit(user.name, "create_role", n, null);
+        changed();
+        return true;
+      }
+      case "update_role": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        const role = this.customRoles().find((r) => r.id === Number(msg.id));
+        if (!role) return fail("That role doesn't exist anymore.");
+        const lv = level(msg.level);
+        if ((lv === "admin" || role.level === "admin") && !owner) return fail("Only the owner can change admin roles.");
+        const n = name(msg.name) || role.name;
+        this.sql.exec("UPDATE roles SET name = ?, color = ?, hoist = ?, level = ? WHERE id = ?", n, color(msg.color), msg.hoist ? 1 : null, lv, role.id);
+        this.audit(user.name, "update_role", n, null);
+        changed();
+        // Its level decides what its people may do.
+        this.rolesChanged();
+        return true;
+      }
+      case "delete_role": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        const role = this.customRoles().find((r) => r.id === Number(msg.id));
+        if (!role) return true;
+        if (role.level === "admin" && !owner) return fail("Only the owner can delete admin roles.");
+        const holders = this.sql.exec("SELECT key FROM member_roles WHERE role = ?", role.id).toArray().map((r) => String(r.key));
+        this.sql.exec("DELETE FROM roles WHERE id = ?", role.id);
+        this.sql.exec("DELETE FROM member_roles WHERE role = ?", role.id);
+        this.audit(user.name, "delete_role", role.name, null);
+        changed();
+        for (const k of holders) this.memberRolesChanged(k);
+        this.channelsChanged();
+        return true;
+      }
+      case "reorder_roles": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        const order = Array.isArray(msg.order) ? msg.order.map(Number) : [];
+        const ids = this.customRoles().map((r) => r.id);
+        if (order.length !== ids.length || [...order].sort((a, b) => a - b).join() !== [...ids].sort((a, b) => a - b).join()) return fail("The roles changed meanwhile. Try again.");
+        order.forEach((id: number, i: number) => this.sql.exec("UPDATE roles SET position = ? WHERE id = ?", order.length - i, id));
+        changed();
+        return true;
+      }
+      case "assign_role": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can give roles.");
+        const key = String(msg.public_key ?? "");
+        const role = this.customRoles().find((r) => r.id === Number(msg.role));
+        if (!role) return fail("That role doesn't exist anymore.");
+        if (role.level === "admin" && !owner) return fail("Only the owner can give admin roles.");
+        const target = this.memberList().find((m) => m.public_key === key);
+        if (!target) return fail("They're not a member of this server anymore.");
+        if (key !== s.key && rank(target.role) >= myRank && !owner) return fail("You can't change the roles of someone at your level or above.");
+        if (msg.on) this.sql.exec("INSERT INTO member_roles (key, role) VALUES (?, ?) ON CONFLICT DO NOTHING", key, role.id);
+        else this.sql.exec("DELETE FROM member_roles WHERE key = ? AND role = ?", key, role.id);
+        this.audit(user.name, msg.on ? "give_role" : "take_role", target.name, role.name);
+        this.memberRolesChanged(key);
+        // A role can open private channels: those people get them (with their history).
+        this.channelsChanged(true);
+        return true;
+      }
+    }
+    return false;
   }
 
   private async onMember(ws: WebSocket, s: Session, msg: ClientMsg) {
@@ -732,6 +890,12 @@ export class StromServer extends DurableObject<Env> {
       return false;
     };
 
+    // A private channel someone may not see doesn't exist for them.
+    if (msg.channel !== undefined && msg.type !== "update_channel" && msg.type !== "delete_channel") {
+      const ch = this.channels().find((c) => c.id === Number(msg.channel));
+      if (ch && !this.canSee(s.key, ch)) return this.error(ws, "That channel doesn't exist.");
+    }
+    if (this.onRoles(ws, s, msg, owner, myRank)) return;
     switch (msg.type) {
       case "join_voice": {
         const ch = this.channel(Number(msg.channel));
@@ -871,7 +1035,7 @@ export class StromServer extends DurableObject<Env> {
           author_key: s.key!, text, sent_at: now,
         };
         if (reply) message.reply = reply;
-        this.broadcast({ type: "chat", message });
+        this.broadcastChannel(ch.id, { type: "chat", message });
         // Voice chat is for the people in the channel: no unread marks for everyone else.
         if (ch.kind === "voice") return;
         return this.tellAccounts(message, ch.name);
@@ -886,7 +1050,7 @@ export class StromServer extends DurableObject<Env> {
         if (m.author_key !== s.key) return this.error(ws, "You can only edit your own messages.");
         const at = Date.now();
         this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, id);
-        return this.broadcast({ type: "message_edited", channel, id, text, edited_at: at });
+        return this.broadcastChannel(channel, { type: "message_edited", channel, id, text, edited_at: at });
       }
       case "react": {
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't react right now.");
@@ -908,7 +1072,7 @@ export class StromServer extends DurableObject<Env> {
           reactions.push({ emoji, keys: [s.key!] });
         }
         this.sql.exec("UPDATE messages SET reactions = ? WHERE id = ?", reactions.length ? JSON.stringify(reactions) : null, id);
-        return this.broadcast({ type: "reactions", channel, id, reactions });
+        return this.broadcastChannel(channel, { type: "reactions", channel, id, reactions });
       }
       case "pin": {
         if (!allowed("mod")) return;
@@ -916,7 +1080,7 @@ export class StromServer extends DurableObject<Env> {
         const id = Number(msg.id);
         if (!this.message(channel, id)) return this.error(ws, "That message no longer exists.");
         this.sql.exec("UPDATE messages SET pinned = ? WHERE id = ?", msg.on ? 1 : null, id);
-        return this.broadcast({ type: "pinned", channel, id, on: !!msg.on });
+        return this.broadcastChannel(channel, { type: "pinned", channel, id, on: !!msg.on });
       }
       case "get_pins": {
         const channel = Number(msg.channel);
@@ -936,7 +1100,8 @@ export class StromServer extends DurableObject<Env> {
         const messages = this.sql
           .exec("SELECT * FROM messages WHERE text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?", pattern, SEARCH_RESULTS)
           .toArray()
-          .map(rowToMessage);
+          .map(rowToMessage)
+          .filter((m) => this.canSee(s.key, this.channels().find((c) => c.id === m.channel)));
         return this.send(ws, { type: "search_results", query, messages });
       }
       case "load_older": {
@@ -972,14 +1137,14 @@ export class StromServer extends DurableObject<Env> {
         }
         this.dropPicture(id);
         this.sql.exec("DELETE FROM messages WHERE id = ?", id);
-        return this.broadcast({ type: "message_deleted", channel, id });
+        return this.broadcastChannel(channel, { type: "message_deleted", channel, id });
       }
       case "typing": {
         const now = Date.now();
         if (now - (s.lastTyping ?? 0) < TYPING_INTERVAL_MS) return;
         s.lastTyping = now;
         ws.serializeAttachment(s);
-        return this.broadcast({ type: "typing", channel: Number(msg.channel), session_id: user.session_id }, ws);
+        return this.broadcastChannel(Number(msg.channel), { type: "typing", channel: Number(msg.channel), session_id: user.session_id }, ws);
       }
       case "create_channel": {
         if (!allowed("admin")) return;
@@ -989,7 +1154,7 @@ export class StromServer extends DurableObject<Env> {
         if (this.channels().length >= MAX_CHANNELS) return this.error(ws, `A server can have at most ${MAX_CHANNELS} channels.`);
         this.sql.exec("INSERT INTO channels (name, kind) VALUES (?, ?)", name, kind);
         this.audit(user.name, "create_channel", name, null);
-        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+        return this.channelsChanged();
       }
       case "update_channel": {
         if (!allowed("admin")) return;
@@ -1008,6 +1173,15 @@ export class StromServer extends DurableObject<Env> {
           const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
           this.sql.exec("UPDATE channels SET user_limit = ? WHERE id = ?", limit || null, ch.id);
         }
+        if (msg.private_roles != null) {
+          const known = new Set(this.customRoles().map((r) => r.id));
+          const roles = (Array.isArray(msg.private_roles) ? msg.private_roles : []).map(Number).filter((r: number) => known.has(r));
+          this.sql.exec("UPDATE channels SET private_roles = ? WHERE id = ?", roles.length ? JSON.stringify(roles) : null, ch.id);
+          // Who sees it changed: everyone gets their list, and newcomers its history.
+          this.audit(user.name, "update_channel", name, roles.length ? "private" : "public");
+          this.channelsChanged(true);
+          return;
+        }
         if (msg.slowmode != null) {
           const allowedSteps = [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600];
           const seconds = allowedSteps.reduce((best, x) => (Math.abs(x - Number(msg.slowmode)) < Math.abs(best - Number(msg.slowmode)) ? x : best), 0);
@@ -1019,7 +1193,7 @@ export class StromServer extends DurableObject<Env> {
           if (minutes) this.sql.exec("UPDATE channels SET afk_after = NULL");
           this.sql.exec("UPDATE channels SET afk_after = ? WHERE id = ?", minutes || null, ch.id);
         }
-        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+        return this.channelsChanged();
       }
       case "reorder_channels": {
         if (!allowed("admin")) return;
@@ -1029,7 +1203,7 @@ export class StromServer extends DurableObject<Env> {
           return this.error(ws, "The channels changed meanwhile. Try again.");
         }
         order.forEach((id: number, i: number) => this.sql.exec("UPDATE channels SET position = ? WHERE id = ?", i, id));
-        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+        return this.channelsChanged();
       }
       case "delete_channel": {
         if (!allowed("admin")) return;
@@ -1042,7 +1216,7 @@ export class StromServer extends DurableObject<Env> {
         for (const [mws, m] of this.members()) {
           if (m.user!.voice_channel === id) this.updateUser(mws, m, (u) => (u.voice_channel = null));
         }
-        return this.broadcast({ type: "channels_updated", channels: this.channels() });
+        return this.channelsChanged();
       }
       case "kick":
       case "ban": {
@@ -1068,7 +1242,7 @@ export class StromServer extends DurableObject<Env> {
             for (const r of rows) {
               this.dropPicture(Number(r.id));
               this.sql.exec("DELETE FROM messages WHERE id = ?", Number(r.id));
-              this.broadcast({ type: "message_deleted", channel: Number(r.channel), id: Number(r.id) });
+              this.broadcastChannel(Number(r.channel), { type: "message_deleted", channel: Number(r.channel), id: Number(r.id) });
             }
             removed = rows.length;
           }
