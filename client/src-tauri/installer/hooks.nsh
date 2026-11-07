@@ -4,49 +4,41 @@
 !define MUI_FINISHPAGE_TITLE "Hopp is ready"
 !define MUI_FINISHPAGE_TEXT "Hopp is installed and can be found in the Start menu.$\r$\n$\r$\nGot an invite link from a friend? Open it after starting Hopp and you'll land right in their server.$\r$\n$\r$\nHave fun!"
 
-; Hopp keeps running by the clock when its window is closed, so Windows' polite
-; "please close" doesn't reach it. Before installing or uninstalling, Hopp is closed
-; outright (with its windows), and the installer waits until it has really gone:
-; a process still shutting down would otherwise look like one that can't be closed.
+; Hopp keeps running by the clock when its window is closed, so it has to be closed before
+; installing over it. This is done with the installer's own plugin (it looks for Hopp among
+; this user's programs and closes only that), never by starting command prompts or
+; taskkill: those look like what harmful programs do, and antivirus flags installers for it.
+; Results from the plugin: 0 means found / closed.
 !macro HOPP_CLOSE_RUNNING
   !define HoppID ${__LINE__}
-  nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
-  Pop $0
   StrCpy $1 0
-  hopp_wait_${HoppID}:
-    ; "find" succeeds (0) while it's still in the process list.
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${MAINBINARYNAME}.exe" /NH | find /I "${MAINBINARYNAME}.exe"'
+  hopp_look_${HoppID}:
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
     Pop $0
-    Pop $2
     StrCmp $0 "0" 0 hopp_gone_${HoppID}
+    nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
+    Pop $0
     IntOp $1 $1 + 1
-    ; Up to 40 checks, 200 ms apart (8 seconds).
+    ; Up to 40 tries, 200 ms apart (8 seconds).
     IntCmp $1 40 hopp_gone_${HoppID} 0 hopp_gone_${HoppID}
     Sleep 200
-    Goto hopp_wait_${HoppID}
+    Goto hopp_look_${HoppID}
   hopp_gone_${HoppID}:
   Sleep 300
   !undef HoppID
 !macroend
 
 ; Tauri's own check asks Windows what has Hopp's file open, and gives up if any of it
-; can't be closed. But antivirus (McAfee, Norton…) keeps the file open to scan it and
-; can't be closed, so updates failed with "Failed to kill Hopp". This check looks for
-; Hopp itself only: closes it if it's there, and asks for help if it won't go.
+; can't be closed. But antivirus keeps the file open to scan it and can't be closed, so
+; updates failed with "Failed to kill Hopp". This check looks for Hopp itself only:
+; closes it if it's there, and asks for help if it won't go.
 !macroundef CheckIfAppIsRunning
 !macro CheckIfAppIsRunning executablePath productName
   !define HoppCheck ${__LINE__}
   hopp_check_${HoppCheck}:
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${MAINBINARYNAME}.exe" /NH | find /I "${MAINBINARYNAME}.exe"'
+    !insertmacro HOPP_CLOSE_RUNNING
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
     Pop $0
-    Pop $2
-    StrCmp $0 "0" 0 hopp_check_done_${HoppCheck}
-    nsExec::Exec 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
-    Pop $0
-    Sleep 1500
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${MAINBINARYNAME}.exe" /NH | find /I "${MAINBINARYNAME}.exe"'
-    Pop $0
-    Pop $2
     StrCmp $0 "0" 0 hopp_check_done_${HoppCheck}
     IfSilent hopp_check_abort_${HoppCheck}
     MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${productName} is still running and couldn't be closed.$\r$\n$\r$\nRight-click the Hopp icon by the clock and choose Quit, then press Retry." IDRETRY hopp_check_${HoppCheck}
