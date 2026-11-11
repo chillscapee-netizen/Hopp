@@ -3687,8 +3687,8 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 /* ---------- sharper, and backgrounds that flow ----------
    Whiter text on slightly deeper greys. The window goes from dark to light in three calm
    steps, left to right: the server list and the top (deepest), the channel list, then the
-   conversation (lightest). No lines between them: the steps themselves do the dividing, and
-   a colour theme keeps fading underneath all of it. */
+   conversation (lightest), with the thin lines between them as before. A colour theme keeps
+   fading underneath all of it. */
 :root {
   --text: #fafafc;
   --text-2: #e8e8ec;
@@ -3701,8 +3701,9 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 }
 .msg-text { color: var(--text); }
 .shell { background: linear-gradient(var(--rail-shade), var(--rail-shade)), var(--app-bg, var(--app-solid)); }
-.frame { border: none; border-top-left-radius: 14px; background: var(--app-bg, var(--app-solid)) fixed; }
-.channel-view, .home-view, .news-view { border-left: none; border-top-left-radius: 14px; }
+/* The thin line that holds the server together stays: around the content, and between the
+   channel list and the conversation. */
+.frame { background: var(--app-bg, var(--app-solid)) fixed; }
 .status-dot, .rail-badge, .rail-voice { border-color: var(--app-solid); }
 
 /* Friends who wrote, under the Hopp button. */
@@ -3714,3 +3715,6 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .dm-peek.fresh { animation: folder-in 220ms ease-out; }
 .dm-peek::before { display: none; }
 @media (prefers-reduced-motion: reduce) { .dm-peek.fresh { animation: none; } }
+
+/* A thin line under the top row: the server's name on the left, the channel's on the right. */
+.sidebar-head, .main-head { border-bottom: 1px solid var(--line); }
