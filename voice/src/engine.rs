@@ -85,7 +85,7 @@ pub enum EngineEvent {
     SpeakingWhileMuted,
     /// Peer-to-peer voice, once a second: how the connection to someone is. The loss is the
     /// worse direction, in percent; the round trip comes once it's measured.
-    PeerQuality { session_id: SessionId, rtt_ms: Option<u32>, loss: u8 },
+    PeerQuality { session_id: SessionId, rtt_ms: Option<u32>, loss: u8, relayed: bool },
     /// A device was unplugged, failed, or the system default changed while we follow it.
     /// Reopen the devices (`set_devices` with the same choice) to carry on.
     DevicesChanged,
@@ -1020,8 +1020,8 @@ impl Encoder {
             if let Route::Mesh(m) = &self.net.route {
                 if adapted.elapsed() >= ADAPT_EVERY {
                     adapted = Instant::now();
-                    for (session_id, rtt_ms, loss) in m.quality() {
-                        let _ = self.events.send(EngineEvent::PeerQuality { session_id, rtt_ms, loss });
+                    for (session_id, rtt_ms, loss, relayed) in m.quality() {
+                        let _ = self.events.send(EngineEvent::PeerQuality { session_id, rtt_ms, loss, relayed });
                     }
                     let loss = m.worst_loss();
                     let next = voice_policy(loss);
@@ -1180,7 +1180,7 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
         let packet = if relayed { &inner[..] } else { packet };
         // Peer to peer: only sealed packets from people in our channel count.
         let Some((kind, sender, payload)) = mesh::open(&mesh.cipher, packet) else { continue };
-        if !mesh.heard(sender, from, relayed) {
+        if !mesh.heard_as(sender, from, relayed, kind != mesh::KIND_PING) {
             continue;
         }
         match kind {

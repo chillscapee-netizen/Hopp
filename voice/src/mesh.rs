@@ -314,6 +314,8 @@ struct Link {
     last_direct: Option<Instant>,
     last_heard: Option<Instant>,
     last_ping: Option<Instant>,
+    /// While voice goes through the relay: when the direct addresses were last tried again.
+    last_direct_try: Option<Instant>,
     rtt_ms: Option<u32>,
     /// Since when we've been without a path.
     searching_since: Instant,
@@ -355,6 +357,9 @@ pub struct Mesh {
 
 /// After this long without a direct path, probes go through our relay too.
 const RELAY_PROBE_AFTER: Duration = Duration::from_secs(2);
+/// On the relay, the direct addresses are tried again this often: the relay is a detour, and
+/// a direct path often opens a little later (both sides' routers need a moment).
+const DIRECT_RETRY: Duration = Duration::from_secs(3);
 /// A direct path heard from this recently wins over the relay.
 const DIRECT_PREFERRED_FOR: Duration = Duration::from_millis(1500);
 
@@ -457,6 +462,7 @@ impl Mesh {
             last_direct: None,
             last_heard: None,
             last_ping: None,
+            last_direct_try: None,
             rtt_ms: None,
             searching_since: Instant::now(),
             reported: None,
@@ -525,14 +531,14 @@ impl Mesh {
 
     /// How the connection to each reachable peer is: round trip, and the worse of how much of
     /// their voice reaches us and how much of ours reaches them (percent lost).
-    pub fn quality(&self) -> Vec<(SessionId, Option<u32>, u8)> {
+    pub fn quality(&self) -> Vec<(SessionId, Option<u32>, u8, bool)> {
         let links = self.links.lock().unwrap();
         links
             .iter()
             .filter(|(_, l)| l.path.is_some())
             .map(|(&id, l)| {
                 let out = l.loss_out.filter(|(_, at)| at.elapsed() < LOSS_REPORT_FRESH).map(|(loss, _)| loss);
-                (id, l.rtt_ms, l.loss_in.current().unwrap_or(0).max(out.unwrap_or(0)))
+                (id, l.rtt_ms, l.loss_in.current().unwrap_or(0).max(out.unwrap_or(0)), l.relayed)
             })
             .collect()
     }
@@ -592,6 +598,10 @@ impl Mesh {
                     out.push((path, link.relayed));
                     if reprobing {
                         out.extend(link.candidates.iter().filter(|&&c| c != path || link.relayed).map(|&c| (c, false)));
+                    } else if link.relayed && !link.last_direct_try.is_some_and(|t| now - t < DIRECT_RETRY) {
+                        // Still on the detour: knock on the direct doors again.
+                        link.last_direct_try = Some(now);
+                        out.extend(link.candidates.iter().map(|&c| (c, false)));
                     }
                 }
                 None => {
@@ -607,10 +617,20 @@ impl Mesh {
 
     /// Records a genuine packet from `id` arriving from `from`. False if `id` isn't in our channel.
     pub fn heard(&self, id: SessionId, from: SocketAddr, relayed: bool) -> bool {
+        self.heard_as(id, from, relayed, true)
+    }
+
+    /// Like `heard`. A bare question (`proof` false: a ping, which only shows they can reach
+    /// us) doesn't move voice off a working relay: that takes an answer to our own ping, or
+    /// their voice, which show the direct way works in both directions.
+    pub fn heard_as(&self, id: SessionId, from: SocketAddr, relayed: bool, proof: bool) -> bool {
         let from = canonical(from);
         let now = Instant::now();
         let mut links = self.links.lock().unwrap();
         let Some(link) = links.get_mut(&id) else { return false };
+        if !proof && !relayed && link.relayed && link.path.is_some() {
+            return true;
+        }
         // A live direct path stays, even when the relay delivers too.
         if relayed && !link.relayed && link.path.is_some() && link.last_direct.is_some_and(|t| now - t < DIRECT_PREFERRED_FOR) {
             link.last_heard = Some(now);
@@ -728,8 +748,8 @@ pub(crate) mod tests {
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)], "not yet known to understand repeats");
         a.ping_heard(2, &ping);
         assert_eq!(a.worst_loss(), 24, "half lost, and the first window moves halfway");
-        assert_eq!(a.quality(), vec![(2, None, 24)], "the connection shows the loss either way");
-        assert_eq!(b.quality(), vec![(1, None, 24)]);
+        assert_eq!(a.quality(), vec![(2, None, 24, false)], "the connection shows the loss either way");
+        assert_eq!(b.quality(), vec![(1, None, 24, false)]);
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, true)]);
         // An old-style ping (the nonce alone) is understood as before and teaches nothing.
         let c = Mesh::new(3, &[1; 32]);
@@ -931,5 +951,25 @@ mod network_tests {
         assert_eq!(mesh.paths(), vec![(direct, false, false)]);
         assert!(mesh.heard(1, via_relay, true));
         assert_eq!(mesh.paths(), vec![(direct, false, false)]);
+    }
+
+    #[test]
+    fn the_relay_is_a_detour_that_keeps_looking_for_the_direct_way() {
+        let mesh = Mesh::new(2, &[7; 32]);
+        mesh.set_peer(&PeerEndpoint { session_id: 1, public: Some("203.0.113.5:4000".into()), local: vec![] });
+        let direct: SocketAddr = "203.0.113.5:4000".parse().unwrap();
+        let via_relay: SocketAddr = "203.0.113.5:4001".parse().unwrap();
+        assert!(mesh.heard(1, via_relay, true));
+        // On the relay, the direct address is tried again alongside the keepalive.
+        mesh.links.lock().unwrap().get_mut(&1).unwrap().last_ping = None;
+        let due = mesh.due_pings();
+        assert!(due.contains(&(via_relay, true)) && due.contains(&(direct, false)), "{due:?}");
+        // Their ping arriving directly isn't proof it works both ways: voice stays on the relay.
+        assert!(mesh.heard_as(1, direct, false, false));
+        assert_eq!(mesh.paths(), vec![(via_relay, true, false)]);
+        // Their answer to our direct ping is: voice moves to the direct path.
+        assert!(mesh.heard_as(1, direct, false, true));
+        assert_eq!(mesh.paths(), vec![(direct, false, false)]);
+        assert_eq!(mesh.quality(), vec![(1, None, 0, false)]);
     }
 }

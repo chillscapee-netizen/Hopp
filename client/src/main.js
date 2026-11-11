@@ -1950,7 +1950,9 @@ listen("voice", (e) => {
     useRelay();
   } else if (ev.type === "peer_quality") {
     const before = connectionGrade(state.quality.get(ev.session_id));
-    state.quality.set(ev.session_id, { rtt: ev.rtt_ms, loss: ev.loss });
+    const wasRelayed = [...state.quality.values()].some((q) => q.relayed);
+    state.quality.set(ev.session_id, { rtt: ev.rtt_ms, loss: ev.loss, relayed: !!ev.relayed });
+    if (wasRelayed !== [...state.quality.values()].some((q) => q.relayed)) renderVoicePanel();
     // Only a change you'd see redraws: the bars appear, change colour, or go.
     if (connectionGrade(state.quality.get(ev.session_id)) !== before) renderSidebar();
     if (cardUser?.session_id === ev.session_id && !$("user-card").hidden) syncUserCard();
@@ -2071,7 +2073,46 @@ listen("bans", (e) => renderBanList(e.payload));
 listen("members", (e) => {
   state.members = e.payload ?? [];
   renderMemberList();
+  if (online()) renderMembers();
 });
+
+/**
+ * Everyone in the server, also those who aren't here right now, for "Offline" in the member
+ * list: asked once per visit, and again when someone new turns up.
+ */
+var membersAsked = { server: null, at: 0 };
+function wantMembers() {
+  if (!connected() || !state.roster.features?.includes("members")) return;
+  const fresh = membersAsked.server !== state.activeId;
+  if (fresh) state.members = [];
+  const known = new Set(state.members.map((m) => m.public_key));
+  const stranger = state.members.length > 0 && state.roster.users.some((u) => u.public_key && !known.has(u.public_key));
+  if (!fresh && !(stranger && Date.now() - membersAsked.at > 5000)) return;
+  membersAsked = { server: state.activeId, at: Date.now() };
+  invoke("get_members").catch(() => {});
+}
+
+/** How many offline people the list draws at most (the rest are counted). */
+var OFFLINE_SHOWN = 150;
+function offlineRows(onlineKeys) {
+  if (membersAsked.server !== state.activeId) return [];
+  const away = state.members.filter((m) => !onlineKeys.has(m.public_key));
+  if (!away.length) return [];
+  const rows = [el("li", "member-group", "Offline — " + away.length)];
+  away.slice(0, OFFLINE_SHOWN).forEach((m, i) => {
+    const row = el("li", "member offline");
+    row.dataset.key = m.public_key;
+    row.append(avatar(m.name, "", "offline", pictureFor(m.public_key)));
+    const line = el("span", "name-line");
+    line.append(el("span", "member-name ellipsis", m.name));
+    row.append(line);
+    // Their profile opens like anyone's; they just aren't here to be moved or muted.
+    row.addEventListener("click", () => openUserCard({ session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: true }, row));
+    rows.push(row);
+  });
+  if (away.length > OFFLINE_SHOWN) rows.push(el("li", "member-more", "and " + (away.length - OFFLINE_SHOWN) + " more"));
+  return rows;
+}
 
 listen("disconnected", () => {
   const server = activeServer();
@@ -2551,7 +2592,9 @@ function renderVoicePanel() {
     ? latency ? `Direct to the others, slowest round trip ${latency}` : alone ? "Voice goes straight to the others when they join" : "Connecting to the others…"
     : latency ? `Latency to the server: ${latency}` : "Measuring latency…";
   const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
-  $("voice-where").textContent = latency ? `${where} · ${latency}` : where;
+  // Through the relay is a detour (a little slower); Hopp keeps trying the direct way meanwhile.
+  const detour = [...state.quality.values()].some((q) => q.relayed) ? " · relay" : "";
+  $("voice-where").textContent = latency ? `${where} · ${latency}${detour}` : where;
   // The soundboard works anywhere; camera and screen need a server that passes video handshakes.
   $("voice-actions").hidden = false;
   $("cam-btn").hidden = !canShare();
@@ -2666,9 +2709,12 @@ function renderMembers() {
     items.push(el("li", "member-group", `${label} — ${list.length}`));
     items.push(...list.map((u) => userRow(u, "member", "")));
   }
-  if (users.length === 1) {
+  wantMembers();
+  const offline = offlineRows(new Set(users.map((u) => keyOf(u)).filter(Boolean)));
+  if (users.length === 1 && !offline.length) {
     items.push(emptyCta("It's just you here", "Invite friends to chat and talk.", "Invite people", openInvite));
   }
+  items.push(...offline);
   $("member-list").replaceChildren(...items);
 }
 
@@ -8184,7 +8230,7 @@ function connectionGrade(q) {
 /** The connection in words, for a tooltip or the profile card. */
 function connectionText(q) {
   const grade = connectionGrade(q);
-  const parts = [q.rtt != null ? q.rtt + " ms" : null, q.loss > 0 ? q.loss + "% lost" : null].filter(Boolean);
+  const parts = [q.rtt != null ? q.rtt + " ms" : null, q.loss > 0 ? q.loss + "% lost" : null, q.relayed ? "through the relay" : null].filter(Boolean);
   const word = grade === "good" ? "Good connection" : grade === "fair" ? "Okay connection" : "Weak connection";
   return parts.length ? word + ": " + parts.join(", ") : word;
 }

@@ -427,8 +427,15 @@ export class StromServer extends DurableObject<Env> {
 
   private memberList(): Member[] {
     const owner = this.meta("owner");
+    // Everyone's roles in one read, not one per member.
+    const roles = new Map<string, number[]>();
+    for (const r of this.sql.exec("SELECT key, role FROM member_roles")) {
+      const list = roles.get(String(r.key)) ?? [];
+      list.push(Number(r.role));
+      roles.set(String(r.key), list);
+    }
     return this.sql
-      .exec("SELECT key, name, nick, role, created_at FROM accounts ORDER BY lower(coalesce(nick, name))")
+      .exec("SELECT key, name, nick, role, created_at FROM accounts WHERE key NOT IN (SELECT key FROM bans) ORDER BY lower(coalesce(nick, name)) LIMIT 1000")
       .toArray()
       .map((r) => ({
         public_key: String(r.key),
@@ -437,7 +444,7 @@ export class StromServer extends DurableObject<Env> {
         account_name: String(r.name),
         role: r.key === owner ? "owner" : r.role === "admin" || r.role === "mod" ? (r.role as Role) : null,
         joined_at: Number(r.created_at),
-        roles: this.rolesOf(String(r.key)),
+        roles: roles.get(String(r.key)) ?? [],
       }));
   }
 
@@ -805,7 +812,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members"],
       roles: this.customRoles(),
     });
     for (const ch of channels) {
@@ -1539,7 +1546,7 @@ export class StromServer extends DurableObject<Env> {
         this.send(ws, { type: "members", members: this.memberList() });
         return this.send(ws, { type: "bans", bans: this.bans() });
       case "get_members":
-        if (!allowed("admin")) return;
+        // Who's a member is no secret among members: it's how people who are offline show in the list.
         return this.send(ws, { type: "members", members: this.memberList() });
       case "set_role": {
         if (!allowed("admin")) return;

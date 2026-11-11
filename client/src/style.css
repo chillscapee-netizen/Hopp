@@ -3745,3 +3745,8 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .sound-log time { flex: none; width: 44px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .sound-log .why { flex: 1; min-width: 0; color: var(--text-2); }
 .sound-log .empty { color: var(--muted); }
+
+/* People who aren't here right now: in the list, a step back. */
+.member.offline { opacity: 0.5; }
+.member.offline:hover { opacity: 1; }
+.member-more { padding: 6px 8px 10px; color: var(--faint); font-size: 12.5px; }
