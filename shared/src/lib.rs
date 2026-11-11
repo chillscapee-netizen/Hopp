@@ -390,14 +390,23 @@ pub enum ClientMsg {
     MoveVoice { session_id: SessionId, channel: ChannelId },
     /// Moderators: mutes or deafens someone for everyone (until a moderator undoes it).
     ServerMute { session_id: SessionId, muted: bool, deafened: bool },
-    /// Owner only: disconnects someone.
-    Kick { session_id: SessionId },
+    /// Takes someone out of the server: by their session when they're here, or by Hopp ID
+    /// (`public_key`) when they aren't.
+    Kick {
+        #[serde(default)]
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        public_key: Option<String>,
+    },
     /// Owner only: disconnects someone and refuses their Hopp-ID from now on.
     /// `delete_hours`: also delete what they wrote in the last so many hours.
     Ban {
+        #[serde(default)]
         session_id: SessionId,
         #[serde(default)]
         delete_hours: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        public_key: Option<String>,
     },
     /// Moderators, on servers whose welcome lists "mod-tools": time someone out for so many
     /// minutes (0 lifts it). They can read, but not write, react or be in voice.

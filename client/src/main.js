@@ -205,15 +205,6 @@ function avatar(name, size, dot, picture) {
   return a;
 }
 
-/** A friendly placeholder for an empty list, with one obvious next step. */
-function emptyCta(title, text, action, onClick) {
-  const box = el("div", "empty-cta");
-  const btn = el("button", "btn sm primary", action);
-  btn.addEventListener("click", onClick);
-  box.append(el("strong", "", title), el("span", "", text), btn);
-  return box;
-}
-
 /** A server's picture, or its initials on a tinted square when it has none. */
 function serverIcon(className, name, picture) {
   const chip = el("span", className);
@@ -2107,7 +2098,18 @@ function offlineRows(onlineKeys) {
     line.append(el("span", "member-name ellipsis", m.name));
     row.append(line);
     // Their profile opens like anyone's; they just aren't here to be moved or muted.
-    row.addEventListener("click", () => openUserCard({ session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: true }, row));
+    const person = { session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: true };
+    row.addEventListener("click", () => openUserCard(person, row));
+    // Right-click: their profile, and for moderators taking them out of the server.
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const items = [{ label: "Profile", icon: "user", action: () => openUserCard(person, row) }];
+      if (can("moderate") && rankOf(me()) > rankOf(person)) {
+        items.push("sep", { label: "Kick " + m.name, icon: "logout", danger: true, action: () => removeUser(false, person) });
+        if (can("manage")) items.push({ label: "Ban " + m.name, icon: "ban", danger: true, action: () => removeUser(true, person) });
+      }
+      openMenu(items, e.clientX, e.clientY);
+    });
     rows.push(row);
   });
   if (away.length > OFFLINE_SHOWN) rows.push(el("li", "member-more", "and " + (away.length - OFFLINE_SHOWN) + " more"));
@@ -2134,13 +2136,14 @@ listen("disconnected", () => {
     startReconnect(server, voice);
     return;
   }
+  if (server && state.kicked) removeServer(server);
   state.atHome = false;
   const text = state.replaced
     ? "You connected to this server from another device, so this one was signed out."
     : state.kicked
-    ? state.kicked.banned ? "You were banned from this server." : "You were kicked from this server. You can rejoin."
+    ? state.kicked.banned ? "You were banned from this server." : "You were kicked from this server. You need a new invite to come back."
     : "Lost the connection to the server.";
-  state.notice = { kind: "error", server: state.kicked?.banned ? null : server, text: server ? `${server.label}: ${text}` : text };
+  state.notice = { kind: "error", server: state.kicked ? null : server, text: server ? `${server.label}: ${text}` : text };
   state.kicked = null;
   state.replaced = false;
   renderAll();
@@ -2711,9 +2714,6 @@ function renderMembers() {
   }
   wantMembers();
   const offline = offlineRows(new Set(users.map((u) => keyOf(u)).filter(Boolean)));
-  if (users.length === 1 && !offline.length) {
-    items.push(emptyCta("It's just you here", "Invite friends to chat and talk.", "Invite people", openInvite));
-  }
   items.push(...offline);
   $("member-list").replaceChildren(...items);
 }
@@ -4637,8 +4637,7 @@ function setUserVolume(vol) {
   renderMembers();
 }
 
-async function removeUser(ban) {
-  const user = cardUser;
+async function removeUser(ban, user = cardUser) {
   closePopovers();
   const history = ban && modTools();
   const ok = await confirmDialog(
@@ -4649,9 +4648,11 @@ async function removeUser(ban) {
           ok: "Ban",
           choice: history ? { label: "Delete their messages", options: [["0", "Don't delete any"], ["1", "From the last hour"], ["24", "From the last 24 hours"], ["168", "From the last 7 days"]] } : null,
         }
-      : { title: `Kick ${user.name}`, text: `${user.name} is disconnected right away. As a member they can rejoin later.`, ok: "Kick" },
+      : { title: `Kick ${user.name}`, text: `${user.name} is taken out of the server right away. They need a new invite to come back.`, ok: "Kick" },
   );
-  if (ok) call("kick", { sessionId: user.session_id, ban, deleteHours: history ? Number(confirmDialog.choice) : null });
+  // Someone who isn't here right now is removed by their Hopp ID.
+  const away = user.offline || !(user.session_id > 0);
+  if (ok) call("kick", { sessionId: away ? 0 : user.session_id, publicKey: away ? user.public_key : null, ban, deleteHours: history ? Number(confirmDialog.choice) : null });
 }
 
 $("user-role").addEventListener("change", (e) => {
@@ -8635,6 +8636,14 @@ function renderMemberList() {
         actions.append(roleSelect(target, (role) => setRole(m, role)));
       } else {
         actions.append(el("span", `role-label ${m.role ?? "member"}`, m.role ? ROLE_LABEL[m.role] : "Member"));
+      }
+      if (can("moderate") && m.public_key !== state.account?.publicKey && rankOf(me()) > (ROLE_RANK[m.role] ?? 0)) {
+        const kick = el("button", "icon-btn", "");
+        kick.type = "button";
+        kick.setAttribute("aria-label", `Kick ${m.name}`);
+        kick.append(icon("logout"));
+        kick.addEventListener("click", () => removeUser(false, { name: m.name, public_key: m.public_key, session_id: 0, offline: true }));
+        actions.append(kick);
       }
       if (isOwner() && m.role !== "owner") {
         const give = el("button", "icon-btn", "");

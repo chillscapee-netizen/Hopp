@@ -1166,8 +1166,8 @@ fn typing(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
 }
 
 #[tauri::command]
-fn kick(state: State<'_, AppState>, session_id: SessionId, ban: bool, delete_hours: Option<u32>) -> CmdResult {
-    let msg = if ban { ClientMsg::Ban { session_id, delete_hours: delete_hours.unwrap_or(0) } } else { ClientMsg::Kick { session_id } };
+fn kick(state: State<'_, AppState>, session_id: SessionId, public_key: Option<String>, ban: bool, delete_hours: Option<u32>) -> CmdResult {
+    let msg = if ban { ClientMsg::Ban { session_id, delete_hours: delete_hours.unwrap_or(0), public_key } } else { ClientMsg::Kick { session_id, public_key } };
     with_conn(&state, |c| c.control.send(msg))
 }
 

@@ -372,7 +372,16 @@ test("kick, ban and unban", async () => {
   owner.send({ type: "kick", session_id: bob.id });
   assert.deepEqual(await bob.waitFor((m) => m.type === "kicked"), { type: "kicked", banned: false });
   await carol.waitFor((m) => m.type === "user_left" && m.session_id === bob.id);
-  (await join(id, "bob", { key: bobKey })).close();
+  // A kick ends the membership: coming back takes an invite again.
+  assert.match(await loginError(id, "bob", { key: bobKey }), /invite/);
+  const back = await join(id, "bob", { key: bobKey, invite });
+  // Someone who isn't here right now can be kicked too, by Hopp ID.
+  back.close();
+  await sleep(100);
+  owner.send({ type: "kick", public_key: bobKey.pub });
+  const after = await owner.waitFor((m) => m.type === "members" && !m.members.some((x) => x.public_key === bobKey.pub));
+  assert.ok(after.members.some((x) => x.public_key === carolKey.pub));
+  assert.match(await loginError(id, "bob", { key: bobKey }), /invite/);
 
   owner.send({ type: "ban", session_id: carol.id });
   assert.deepEqual(await carol.waitFor((m) => m.type === "kicked"), { type: "kicked", banned: true });
@@ -381,7 +390,7 @@ test("kick, ban and unban", async () => {
 
   owner.send({ type: "unban", public_key: carolKey.pub });
   await owner.waitFor((m) => m.type === "bans" && m.bans.length === 0);
-  (await join(id, "carol", { key: carolKey })).close();
+  (await join(id, "carol", { key: carolKey, invite })).close();
   owner.close();
 });
 

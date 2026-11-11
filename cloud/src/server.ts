@@ -1382,23 +1382,23 @@ export class StromServer extends DurableObject<Env> {
       case "ban": {
         const banned = msg.type === "ban";
         if (!allowed(banned ? "admin" : "mod")) return;
-        const target = Number(msg.session_id);
-        if (target === user.session_id) return this.error(ws, "You can't remove yourself.");
-        const victim = this.members().find(([, m]) => m.user!.session_id === target);
-        if (!victim) return this.error(ws, "That person isn't connected anymore.");
-        const [vws, vs] = victim;
-        if (rank(this.roleOf(vs.key!)) >= myRank) return this.error(ws, `You can't ${banned ? "ban" : "kick"} someone with the same role as you or higher.`);
+        // Someone who's here (by their session), or a member who isn't right now (by Hopp ID).
+        const byKey = typeof msg.public_key === "string" && /^[0-9a-f]{64}$/.test(msg.public_key) ? msg.public_key : null;
+        const here = byKey ? this.members().find(([, m]) => m.key === byKey) : this.members().find(([, m]) => m.user!.session_id === Number(msg.session_id));
+        const key = here ? here[1].key! : byKey;
+        const row = key ? this.sql.exec("SELECT name, nick FROM accounts WHERE key = ?", key).toArray()[0] : undefined;
+        if (!key || (!here && !row)) return this.error(ws, byKey ? "That person isn't a member anymore." : "That person isn't connected anymore.");
+        if (key === s.key) return this.error(ws, "You can't remove yourself.");
+        if (rank(this.roleOf(key)) >= myRank) return this.error(ws, `You can't ${banned ? "ban" : "kick"} someone with the same role as you or higher.`);
+        const name = here ? here[1].user!.name : String(row!.nick ?? row!.name);
         let removed = 0;
         if (banned) {
-          this.sql.exec(
-            "INSERT INTO bans (key, name, banned_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING",
-            vs.key!, vs.user!.name, Date.now(),
-          );
+          this.sql.exec("INSERT INTO bans (key, name, banned_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING", key, name, Date.now());
           this.send(ws, { type: "bans", bans: this.bans() });
           // Their messages from the last hours go too, if asked.
           const hours = [1, 24, 168].includes(Number(msg.delete_hours)) ? Number(msg.delete_hours) : 0;
           if (hours) {
-            const rows = this.sql.exec("SELECT id, channel FROM messages WHERE author_key = ? AND sent_at > ? LIMIT 1000", vs.key!, Date.now() - hours * 3_600_000).toArray();
+            const rows = this.sql.exec("SELECT id, channel FROM messages WHERE author_key = ? AND sent_at > ? LIMIT 1000", key, Date.now() - hours * 3_600_000).toArray();
             for (const r of rows) {
               this.dropPicture(Number(r.id));
               this.sql.exec("DELETE FROM messages WHERE id = ?", Number(r.id));
@@ -1407,14 +1407,22 @@ export class StromServer extends DurableObject<Env> {
             removed = rows.length;
           }
         }
-        this.audit(user.name, banned ? "ban" : "kick", vs.user!.name, removed ? `deleted ${removed} messages` : null);
+        // Out of the server for real: they're no longer a member, so coming back takes a new invite.
+        this.sql.exec("DELETE FROM accounts WHERE key = ?", key);
+        this.sql.exec("DELETE FROM member_roles WHERE key = ?", key);
+        this.sql.exec("DELETE FROM notified WHERE key = ?", key);
+        this.sql.exec("DELETE FROM timeouts WHERE key = ?", key);
+        this.audit(user.name, banned ? "ban" : "kick", name, removed ? `deleted ${removed} messages` : null);
         // Every device of theirs goes.
-        for (const [ows, os] of this.members().filter(([, m]) => m.key === vs.key)) {
+        for (const [ows, os] of this.members().filter(([, m]) => m.key === key)) {
           this.send(ows, { type: "kicked", banned });
           ows.serializeAttachment({ stage: "removed" } satisfies Session);
           ows.close(4001, banned ? "banned" : "kicked");
           this.broadcast({ type: "user_left", session_id: os.user!.session_id });
         }
+        // Everyone's list of members follows.
+        const list = this.memberList();
+        for (const [mws] of this.members()) this.send(mws, { type: "members", members: list });
         return;
       }
       case "set_nickname": {

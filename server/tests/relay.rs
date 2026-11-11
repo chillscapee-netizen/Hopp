@@ -484,10 +484,10 @@ async fn kick_and_ban() {
     let mut bob = FakeClient::connect_with(server.addr, "bob", &bob_key, Some(&server.invite)).await;
     let mut carol = FakeClient::connect_with(server.addr, "carol", &carol_key, Some(&server.invite)).await;
 
-    carol.send(ClientMsg::Kick { session_id: bob.session_id }).await;
+    carol.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
     assert!(carol.error().await.contains("owner"));
 
-    server.admin.send(ClientMsg::Kick { session_id: bob.session_id }).await;
+    server.admin.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
     bob.wait_for(|m| matches!(m, ServerMsg::Kicked { banned: false })).await;
     let bob_id = bob.session_id;
     carol.wait_for(|m| matches!(m, ServerMsg::UserLeft { session_id } if *session_id == bob_id)).await;
@@ -495,7 +495,7 @@ async fn kick_and_ban() {
     drop(bob);
     FakeClient::connect_with(server.addr, "bob", &bob_key, None).await;
 
-    server.admin.send(ClientMsg::Ban { session_id: carol.session_id, delete_hours: 0 }).await;
+    server.admin.send(ClientMsg::Ban { session_id: carol.session_id, delete_hours: 0, public_key: None }).await;
     carol.wait_for(|m| matches!(m, ServerMsg::Kicked { banned: true })).await;
     drop(carol);
     assert!(login_error(server.addr, "carol", &carol_key, Some(&server.invite)).await.contains("banned"));

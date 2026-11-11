@@ -32,5 +32,21 @@
   await wait(60);
   check("an offline member's profile opens", !$("user-card").hidden && $("user-card-name").textContent === "Nora");
   closePopovers();
+
+  // The owner kicks someone who isn't here: asked first, then sent by their Hopp ID.
+  const kicks = [];
+  commands.kick = (a) => kicks.push(a);
+  const nora = [...document.querySelectorAll("#member-list .member.offline")].find((n) => n.querySelector(".member-name").textContent === "Nora");
+  nora.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 900, clientY: 300 }));
+  await wait(50);
+  const kick = [...document.querySelectorAll("#server-menu .menu-item")].find((n) => n.textContent.includes("Kick Nora"));
+  check("right-click offers Kick to the owner", !!kick);
+  kick.click();
+  await wait(100);
+  const dialog = document.querySelector("dialog[open]");
+  check("it asks first, and says they need a new invite", /new invite/.test(dialog?.textContent ?? ""), dialog?.textContent?.slice(0, 120));
+  [...dialog.querySelectorAll("button")].find((b) => b.textContent.trim() === "Kick").click();
+  await wait(100);
+  check("the kick goes by Hopp ID", kicks.length === 1 && kicks[0].publicKey === "ab".repeat(32) && kicks[0].ban === false, JSON.stringify(kicks));
   report();
 })();
