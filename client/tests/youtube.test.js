@@ -43,5 +43,16 @@
   document.querySelector('.msg[data-id="960"]').dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
   closePopovers();
   check("hover and menu leave it playing", document.querySelector('.msg[data-id="960"] iframe') === player && player.isConnected);
+
+  // Going to another server and back: nothing starts playing by itself.
+  const rail = [...document.querySelectorAll("#server-list .rail-item")];
+  const home = activeServer().id;
+  rail[1].click();
+  for (let i = 0; i < 40 && !(online() && activeServer()?.id !== home); i++) await wait(50);
+  check("leaving the server stops the video", !document.querySelector("#messages iframe"));
+  rail[0].click();
+  for (let i = 0; i < 40 && !(online() && activeServer()?.id === home); i++) await wait(50);
+  await wait(300);
+  check("coming back shows its picture, not a playing video", !document.querySelector("#messages iframe") && (!document.querySelector('.msg[data-id="960"]') || !!document.querySelector('.msg[data-id="960"] .yt-play')));
   report();
 })();

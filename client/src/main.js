@@ -1247,8 +1247,7 @@ function applyDrop(dragged, target) {
     // Onto a loose server: the two become a folder where it was.
     const i = topIndex((x) => x.id === target.id);
     prefs.rail.splice(i, 1, { folder: `f${Date.now().toString(36)}`, name: "", color: FOLDER_COLORS[0], open: false, ids: [target.id, moving.id] });
-    toast("Folder created. Right-click it to name it.");
-  } else if (target.kind === "after" && target.folder && !moving.folder && folderOf(target.folder)?.open) {
+    } else if (target.kind === "after" && target.folder && !moving.folder && folderOf(target.folder)?.open) {
     // Just below an open folder's head: first in the folder.
     folderOf(target.folder).ids.unshift(moving.id);
   } else if (target.inFolder && !moving.folder) {
@@ -1855,6 +1854,7 @@ function voiceCompany() {
 }
 
 listen("roster", (e) => {
+  const beforeNames = new Map((state.roster?.users ?? []).map((u) => [u.session_id, u.name]));
   const before = myVoice();
   const mineBefore = state.roster?.users.find((u) => u.session_id === state.roster.me);
   const companyBefore = voiceCompany();
@@ -1874,8 +1874,10 @@ listen("roster", (e) => {
   else if (before !== null && after === null) playSound("leave");
   else if (after !== null && before === after) {
     const company = voiceCompany();
-    if ([...company].some((id) => !companyBefore.has(id))) playSound("user_join");
-    else if ([...companyBefore].some((id) => !company.has(id))) playSound("user_leave");
+    const came = [...company].find((id) => !companyBefore.has(id));
+    const went = [...companyBefore].find((id) => !company.has(id));
+    if (came !== undefined) playSound("user_join", (userName(came) ?? "Someone") + " joined your voice channel");
+    else if (went !== undefined) playSound("user_leave", (beforeNames.get(went) ?? "Someone") + " left your voice channel");
   }
   // Joining or leaving voice swaps the microphone underneath a running mic test.
   if (state.micTesting && before !== myVoice()) stopMicTest();
@@ -2834,6 +2836,7 @@ async function deleteMessage(m, skipConfirm) {
 }
 
 function renderMessages(keepScrollUnlessAtBottom) {
+  videosIn("channel|" + state.activeId + "|" + state.view);
   const scroller = $("scroller");
   const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
   // Messages newer than the last drawing of this channel arrive with a little motion.
@@ -3755,6 +3758,7 @@ function openSettings(tab) {
   refreshDevices();
   renderProfilePreview();
   renderMicTest();
+  renderSoundLog();
   openModal($("settings"));
 }
 function showTab(tab) {
@@ -3939,7 +3943,6 @@ function renderDeviceMenu(kind, anchor, list) {
       $("output-device").value = name;
     }
     applyDevices();
-    toast(`${input ? "Input" : "Output"} device: ${name || `Default${fallback ? ` (${fallback})` : ""}`}`);
   };
   const items = [
     { heading: input ? "Input device" : "Output device" },
@@ -4185,7 +4188,40 @@ function soundOn(event) {
   return prefs.soundEvents[event] !== false;
 }
 
-function playSound(name) {
+/** The last sounds Hopp played and why, for "Recent sounds" in Notifications: no sound is a mystery. */
+var soundLog = [];
+var SOUND_WHY = {
+  join: "You joined voice", leave: "You left voice", user_join: "Someone joined your voice channel", user_leave: "Someone left your voice channel",
+  disconnect: "The connection to your voice channel was lost", message: "A new message", muted: "You talked while muted",
+  mute: "You muted yourself", unmute: "You unmuted yourself", deafen: "You deafened yourself", undeafen: "You undeafened yourself",
+  ring: "Someone is calling you", ringback: "You're calling someone",
+};
+function noteSound(name, why) {
+  const text = why ?? SOUND_WHY[name];
+  if (!text) return;
+  const last = soundLog[0];
+  // A ringing phone is one line, not one per ring.
+  if (last && last.why === text && Date.now() - last.at < 5000) return void (last.at = Date.now());
+  soundLog.unshift({ why: text, at: Date.now() });
+  soundLog.length = Math.min(soundLog.length, 15);
+  if ($("settings").open) renderSoundLog();
+}
+function renderSoundLog() {
+  const list = $("sound-log");
+  if (!list) return;
+  if (!soundLog.length) {
+    const li = el("li");
+    li.append(el("span", "empty", "Nothing has played since Hopp started. Wondering about a sound? It will be listed here, with why."));
+    return list.replaceChildren(li);
+  }
+  list.replaceChildren(...soundLog.map((x) => {
+    const li = el("li");
+    li.append(el("time", "", clock(x.at)), el("span", "why", x.why));
+    return li;
+  }));
+}
+
+function playSound(name, why) {
   const notes = SOUNDS[name];
   const isPtt = name.startsWith("ptt");
   const event = SOUND_EVENT_OF[name];
@@ -4193,6 +4229,7 @@ function playSound(name) {
   if (state.me?.status === "dnd" && !isPtt && !["mute", "unmute", "deafen", "undeafen"].includes(name)) return;
   if (event && !soundOn(event)) return;
   if (state.deafened && prefs.quietDeafened && ["others", "message"].includes(event)) return;
+  if (!isPtt) noteSound(name, why);
   try {
     soundCtx ??= new AudioContext();
     if (prefs.soundStyle !== "classic" && HOPP_SOUNDS[name]) return playHoppSound(name, prefs.soundVolume / 100);
@@ -4253,7 +4290,7 @@ for (const [id, key] of [["sounds", "sounds"], ["muted-warning", "mutedWarning"]
     save(key, prefs[key] ? "1" : "0");
     if (key === "sounds") {
       renderSoundEvents();
-      if (prefs.sounds) playSound("join");
+      if (prefs.sounds) playSound("join", "You turned sounds on");
     }
   });
 }
@@ -4265,7 +4302,7 @@ soundVolume.addEventListener("input", () => {
   save("soundVolume", soundVolume.value);
   $("sound-volume-value").textContent = `${prefs.soundVolume}%`;
 });
-soundVolume.addEventListener("change", () => playSound("user_join"));
+soundVolume.addEventListener("change", () => playSound("user_join", "You changed the sound volume"));
 
 function showSensitivity() {
   const auto = prefs.autoSensitivity;
@@ -4345,7 +4382,6 @@ $("reset-audio").addEventListener("click", async () => {
   }
   syncAudioControls();
   applyVoicePrefs();
-  toast("Voice settings are back to their defaults.");
 });
 
 /** Puts the saved preferences into every control on the Voice & audio tab. */
@@ -4826,7 +4862,7 @@ listen("account", (e) => {
       }
       if (m.request) {
         toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
-        playSound("user_join");
+        playSound("user_join", m.friend.display_name + " sent you a friend request");
         desktopNotify(m.friend, "Sent you a friend request", "friend-requests");
       } else if (m.accepted) {
         toast(`${m.friend.display_name} accepted your friend request.`);
@@ -5449,7 +5485,7 @@ function onDmEvent(m) {
 function notifyDm(peer, text, from) {
   const who = personFor(peer);
   if (state.me?.status === "dnd" || dmMuted(peer)) return;
-  playSound("message");
+  playSound("message", (who.group && from ? personFor(from).display_name + " wrote in " + who.display_name : who.display_name + " sent you a message"));
   if (who.group && from) {
     const sender = personFor(from);
     desktopNotify(sender, text ?? "Sent a message", `dm:${peer}`, `${sender.display_name}  ·  ${who.display_name}`);
@@ -5668,6 +5704,7 @@ function dmSidebarRows() {
 
 function renderDmView(keepScroll) {
   const peer = state.openDm;
+  videosIn("dm|" + peer);
   const p = personFor(peer);
   $("home").classList.add("dm-open");
   const head = $("home").querySelector(".head-title");
@@ -6135,7 +6172,7 @@ function notifyMention({ server, channel, author_key, author_name, channel_name,
   if (level === "none" || channelMuted(server, channel) || (!mention && level !== "all")) return;
   const looking = online() && s.id === state.activeId && state.view === channel && document.hasFocus();
   if (looking) return;
-  playSound("message");
+  playSound("message", author_name + (mention ? " mentioned you in #" : " wrote in #") + channel_name + ", " + s.label);
   const person = { display_name: author_name, avatar: pictureFor(author_key) };
   desktopNotify(person, text, `channel:${s.id}:${channel}`, `${author_name}  ·  #${channel_name}, ${s.label}`);
 }
@@ -6986,7 +7023,6 @@ listen("left", () => {
   state.justLeft = true;
   setTimeout(() => (state.justLeft = false), 3000);
   removeServer(server);
-  toast(`You left ${server.label}.`);
 });
 
 // ---------- editing and moving channels (owner) ----------
@@ -7124,7 +7160,6 @@ function setServerLevel(s, level) {
   if (level === "mentions") delete prefs.notify.servers[s.address];
   else prefs.notify.servers[s.address] = level;
   saveNotify();
-  toast(level === "all" ? `You'll be notified of every message in ${s.label}.` : level === "none" ? `${s.label} is muted.` : `You'll only be notified when someone mentions you in ${s.label}.`);
 }
 
 function setChannelMuted(address, channel, muted) {
@@ -8051,7 +8086,7 @@ listen("pinned", (e) => {
   if (m) m.pinned = on;
   if (ch === state.view) renderMessages(true);
   if (!$("pins-pop").hidden && ch === state.view) call("get_pins", { channel: ch });
-  if (on && ch === state.view) toast("Message pinned.");
+
 });
 
 listen("pins", (e) => {
@@ -8128,8 +8163,7 @@ listen("server-deleted", () => {
   state.justLeft = true;
   setTimeout(() => (state.justLeft = false), 3000);
   removeServer(server);
-  if (mine) toast(`${server.label} was deleted.`);
-  else toast(`${server.label} was deleted by its owner.`);
+  if (!mine) toast(`${server.label} was deleted by its owner.`);
   renderAll();
 });
 
@@ -8505,7 +8539,6 @@ function renderUserRole(user) {
 async function setRole(member, role) {
   try {
     await invoke("set_role", { publicKey: member.public_key, role });
-    toast(role ? `${member.name} is now ${role === "admin" ? "an admin" : "a moderator"}.` : `${member.name} is a member again.`);
   } catch (err) {
     toast(friendlyError(err), true);
   }
@@ -8521,7 +8554,6 @@ async function transferOwnership(member) {
   if (!ok) return;
   try {
     await invoke("transfer_ownership", { publicKey: member.public_key });
-    toast(`${member.name} owns ${server?.label ?? "the server"} now.`);
   } catch (err) {
     toast(friendlyError(err), true);
   }
@@ -9039,7 +9071,24 @@ $("invite-friend-search").addEventListener("input", renderInviteFriends);
 // there (youtube-nocookie.com, which doesn't set tracking cookies until you play).
 
 const youtubeInfo = new Map(); // video id -> Promise of { title, author }
-const playingVideos = new Set(); // "message key|video id" playing inline, kept across re-renders
+const playingVideos = new Set(); // "video id|start" playing inline, kept across re-renders of the same conversation
+/** The conversation those videos play in. Another one starts with nothing playing. */
+let videoScope = "";
+function videosIn(scope) {
+  if (scope === videoScope) return;
+  videoScope = scope;
+  playingVideos.clear();
+}
+/** Players in these rows go back to their picture (and stop), so nothing plays again by itself. */
+function stopVideosIn(root) {
+  for (const card of root.querySelectorAll(".yt-card")) {
+    if (!card.querySelector("iframe")) continue;
+    const [, id, start] = (card.dataset.keep ?? "").split("|");
+    if (!id) continue;
+    playingVideos.delete(id + "|" + start);
+    card.replaceWith(youtubeCard(id, Number(start) || 0, card.querySelector(".yt-title")?.href ?? "https://youtu.be/" + id));
+  }
+}
 
 /** The video id in a YouTube link (watch, youtu.be, shorts, embed, live), or null. */
 function youtubeId(link) {
@@ -9877,7 +9926,6 @@ function markUnreadFrom(m) {
   invoke("account_send", { msg: { type: "channel_read", server: address, channel: m.channel, id: m.id - 1, unread: true } }).catch(() => {});
   renderUnread();
   renderMessages(true);
-  toast("Marked unread. It stays that way until you come back to the channel.");
 }
 
 let emojiIndex = null;
@@ -10470,6 +10518,98 @@ $("notify-text").addEventListener("change", (e) => {
 // through the relay when a network blocks that; the server only passes the handshake along,
 // and only within a voice channel. One screen to watch at a time.
 
+/**
+ * How a shared screen is sent: its size and how many pictures a second. Yours to choose
+ * (right-click the share button, or the cog on your own stream), also while sharing.
+ * Sixty a second is for games and video; thirty keeps text at its sharpest.
+ */
+var SHARE_SIZES = [
+  { id: "720", label: "720p", w: 1280, h: 720 },
+  { id: "1080", label: "1080p", w: 1920, h: 1080 },
+  { id: "1440", label: "1440p", w: 2560, h: 1440 },
+  { id: "source", label: "Source (as it is)", w: 0, h: 0 },
+];
+var SHARE_RATES = [15, 30, 60];
+/** Megabits a second, to each viewer, at most. */
+var SHARE_MBIT = { 720: { 15: 1.5, 30: 3, 60: 5 }, 1080: { 15: 3, 30: 6, 60: 9 }, 1440: { 15: 5, 30: 9, 60: 14 }, source: { 15: 5, 30: 9, 60: 14 } };
+prefs.shareQuality = { size: "1080", rate: 30, ...loadJson("shareQuality", {}) };
+if (!SHARE_SIZES.some((x) => x.id === prefs.shareQuality.size)) prefs.shareQuality.size = "1080";
+if (!SHARE_RATES.includes(prefs.shareQuality.rate)) prefs.shareQuality.rate = 30;
+
+function shareSize() {
+  return SHARE_SIZES.find((x) => x.id === prefs.shareQuality.size) ?? SHARE_SIZES[1];
+}
+function shareBitrate() {
+  return Math.round(SHARE_MBIT[prefs.shareQuality.size][prefs.shareQuality.rate] * 1_000_000);
+}
+/** What to ask the screen for. */
+function shareConstraints() {
+  const { w, h } = shareSize();
+  const rate = prefs.shareQuality.rate;
+  return { frameRate: { ideal: rate, max: rate }, ...(w ? { width: { ideal: w, max: w }, height: { ideal: h, max: h } } : {}) };
+}
+/** Motion first at sixty a second; sharp text first otherwise. */
+function shareHint() {
+  return prefs.shareQuality.rate >= 60 ? "motion" : "detail";
+}
+/** For smooth motion the graphics card does the work (H.264) where it can, so games don't slow down. */
+function preferSmoothCodec(pc) {
+  if (prefs.shareQuality.rate < 60) return;
+  try {
+    const all = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
+    const first = all.filter((c) => /h264/i.test(c.mimeType));
+    if (!first.length) return;
+    const order = [...first, ...all.filter((c) => !/h264/i.test(c.mimeType))];
+    for (const t of pc.getTransceivers()) if (t.sender?.track?.kind === "video") t.setCodecPreferences(order);
+  } catch {
+    // The usual order works too.
+  }
+}
+/** A screen sender follows the chosen quality. */
+function tuneShare(pc) {
+  for (const sender of pc.getSenders?.() ?? []) {
+    if (sender.track?.kind !== "video") continue;
+    const params = sender.getParameters();
+    if (!params.encodings?.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = shareBitrate();
+    params.encodings[0].maxFramerate = prefs.shareQuality.rate;
+    params.degradationPreference = prefs.shareQuality.rate >= 60 ? "maintain-framerate" : "maintain-resolution";
+    sender.setParameters(params).catch(() => {});
+  }
+}
+/** A new choice, also in the middle of sharing: the screen and everyone watching follow at once. */
+function setShareQuality(change) {
+  Object.assign(prefs.shareQuality, change);
+  save("shareQuality", JSON.stringify(prefs.shareQuality));
+  const streams = [screenShare.stream, typeof media !== "undefined" ? media.out.screen?.stream : null].filter(Boolean);
+  for (const stream of streams) {
+    const track = stream.getVideoTracks()[0];
+    if (!track) continue;
+    track.contentHint = shareHint();
+    track.applyConstraints(shareConstraints()).catch(() => {});
+  }
+  for (const pc of screenShare.peers.values()) tuneShare(pc);
+  if (typeof media !== "undefined") for (const pc of media.out.screen?.peers.values() ?? []) tuneShare(pc);
+  renderScreenStage();
+}
+/** "1080p · 60 fps", as chosen. */
+function shareQualityText() {
+  const size = shareSize();
+  return (size.w ? size.label : "Source") + " · " + prefs.shareQuality.rate + " fps";
+}
+function openShareQuality(x, y, above) {
+  const q = prefs.shareQuality;
+  openMenu([
+    { heading: "Resolution" },
+    ...SHARE_SIZES.map((z) => ({ label: z.label, check: q.size === z.id, action: () => setShareQuality({ size: z.id }) })),
+    "sep",
+    { heading: "Frame rate" },
+    ...SHARE_RATES.map((r) => ({ label: r + " fps" + (r === 60 ? " (games, video)" : r === 30 ? " (sharpest text)" : " (light on your network)"), check: q.rate === r, action: () => setShareQuality({ rate: r }) })),
+    "sep",
+    { heading: "Up to " + SHARE_MBIT[q.size][q.rate] + " Mbit/s to each viewer" },
+  ], x, y, above);
+}
+
 /** Our own share: the screen, and a connection per viewer. */
 var screenShare = { stream: null, peers: new Map() };
 /** The screen we watch: whose, its connection, and handshake bits that came early. */
@@ -10487,7 +10627,7 @@ async function startShare() {
   if (!canShare() || screenShare.stream) return;
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: shareConstraints(), audio: false });
   } catch (err) {
     // Closing the picker isn't an error.
     if (err?.name !== "NotAllowedError" && err?.name !== "AbortError") toast("Couldn't share your screen. " + (err?.message ?? ""), true);
@@ -10495,8 +10635,8 @@ async function startShare() {
   }
   const track = stream.getVideoTracks()[0];
   if (!track || !canShare()) return stream.getTracks().forEach((t) => t.stop());
-  // Text and windows stay sharp; motion gives way first.
-  track.contentHint = "detail";
+  // Text and windows stay sharp, or motion stays smooth: as chosen.
+  track.contentHint = shareHint();
   // Windows' own "Stop sharing" ends it too.
   track.addEventListener("ended", () => stopShare());
   screenShare.stream = stream;
@@ -10533,22 +10673,19 @@ async function serveViewer(viewer) {
   pc.onicecandidate = (e) => e.candidate && screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
   pc.onconnectionstatechange = () => {
     if ((pc.connectionState === "failed" || pc.connectionState === "closed") && screenShare.peers.get(viewer) === pc) screenShare.peers.delete(viewer);
+    // How many watch shows on your own stream.
+    if (watching?.local) screenInfo();
   };
   const track = screenShare.stream.getVideoTracks()[0];
   pc.addTrack(track, screenShare.stream);
+  preferSmoothCodec(pc);
   await pc.setLocalDescription(await pc.createOffer());
   screenSend(viewer, { k: "offer", s: "viewer", sdp: pc.localDescription.sdp });
 }
 
-/** High quality: up to 6 Mbit/s, and sharp text before smooth motion. */
+/** As good as chosen (1080p at 30 a second unless you pick otherwise: up to 6 Mbit/s, sharp text first). */
 function tuneScreenSender(pc) {
-  for (const sender of pc.getSenders()) {
-    const p = sender.getParameters();
-    if (!p.encodings?.length) p.encodings = [{}];
-    p.encodings[0].maxBitrate = 6_000_000;
-    p.degradationPreference = "maintain-resolution";
-    sender.setParameters(p).catch(() => {});
-  }
+  tuneShare(pc);
 }
 
 function watchScreen(session, asked = false) {
@@ -10662,6 +10799,7 @@ listen("screen-signal", async (e) => {
     } else if (m.k === "stop") {
       pc.close();
       screenShare.peers.delete(from);
+      if (watching?.local) screenInfo();
     }
     return;
   }
@@ -10724,10 +10862,56 @@ function renderScreenStage() {
     if (state.view !== null && isVoiceChannel(state.view)) renderVoiceStage();
     return;
   }
-  $("screen-who").textContent = watching.local ? "Your screen · what the others see" : (userName(watching.from) ?? "Someone") + "'s screen";
+  $("screen-who").textContent = watching.local ? "Your screen" : (userName(watching.from) ?? "Someone") + "'s screen";
+  $("screen-quality").hidden = !watching.local;
+  $("screen-close").setAttribute("aria-label", watching.local ? "Hide your own stream" : "Stop watching");
+  screenInfo();
   if (isVoiceChannel(state.view)) renderVoiceStage();
   $("screen-wait").hidden = !!video.srcObject && !video.paused;
 }
+
+/** Beside the name: how good it is (yours: as chosen, and how many watch; theirs: as it arrives). */
+function screenInfo() {
+  const video = $("screen-video");
+  if (!watching) return;
+  if (video.videoWidth && video.videoHeight) video.parentElement.style.setProperty("--ar", (video.videoWidth / video.videoHeight).toFixed(4));
+  if (watching.local) {
+    const n = [...screenShare.peers.values()].filter((pc) => pc.connectionState === "connected").length;
+    $("screen-info").textContent = shareQualityText() + (n ? " · " + n + " watching" : "");
+  } else {
+    $("screen-info").textContent = video.videoHeight ? Math.min(video.videoWidth, video.videoHeight) + "p" : "";
+  }
+}
+for (const ev of ["loadedmetadata", "resize"]) $("screen-video").addEventListener(ev, screenInfo);
+
+// What's on the picture fades away when the pointer rests, and comes back when it moves.
+(() => {
+  const frame = $("screen-video").parentElement;
+  let rest = 0;
+  const wake = () => {
+    frame.classList.remove("idle");
+    clearTimeout(rest);
+    rest = setTimeout(() => {
+      if (!frame.querySelector(".screen-bar:hover, .screen-tag:hover")) frame.classList.add("idle");
+    }, 2500);
+  };
+  frame.addEventListener("pointermove", wake);
+  frame.addEventListener("pointerdown", wake);
+  frame.addEventListener("pointerleave", () => {
+    clearTimeout(rest);
+    rest = setTimeout(() => frame.classList.add("idle"), 700);
+  });
+  $("screen-video").addEventListener("playing", wake);
+})();
+
+$("screen-quality").addEventListener("click", (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  openShareQuality(r.left, r.top, true);
+});
+$("share-btn").addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  openShareQuality(e.clientX, e.clientY, true);
+});
 
 $("screen-video").addEventListener("playing", () => ($("screen-wait").hidden = true));
 $("screen-video").addEventListener("dblclick", () => toggleScreenFull());
@@ -10940,6 +11124,8 @@ function linkCard(p, link) {
 var serverViews = new Map();
 
 function rememberServerView() {
+  // Leaving a server stops what was playing there: remembered rows must not start it again.
+  stopVideosIn($("messages"));
   if (!state.activeId || !state.roster || state.atHome) return;
   serverViews.set(state.activeId, {
     channel: $("chat-channel").textContent,
@@ -11131,7 +11317,7 @@ function renderVoiceStage() {
   }
   if (channel(view)?.afk_after) foot.prepend(el("span", "voice-stage-hint", "This is the AFK channel: people away for " + channel(view).afk_after + " minutes end up here."));
   // A screen in the middle brings its own buttons (pop out, full screen, stop watching).
-  stage.replaceChildren(...(screenFocus ? [] : [bar]), ...(main ? [main] : []), here.length ? tiles : el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now."), foot);
+  stage.replaceChildren(...(screenFocus ? [] : [bar]), ...(main ? [main] : []), here.length ? tiles : el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now."), ...(screenFocus && mine ? [] : [foot]));
   fitTiles();
 }
 
@@ -11342,12 +11528,12 @@ async function startCallScreen() {
   if (room?.kind !== "call" || media.out.screen) return;
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: shareConstraints(), audio: false });
   } catch (err) {
     if (err?.name !== "NotAllowedError" && err?.name !== "AbortError") toast("Couldn't share your screen. " + (err?.message ?? ""), true);
     return;
   }
-  stream.getVideoTracks()[0].contentHint = "detail";
+  stream.getVideoTracks()[0].contentHint = shareHint();
   startOut("screen", stream, room);
 }
 
@@ -11403,11 +11589,13 @@ async function offerMedia(kind, peer) {
     if (tries <= 2) offerMedia(kind, peer);
   };
   pc.addTrack(out.stream.getVideoTracks()[0], out.stream);
+  if (kind === "screen") preferSmoothCodec(pc);
   await pc.setLocalDescription(await pc.createOffer());
   out.room.send(peer, { v: "m", t: kind, d: "r", k: "offer", sdp: pc.localDescription.sdp });
 }
 
 function tuneSender(pc, kind) {
+  if (kind === "screen") return tuneShare(pc);
   for (const sender of pc.getSenders()) {
     const p = sender.getParameters();
     if (!p.encodings?.length) p.encodings = [{}];
@@ -11538,7 +11726,7 @@ $("screen-pip").addEventListener("click", () => {
     apply();
   }, { passive: false });
   frame.addEventListener("pointerdown", (e) => {
-    if (zoom === 1) return;
+    if (zoom === 1 || e.target.closest(".screen-bar, .screen-tag")) return;
     frame.setPointerCapture(e.pointerId);
     const start = { px: e.clientX, py: e.clientY, x, y };
     const move = (ev) => {
@@ -11902,7 +12090,6 @@ function setCrowdQuiet(s, on) {
   if (on) prefs.notify.quiet[s.address] = true;
   else delete prefs.notify.quiet[s.address];
   saveNotify();
-  toast(on ? "@everyone and @here won't notify you in " + s.label + "." : "@everyone and @here notify you again in " + s.label + ".");
 }
 
 /** @everyone, @here and roles you may mention, for the picker. */
@@ -12222,7 +12409,7 @@ document.querySelectorAll("[data-sound-style]").forEach((b) => {
     prefs.soundStyle = b.dataset.soundStyle;
     save("soundStyle", prefs.soundStyle);
     document.querySelectorAll("[data-sound-style]").forEach((x) => x.classList.toggle("active", x === b));
-    playSound("join");
+    playSound("join", "You picked a sound style");
   });
 });
 
@@ -12593,7 +12780,8 @@ async function loadWhatsNew() {
     if (!from) continue;
     try {
       const notes = await (await fetch(from)).json();
-      if (notes && Object.keys(notes).length) return (whatsNew = notes);
+      // An empty list is an answer too: there's just nothing to tell yet.
+      if (notes && typeof notes === "object") return (whatsNew = notes);
     } catch {
       // Try the next place.
     }
@@ -12744,7 +12932,8 @@ async function renderNews() {
   const page = el("div", "news-page");
   if (newsSection === "news") {
     const versions = newsVersions();
-    page.append(newsHero("What's new", "Hopp " + (versions[0] ?? ""), sub, "compass"));
+    page.append(newsHero("What's new", versions[0] ? "Hopp " + versions[0] : "Hopp", sub, "compass"));
+    if (!versions.length) page.append(newsCard("news-none", "Nothing here yet", "compass", "Hopp is still finding its feet. When there's news worth telling, it shows up here."));
     const line = el("div", "news-timeline");
     versions.forEach((v, i) => {
       const item = el("article", "news-release" + (i === 0 ? " latest" : ""));
@@ -12763,7 +12952,7 @@ async function renderNews() {
       item.append(h, list);
       line.append(item);
     });
-    page.append(line);
+    if (versions.length) page.append(line);
     if (versions[0]) save("newsSeen", versions[0]);
     $("news-dot").hidden = true;
   } else if (newsSection === "about") {

@@ -302,17 +302,20 @@
         <div class="channel-body">
           <section class="chat">
             <div id="screen-stage" class="screen-stage" hidden>
-              <div class="screen-head">
-                <svg class="i sm"><use href="#i-monitor"/></svg>
-                <span id="screen-who" class="ellipsis"></span>
-                <span class="head-spacer"></span>
-                <button id="screen-pip" type="button" class="icon-btn" aria-label="Pop out"><svg class="i"><use href="#i-pip"/></svg></button>
-                <button id="screen-full" type="button" class="icon-btn" aria-label="Full screen"><svg class="i"><use href="#i-maximize"/></svg></button>
-                <button id="screen-close" type="button" class="icon-btn" aria-label="Stop watching"><svg class="i"><use href="#i-x"/></svg></button>
-              </div>
               <div class="screen-frame">
                 <video id="screen-video" autoplay muted playsinline></video>
                 <span id="screen-wait" class="screen-wait">Connecting…</span>
+                <div class="screen-tag">
+                  <span class="screen-live">LIVE</span>
+                  <span id="screen-who" class="ellipsis"></span>
+                  <span id="screen-info" class="screen-info"></span>
+                </div>
+                <div class="screen-bar">
+                  <button id="screen-quality" type="button" aria-label="Stream quality" hidden><svg class="i"><use href="#i-settings"/></svg></button>
+                  <button id="screen-pip" type="button" aria-label="Pop out"><svg class="i"><use href="#i-pip"/></svg></button>
+                  <button id="screen-full" type="button" aria-label="Full screen"><svg class="i"><use href="#i-maximize"/></svg></button>
+                  <button id="screen-close" type="button" aria-label="Stop watching"><svg class="i"><use href="#i-x"/></svg></button>
+                </div>
               </div>
             </div>
             <div id="voice-stage" class="voice-stage" hidden></div>
@@ -1527,6 +1530,9 @@
 
           <h3 class="card-title">Play sounds for</h3>
           <ul id="sound-events" class="card sound-events"></ul>
+
+          <h3 class="card-title">Recent sounds</h3>
+          <ul id="sound-log" class="card sound-log"></ul>
 
           <div class="card spaced">
             <label class="row">

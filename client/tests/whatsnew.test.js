@@ -3,6 +3,16 @@
 (async () => {
   try { localStorage.removeItem("newsSeen"); } catch {}
   await inServer();
+  // No news written yet: no dot, and the page says so plainly.
+  await renderNewsDot();
+  check("no news, no dot", $("news-dot").hidden);
+  $("news-btn").click();
+  await wait(150);
+  check("with nothing to tell, the page says so", !document.querySelector("#news-body .news-release") && !!document.getElementById("news-none") && !document.querySelector("#news-body h1")?.textContent.includes("undefined"), document.querySelector("#news-body h1")?.textContent);
+  document.querySelector("#server-list .rail-item").click();
+  await wait(100);
+  // With news (as when a release has notes): a dot, and every version listed.
+  whatsNew = { "0.1.0": "• First", "0.2.0": "• Second", "0.9.0": "• Newest thing\n• And another" };
   await renderNewsDot();
   check("a dot shows news you haven't read", !$("news-dot").hidden);
   $("news-btn").click();
@@ -10,7 +20,7 @@
   check("the compass opens a page of its own", $("shell").classList.contains("news") && getComputedStyle($("news-view")).display !== "none" && !document.querySelector("dialog[open]"));
   check("the sidebar lists its sections", document.querySelectorAll("#sidebar-body .news-nav").length === 7 && $("sidebar-title").textContent === "Discover");
   const items = [...document.querySelectorAll("#news-body .news-release")];
-  check("what's new: every version, newest first", items.length >= 5 && items[0].textContent.includes("Version 0.3.6") && !!items[0].querySelector(".news-new"));
+  check("what's new: every version, newest first", items.length === 3 && items[0].textContent.includes("Version 0.9.0") && !!items[0].querySelector(".news-new"));
   check("reading it clears the dot", $("news-dot").hidden);
   [...document.querySelectorAll(".news-nav")].find((b) => b.textContent.includes("Voice, video")).click();
   await wait(80);

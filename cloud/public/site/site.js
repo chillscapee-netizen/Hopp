@@ -20,8 +20,21 @@ function el(tag, cls, text) {
     return;
   }
   const versions = Object.keys(notes).sort((a, b) => key(b).localeCompare(key(a)));
-  if (!versions.length) return;
-  for (const n of document.querySelectorAll(".version-line")) n.textContent = "Free · beta " + versions[0];
+  // The version on offer comes from the release itself, whether or not it has notes.
+  try {
+    const latest = (await (await fetch("update/latest.json")).json()).version;
+    if (latest) for (const n of document.querySelectorAll(".version-line")) n.textContent = "Free · beta " + latest;
+  } catch {
+    // The plain "Free" stays.
+  }
+  if (!versions.length) {
+    // Nothing to tell yet: the home page leaves the section out; the page of its own says so.
+    for (const box of document.querySelectorAll(".releases")) {
+      if (box.dataset.show === "all") box.append(el("p", "none", "Nothing here yet. Hopp is still finding its feet; when there's news worth telling, it shows up here."));
+      else box.closest(".news")?.remove();
+    }
+    return;
+  }
   for (const box of document.querySelectorAll(".releases")) {
     const show = box.dataset.show === "all" ? versions.length : Number(box.dataset.show || 3);
     versions.slice(0, show).forEach((v, i) => {

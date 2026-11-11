@@ -3718,3 +3718,30 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 
 /* A thin line under the top row: the server's name on the left, the channel's on the right. */
 .sidebar-head, .main-head { border-bottom: 1px solid var(--line); }
+
+/* ---------- a shared screen: the picture is the view ----------
+   The picture is as big as its space allows, in its own shape (no black bars around it).
+   What it is and what you can do with it sit on the picture and fade away when the pointer
+   rests, so nothing is in the way of what's being shown. */
+.screen-stage { flex: none; display: grid; grid-template-rows: none; place-items: center; height: 46vh; max-height: none; padding: 12px 16px 6px; container-type: size; }
+.stage-main .screen-stage { height: 100%; }
+.screen-frame, .stage-main .screen-frame { --ar: 1.7778; width: min(100cqw, calc(100cqh * var(--ar))); height: min(100cqh, calc(100cqw / var(--ar))); aspect-ratio: auto; margin: 0; border-radius: 12px; }
+.screen-frame:fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+.screen-tag { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 5px 10px 5px 6px; border-radius: 9px; background: rgb(0 0 0 / 0.58); color: #fff; font-size: 13px; font-weight: 600; }
+.screen-live { flex: none; padding: 1px 6px; border-radius: 4px; background: var(--red); color: #fff; font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em; line-height: 16px; }
+.screen-info { flex: none; color: rgb(255 255 255 / 0.72); font-weight: 500; font-variant-numeric: tabular-nums; }
+.screen-info:empty { display: none; }
+.screen-bar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; border-radius: 14px; background: rgb(0 0 0 / 0.62); }
+.screen-bar button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: none; border-radius: 10px; background: none; color: #fff; transition: background 90ms ease-out; }
+.screen-bar button:hover { background: rgb(255 255 255 / 0.16); }
+.screen-tag, .screen-bar { transition: opacity 180ms ease-out; }
+.screen-frame.idle .screen-tag, .screen-frame.idle .screen-bar { opacity: 0; pointer-events: none; }
+.screen-frame.idle { cursor: none; }
+.screen-frame.idle.zoomed { cursor: grab; }
+
+/* Recent sounds: what played, and why. */
+.sound-log { list-style: none; margin: 0; padding: 6px 0; }
+.sound-log li { display: flex; align-items: baseline; gap: 12px; padding: 7px 16px; font-size: 13.5px; }
+.sound-log time { flex: none; width: 44px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.sound-log .why { flex: 1; min-width: 0; color: var(--text-2); }
+.sound-log .empty { color: var(--muted); }
