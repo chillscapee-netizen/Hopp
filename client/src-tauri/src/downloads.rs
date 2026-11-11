@@ -102,8 +102,9 @@ pub fn show_download(app: AppHandle, path: String) -> CmdResult {
     if !path.starts_with(&dir) || !path.exists() {
         return Err("That file isn't in your Downloads anymore.".into());
     }
-    std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn().map_err(|e| e.to_string())?;
-    Ok(())
+    // Through Windows' own "show this file" call: no extra program is started for it.
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

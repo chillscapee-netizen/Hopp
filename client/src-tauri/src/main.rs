@@ -71,6 +71,54 @@ fn with_conn<T>(state: &AppState, f: impl FnOnce(&mut Connection) -> T) -> CmdRe
     state.conn.lock().unwrap().as_mut().map(f).ok_or_else(|| "not connected".to_string())
 }
 
+/// Runs `f` on the connection with this number, in view or waiting in the background.
+fn with_generation<T>(state: &AppState, generation: u64, f: impl FnOnce(&mut Connection) -> T) -> Option<T> {
+    let mut conn = state.conn.lock().unwrap();
+    if let Some(c) = conn.as_mut().filter(|c| c.generation == generation) {
+        return Some(f(c));
+    }
+    drop(conn);
+    state.parked.lock().unwrap().values_mut().find(|c| c.generation == generation).map(f)
+}
+
+/// Runs `f` on the connection whose voice is running: the server in view, or one you left
+/// for another while staying in its voice channel.
+fn with_voice<T>(state: &AppState, f: impl FnOnce(&mut Connection) -> T) -> Option<T> {
+    let mut conn = state.conn.lock().unwrap();
+    if let Some(c) = conn.as_mut().filter(|c| c.engine.is_some()) {
+        return Some(f(c));
+    }
+    drop(conn);
+    state.parked.lock().unwrap().values_mut().find(|c| c.engine.is_some()).map(f)
+}
+
+/// Is voice running in a server, in view or not?
+fn in_server_voice(state: &AppState) -> bool {
+    with_voice(state, |_| ()).is_some()
+}
+
+/// One voice at a time: leaves voice in servers waiting in the background. True if there was any.
+fn end_voice_elsewhere(state: &AppState) -> bool {
+    let mut ended = false;
+    for c in state.parked.lock().unwrap().values_mut() {
+        let in_voice = {
+            let r = c.roster.lock().unwrap();
+            r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some())
+        };
+        if in_voice || c.engine.is_some() {
+            c.control.send(ClientMsg::LeaveVoice);
+            c.engine = None;
+            c.voice_peers.clear();
+            c.voice_attempt += 1;
+            ended = true;
+        }
+    }
+    if ended {
+        state.audio.clear_user_volumes();
+    }
+    ended
+}
+
 fn identity_path(state: &AppState) -> CmdResult<PathBuf> {
     state.identity_path.get().cloned().ok_or_else(|| "app data folder unavailable".to_string())
 }
@@ -425,7 +473,9 @@ async fn connect(
         let waiting = state.parked.lock().unwrap().remove(&address);
         if let Some(c) = waiting {
             // Back in view: no login, just this server's channels sent again.
-            state.audio.clear_user_volumes();
+            if c.engine.is_none() && !in_server_voice(&state) {
+                state.audio.clear_user_volumes();
+            }
             c.control.send(ClientMsg::Resync);
             c.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
             // In view first, then the roster: nothing that arrives in between is missed.
@@ -440,7 +490,9 @@ async fn connect(
     if *state.generation.lock().unwrap() != generation {
         return Err("superseded".into());
     }
-    state.audio.clear_user_volumes();
+    if !in_server_voice(&state) {
+        state.audio.clear_user_volumes();
+    }
     // Warmed up meanwhile in the background: this one wins.
     if let Some(old) = state.parked.lock().unwrap().remove(&address) {
         old.task.abort();
@@ -463,9 +515,45 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
     let here = address.clone();
     let task = tauri::async_runtime::spawn(async move {
         while let Some(msg) = session.events.recv().await {
+            // Voice follows its connection, whether its server is the one in view or not.
+            match &msg {
+                ServerMsg::VoiceSession { channel, key, peers } => {
+                    let (ui, channel, key, peers) = (ui.clone(), *channel, key.clone(), peers.clone());
+                    let attempt = with_generation(&ui.state::<AppState>(), generation, |c| {
+                        c.voice_attempt += 1;
+                        // Stop the old engine first, so the microphone is free for the new one.
+                        c.engine = None;
+                        c.voice_peers = peers.into_iter().map(|p| (p.session_id, p)).collect();
+                        c.voice_attempt
+                    });
+                    if let Some(attempt) = attempt {
+                        tauri::async_runtime::spawn_blocking(move || start_peer_voice(ui, generation, attempt, channel, &key));
+                    }
+                    continue;
+                }
+                ServerMsg::VoicePeer { peer } => {
+                    with_generation(&ui.state::<AppState>(), generation, |c| {
+                        if let Some(engine) = &c.engine {
+                            engine.set_peer(peer);
+                        }
+                        c.voice_peers.insert(peer.session_id, peer.clone());
+                    });
+                    continue;
+                }
+                // Taken out of voice by the server (e.g. the channel was deleted): close the microphone.
+                ServerMsg::UserUpdated { user } if user.session_id == me && user.voice_channel.is_none() => {
+                    with_generation(&ui.state::<AppState>(), generation, |c| {
+                        c.engine = None;
+                        c.voice_peers.clear();
+                        // A peer-to-peer start still in progress must not open the microphone.
+                        c.voice_attempt += 1;
+                    });
+                }
+                _ => {}
+            }
             let active = ui.state::<AppState>().conn.lock().unwrap().as_ref().is_some_and(|c| c.generation == generation);
             if !active {
-                background(&ui, &here, &roster, &msg);
+                background(&ui, &here, generation, &roster, &msg);
                 continue;
             }
             match &msg {
@@ -529,44 +617,7 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::Members { members } => {
                     let _ = ui.emit("members", members);
                 }
-                ServerMsg::VoiceSession { channel, key, peers } => {
-                    let (ui, channel, key, peers) = (ui.clone(), *channel, key.clone(), peers.clone());
-                    let state = ui.state::<AppState>();
-                    let attempt = {
-                        let mut conn = state.conn.lock().unwrap();
-                        let Some(c) = conn.as_mut().filter(|c| c.generation == generation) else { continue };
-                        c.voice_attempt += 1;
-                        // Stop the old engine first, so the microphone is free for the new one.
-                        c.engine = None;
-                        c.voice_peers = peers.into_iter().map(|p| (p.session_id, p)).collect();
-                        c.voice_attempt
-                    };
-                    tauri::async_runtime::spawn_blocking(move || start_peer_voice(ui, generation, attempt, channel, &key));
-                }
-                ServerMsg::VoicePeer { peer } => {
-                    let state = ui.state::<AppState>();
-                    let mut conn = state.conn.lock().unwrap();
-                    if let Some(c) = conn.as_mut().filter(|c| c.generation == generation) {
-                        if let Some(engine) = &c.engine {
-                            engine.set_peer(peer);
-                        }
-                        c.voice_peers.insert(peer.session_id, peer.clone());
-                    }
-                }
                 _ => {
-                    // Taken out of voice by the server (e.g. the channel was deleted): close the microphone.
-                    if let ServerMsg::UserUpdated { user } = &msg {
-                        if user.session_id == me && user.voice_channel.is_none() {
-                            let state = ui.state::<AppState>();
-                            let mut conn = state.conn.lock().unwrap();
-                            if let Some(c) = conn.as_mut().filter(|c| c.generation == generation) {
-                                c.engine = None;
-                                c.voice_peers.clear();
-                                // A peer-to-peer start still in progress must not open the microphone.
-                                c.voice_attempt += 1;
-                            }
-                        }
-                    }
                     let snapshot = {
                         let mut r = roster.lock().unwrap();
                         r.apply(&msg);
@@ -579,7 +630,15 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
         }
         // The server went away: tear down this connection unless it was already replaced.
         let state = ui.state::<AppState>();
-        state.parked.lock().unwrap().retain(|_, c| c.generation != generation);
+        let dropped = {
+            let mut parked = state.parked.lock().unwrap();
+            let key = parked.iter().find(|(_, c)| c.generation == generation).map(|(k, _)| k.clone());
+            key.and_then(|k| parked.remove(&k))
+        };
+        // Voice was running there while another server was in view: it ended with the connection.
+        if dropped.is_some_and(|c| c.engine.is_some()) {
+            let _ = ui.emit("voice-away", serde_json::json!({ "address": here, "roster": null, "lost": true }));
+        }
         let mut conn = state.conn.lock().unwrap();
         if conn.as_ref().is_some_and(|c| c.generation == generation) {
             *conn = None;
@@ -605,7 +664,7 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
 
 /// A server waiting in the background: its roster stays current, and new messages still
 /// mark it unread (and ping you), as if you were looking.
-fn background(ui: &AppHandle, address: &str, roster: &Arc<Mutex<Roster>>, msg: &ServerMsg) {
+fn background(ui: &AppHandle, address: &str, generation: u64, roster: &Arc<Mutex<Roster>>, msg: &ServerMsg) {
     match msg {
         ServerMsg::Chat { message } => {
             let r = roster.lock().unwrap();
@@ -625,29 +684,32 @@ fn background(ui: &AppHandle, address: &str, roster: &Arc<Mutex<Roster>>, msg: &
         }
         // Voice, typing, screens and answers are for the server in view.
         ServerMsg::VoiceSession { .. } | ServerMsg::VoicePeer { .. } | ServerMsg::Typing { .. } | ServerMsg::ScreenSignal { .. } => {}
-        _ => roster.lock().unwrap().apply(msg),
+        _ => {
+            let in_voice = |r: &Roster| r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some());
+            let (was, snapshot) = {
+                let mut r = roster.lock().unwrap();
+                let was = in_voice(&r);
+                r.apply(msg);
+                (was, r.clone())
+            };
+            // Still in voice here while another server is in view: the app follows who's with you.
+            if was || in_voice(&snapshot) {
+                forget_departed_peers(ui, generation, &snapshot);
+                let _ = ui.emit("voice-away", serde_json::json!({ "address": address, "roster": snapshot }));
+            }
+        }
     }
 }
 
 /// Moves the server in view to the background, connected, so coming back is instant. Voice
-/// there ends, as leaving a server always did. Servers that can't resend their channels
-/// (older ones) are simply disconnected.
+/// there keeps going: you stay in the channel while you look at another server. Servers that
+/// can't resend their channels (older ones) are simply disconnected.
 fn park_current(state: &AppState) {
     *state.generation.lock().unwrap() += 1;
-    let Some(mut c) = state.conn.lock().unwrap().take() else { return };
+    let Some(c) = state.conn.lock().unwrap().take() else { return };
     if !c.resync {
         c.task.abort();
         return;
-    }
-    let in_voice = {
-        let r = c.roster.lock().unwrap();
-        r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some())
-    };
-    if in_voice || c.engine.is_some() {
-        c.control.send(ClientMsg::LeaveVoice);
-        c.engine = None;
-        c.voice_peers.clear();
-        c.voice_attempt += 1;
     }
     let old = state.parked.lock().unwrap().insert(c.address.clone(), c);
     if let Some(old) = old {
@@ -682,9 +744,12 @@ static WARM_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 
 /// A server left, deleted or removed from the list: close its background connection.
 #[tauri::command]
-fn forget_server(state: State<'_, AppState>, address: String) {
+fn forget_server(app: AppHandle, state: State<'_, AppState>, address: String) {
     if let Some(c) = state.parked.lock().unwrap().remove(&address) {
         c.task.abort();
+        if c.engine.is_some() {
+            let _ = app.emit("voice-away", serde_json::json!({ "address": address, "roster": null }));
+        }
     }
 }
 
@@ -701,6 +766,8 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
     // Voice needs the microphone; a running mic check would compete for it.
     *state.mic_test.lock().unwrap() = None;
     let devices = state.devices.lock().unwrap().clone();
+    // One voice at a time: joining here leaves a channel in a server you aren't looking at.
+    end_voice_elsewhere(&state);
     let mut conn = state.conn.lock().unwrap();
     let c = conn.as_mut().ok_or("not connected")?;
     let Some(udp_addr) = c.udp_addr else {
@@ -710,7 +777,7 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_secs(6)).await;
             let state = app.state::<AppState>();
-            let unanswered = state.conn.lock().unwrap().as_ref().is_some_and(|c| c.generation == generation && c.voice_attempt == attempt);
+            let unanswered = with_generation(&state, generation, |c| c.voice_attempt == attempt).unwrap_or(false);
             if unanswered {
                 let _ = app.emit("voice-state", serde_json::json!({ "ready": false, "error": "Hopp Cloud didn't answer. It may be running an older version without voice." }));
             }
@@ -736,6 +803,10 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
 
 #[tauri::command]
 fn leave_voice(state: State<'_, AppState>) -> CmdResult {
+    // Voice in a server you aren't looking at: that's the one to leave.
+    if end_voice_elsewhere(&state) {
+        return Ok(());
+    }
     with_conn(&state, |c| {
         c.control.send(ClientMsg::LeaveVoice);
         c.engine = None;
@@ -752,7 +823,7 @@ fn start_peer_voice(ui: AppHandle, generation: u64, attempt: u64, channel: Chann
         return;
     };
     let current = |c: &Connection| c.generation == generation && c.voice_attempt == attempt;
-    let Some(session_id) = state.conn.lock().unwrap().as_ref().filter(|c| current(c)).map(|c| c.session_id) else { return };
+    let Some(session_id) = with_generation(&state, generation, |c| current(c).then_some(c.session_id)).flatten() else { return };
 
     // Voice needs the microphone; a running mic check would compete for it.
     *state.mic_test.lock().unwrap() = None;
@@ -761,39 +832,46 @@ fn start_peer_voice(ui: AppHandle, generation: u64, attempt: u64, channel: Chann
         Ok(started) => started,
         Err(e) => {
             let _ = ui.emit("voice-state", serde_json::json!({ "ready": false, "error": format!("audio: {e:#}") }));
-            if let Some(c) = state.conn.lock().unwrap().as_mut().filter(|c| current(c)) {
-                c.control.send(ClientMsg::LeaveVoice);
-            }
+            with_generation(&state, generation, |c| {
+                if current(c) {
+                    c.control.send(ClientMsg::LeaveVoice);
+                }
+            });
             return;
         }
     };
 
-    let mut conn = state.conn.lock().unwrap();
-    let Some(c) = conn.as_mut().filter(|c| current(c)) else { return };
-    for peer in c.voice_peers.values() {
-        engine.set_peer(peer);
-    }
-    if let Some(me) = engine.endpoint() {
-        tracing::info!("voice in channel {channel} reachable at {:?} / {:?}", me.public, me.local);
-        c.control.send(ClientMsg::VoiceEndpoint { public: me.public.clone(), local: me.local.clone() });
-    }
-    // Engine events come from realtime threads; relay them until the engine stops.
     let relay = ui.clone();
-    std::thread::spawn(move || {
-        for ev in events {
-            // A relay address to hand out: everyone in the channel learns it from the server.
-            if let strom_voice::EngineEvent::Endpoint { endpoint } = &ev {
-                let state = relay.state::<AppState>();
-                let conn = state.conn.lock().unwrap();
-                if let Some(c) = conn.as_ref() {
-                    c.control.send(ClientMsg::VoiceEndpoint { public: endpoint.public.clone(), local: endpoint.local.clone() });
-                }
-            }
-            let _ = relay.emit("voice", ev);
+    let started = with_generation(&state, generation, move |c| {
+        if !current(c) {
+            return false;
         }
+        for peer in c.voice_peers.values() {
+            engine.set_peer(peer);
+        }
+        if let Some(me) = engine.endpoint() {
+            tracing::info!("voice in channel {channel} reachable at {:?} / {:?}", me.public, me.local);
+            c.control.send(ClientMsg::VoiceEndpoint { public: me.public.clone(), local: me.local.clone() });
+        }
+        // Engine events come from realtime threads; relay them until the engine stops.
+        std::thread::spawn(move || {
+            for ev in events {
+                // A relay address to hand out: everyone in the channel learns it from the server
+                // (the one this voice belongs to, which may not be the one in view).
+                if let strom_voice::EngineEvent::Endpoint { endpoint } = &ev {
+                    with_generation(&relay.state::<AppState>(), generation, |c| {
+                        c.control.send(ClientMsg::VoiceEndpoint { public: endpoint.public.clone(), local: endpoint.local.clone() });
+                    });
+                }
+                let _ = relay.emit("voice", ev);
+            }
+        });
+        c.engine = Some(engine);
+        true
     });
-    c.engine = Some(engine);
-    let _ = ui.emit("voice-state", serde_json::json!({ "ready": true }));
+    if started == Some(true) {
+        let _ = ui.emit("voice-state", serde_json::json!({ "ready": true }));
+    }
 }
 
 struct Call {
@@ -811,6 +889,7 @@ async fn start_call(app: AppHandle, call_id: String, key: String, me: SessionId)
         // One microphone user at a time: the mic check and server voice make way.
         *state.mic_test.lock().unwrap() = None;
         *state.call.lock().unwrap() = None;
+        end_voice_elsewhere(&state);
         let devices = state.devices.lock().unwrap().clone();
         let (engine, events) = VoiceEngine::start_mesh(me, key, &devices, state.audio.clone()).map_err(|e| format!("Couldn't start your audio: {e:#}"))?;
         let endpoint = engine.endpoint().cloned();
@@ -838,8 +917,8 @@ fn call_peer(state: State<'_, AppState>, call_id: String, peer: PeerEndpoint) {
 /// for people no direct path reaches.
 #[tauri::command]
 fn set_relay(state: State<'_, AppState>, login: strom_voice::turn::TurnLogin) -> CmdResult {
-    if let Some(engine) = state.conn.lock().unwrap().as_ref().and_then(|c| c.engine.as_ref()) {
-        engine.set_relay(&login).map_err(|e| format!("Couldn't use the voice relay: {e:#}"))?;
+    if let Some(result) = with_voice(&state, |c| c.engine.as_ref().map(|e| e.set_relay(&login))).flatten() {
+        result.map_err(|e| format!("Couldn't use the voice relay: {e:#}"))?;
     }
     if let Some(call) = state.call.lock().unwrap().as_ref() {
         call.engine.set_relay(&login).map_err(|e| format!("Couldn't use the voice relay: {e:#}"))?;
@@ -873,15 +952,17 @@ fn decode_key(hex: &str) -> Option<[u8; 32]> {
 
 /// Peer-to-peer voice: stop sending to people who left our voice channel.
 fn forget_departed_peers(ui: &AppHandle, generation: u64, roster: &Roster) {
-    let state = ui.state::<AppState>();
-    let mut conn = state.conn.lock().unwrap();
-    let Some(c) = conn.as_mut().filter(|c| c.generation == generation && c.udp_addr.is_none()) else { return };
     let mine = roster.users.iter().find(|u| u.session_id == roster.me).and_then(|u| u.voice_channel);
     let with_me = |id: SessionId| mine.is_some() && roster.users.iter().any(|u| u.session_id == id && u.voice_channel == mine);
-    c.voice_peers.retain(|&id, _| with_me(id));
-    if let Some(engine) = &c.engine {
-        engine.retain_peers(with_me);
-    }
+    with_generation(&ui.state::<AppState>(), generation, |c| {
+        if c.udp_addr.is_some() {
+            return;
+        }
+        c.voice_peers.retain(|&id, _| with_me(id));
+        if let Some(engine) = &c.engine {
+            engine.retain_peers(with_me);
+        }
+    });
 }
 
 #[tauri::command]
@@ -922,7 +1003,7 @@ fn get_pins(state: State<'_, AppState>, channel: ChannelId) -> CmdResult {
 /// The soundboard: a short sound everyone in our voice channel or call hears.
 #[tauri::command]
 fn play_soundboard(state: State<'_, AppState>, name: String) -> CmdResult {
-    let in_voice = state.conn.lock().unwrap().as_ref().is_some_and(|c| c.engine.is_some()) || state.call.lock().unwrap().is_some();
+    let in_voice = in_server_voice(&state) || state.call.lock().unwrap().is_some();
     if !in_voice {
         return Err("Join a voice channel or a call to use the soundboard.".into());
     }
@@ -1129,7 +1210,7 @@ fn get_server_settings(state: State<'_, AppState>) -> CmdResult {
 #[tauri::command]
 async fn start_mic_test(app: AppHandle, state: State<'_, AppState>) -> CmdResult {
     // In voice the microphone is already open: the engine plays it back instead.
-    if state.conn.lock().unwrap().as_ref().is_some_and(|c| c.engine.is_some()) {
+    if in_server_voice(&state) {
         state.audio.set_monitor(true);
         return Ok(());
     }
@@ -1379,6 +1460,10 @@ fn local_address() -> Option<String> {
 fn send_state(state: &AppState) {
     let (muted, deafened) = (state.audio.muted(), state.audio.deafened());
     let _ = with_conn(state, |c| c.control.send(ClientMsg::SetState { muted, deafened }));
+    // The people in a voice channel you stayed in see it too.
+    for c in state.parked.lock().unwrap().values().filter(|c| c.engine.is_some()) {
+        c.control.send(ClientMsg::SetState { muted, deafened });
+    }
 }
 
 #[tauri::command]
@@ -1501,8 +1586,8 @@ async fn set_devices(state: State<'_, AppState>, input: Option<String>, output: 
     if let Some(call) = state.call.lock().unwrap().as_mut() {
         call.engine.set_devices(&choice).map_err(|e| format!("audio: {e:#}"))?;
     }
-    match state.conn.lock().unwrap().as_mut().and_then(|c| c.engine.as_mut()) {
-        Some(engine) => engine.set_devices(&choice).map_err(|e| format!("audio: {e:#}")),
+    match with_voice(&state, |c| c.engine.as_mut().map(|e| e.set_devices(&choice))).flatten() {
+        Some(result) => result.map_err(|e| format!("audio: {e:#}")),
         None => Ok(()),
     }
 }

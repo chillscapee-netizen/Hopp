@@ -113,6 +113,11 @@ test("a new account starts empty and picks a unique username", async () => {
   assert.match((await d.waitFor((m) => m.type === "error")).message, /lowercase/);
   d.send({ type: "claim_username", name: "admin" });
   assert.match((await d.waitFor((m) => m.type === "error")).message, /reserved/);
+  // Names that could pass for Hopp itself are held back too.
+  for (const official of ["hopp", "hopp_support", "official.hopp", "hoppteam"]) {
+    d.send({ type: "claim_username", name: official });
+    assert.match((await d.waitFor((m) => m.type === "error")).message, /reserved/, official);
+  }
 
   const name = unique("bingu");
   d.send({ type: "check_username", name });

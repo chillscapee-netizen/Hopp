@@ -847,3 +847,20 @@ test("nicknames: your own, a moderator's for others, kept for next time, shown o
   owner.close();
   again.close();
 });
+
+test("floods are held back: reactions and anything else sent far too fast", async () => {
+  const { owner } = await newServer();
+  const general = channelId(owner, "general");
+  owner.send({ type: "send_chat", channel: general, text: "react to this" });
+  const posted = await owner.waitFor((m) => m.type === "chat");
+  // A burst of reactions: the first ones go through, then a polite no.
+  for (let i = 0; i < 20; i++) owner.send({ type: "react", channel: general, id: posted.message.id, emoji: "👍", on: i % 2 === 0 });
+  assert.match(await errorOf(owner), /too fast/);
+  // A flood of anything is simply dropped: far fewer answers than questions.
+  let answers = 0;
+  owner.ws.addEventListener("message", (e) => { if (JSON.parse(e.data).type === "pins") answers++; });
+  for (let i = 0; i < 200; i++) owner.send({ type: "get_pins", channel: general });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.ok(answers >= 20 && answers < 120, `answers ${answers}`);
+  owner.close();
+});

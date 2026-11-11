@@ -119,11 +119,20 @@ function authMessage(nonce: Uint8Array): Uint8Array {
   return msg;
 }
 
+/** Words that, next to "hopp", make a name look like it speaks for Hopp. */
+const OFFICIAL_WORDS = ["", "app", "chat", "team", "staff", "support", "help", "admin", "mod", "moderator", "official", "system", "security", "safety", "news", "updates", "dev", "hq"];
+
+/** "hopp", "hopp_support", "official.hopp"…: names someone could pass off as Hopp itself. */
+function looksOfficial(name: string): boolean {
+  const plain = name.replace(/[_.]/g, "");
+  return OFFICIAL_WORDS.some((w) => plain === "hopp" + w || plain === w + "hopp");
+}
+
 /** Lowercase letters, digits, underscore and dot; 2–32 long; no dots at the ends or twice in a row. */
 export function validUsername(name: string): string | null {
   if (!/^[a-z0-9_.]{2,32}$/.test(name)) return "Usernames are 2–32 characters: lowercase letters, numbers, _ and .";
   if (name.startsWith(".") || name.endsWith(".") || name.includes("..")) return "A username can't start or end with a dot, or have two in a row.";
-  if (RESERVED.has(name)) return "That username is reserved.";
+  if (RESERVED.has(name) || looksOfficial(name)) return "That username is reserved.";
   return null;
 }
 

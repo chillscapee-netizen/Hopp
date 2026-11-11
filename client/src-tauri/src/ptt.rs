@@ -64,6 +64,8 @@ impl Ptt {
         let mut held_before: Option<Vec<bool>> = None;
         let mut last_check = std::time::Instant::now();
         let mut warned_about: Option<u32> = None;
+        // The app in front last time we looked: it's only examined when it changes.
+        let mut seen_front: Option<u32> = None;
         loop {
             if self.recording.load(Ordering::Relaxed) {
                 // Keys already held when recording started don't count.
@@ -94,11 +96,15 @@ impl Ptt {
             // normal apps; say so instead of failing silently.
             if active && last_check.elapsed() >= ELEVATION_CHECK {
                 last_check = std::time::Instant::now();
-                let blocker = elevated_foreground();
-                if blocker.is_some() && blocker != warned_about {
-                    let _ = app.emit("ptt-blocked", ());
+                let front = foreground_pid();
+                if front != seen_front {
+                    seen_front = front;
+                    let blocker = front.filter(|&pid| runs_elevated(pid));
+                    if blocker.is_some() && blocker != warned_about {
+                        let _ = app.emit("ptt-blocked", ());
+                    }
+                    warned_about = blocker;
                 }
-                warned_about = blocker;
             }
             if pressed != down {
                 down = pressed;
@@ -127,13 +133,27 @@ fn is_down(_vk: u32) -> bool {
     false
 }
 
-/// The process id of the app in front, if it runs as administrator and we don't.
+/// The process id of the app in front (not ourselves).
 #[cfg(windows)]
-fn elevated_foreground() -> Option<u32> {
+fn foreground_pid() -> Option<u32> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0 && pid != std::process::id()).then_some(pid)
+    }
+}
+
+/// Does that app run as administrator while we don't? Asked once per app that comes to the front.
+#[cfg(windows)]
+fn runs_elevated(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     fn elevated(process: HANDLE) -> bool {
         unsafe {
@@ -156,26 +176,27 @@ fn elevated_foreground() -> Option<u32> {
         }
     }
 
+    // Whether Hopp itself runs as administrator never changes while it runs.
+    static WE_ARE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     unsafe {
-        let window = GetForegroundWindow();
-        if window.is_invalid() {
-            return None;
+        if *WE_ARE.get_or_init(|| elevated(GetCurrentProcess())) {
+            return false;
         }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(window, Some(&mut pid));
-        if pid == 0 || pid == std::process::id() || elevated(GetCurrentProcess()) {
-            return None;
-        }
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let result = elevated(process).then_some(pid);
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let result = elevated(process);
         let _ = CloseHandle(process);
         result
     }
 }
 
 #[cfg(not(windows))]
-fn elevated_foreground() -> Option<u32> {
+fn foreground_pid() -> Option<u32> {
     None
+}
+
+#[cfg(not(windows))]
+fn runs_elevated(_pid: u32) -> bool {
+    false
 }
 
 fn pressed_keys() -> Vec<bool> {

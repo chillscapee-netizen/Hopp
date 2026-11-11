@@ -35,6 +35,17 @@ const STALE_SESSION_MS = 30_000;
 const CHAT_HISTORY = 100;
 const CHAT_KEEP = 1000;
 /** Chat flood protection: a burst of this many, then one per second. */
+/** Everything a member sends: a burst, then this many a second. Floods are dropped. */
+const ANY_BURST = 60;
+const ANY_PER_SECOND = 15;
+/** Reactions, edits and "is typing": things everyone in the channel is told about. */
+const ACT_BURST = 10;
+const ACT_PER_SECOND = 2;
+/** Video handshakes come in bursts (network addresses), a lot more of them. */
+const SIGNAL_BURST = 300;
+const SIGNAL_PER_SECOND = 60;
+/** Accounts told about a message straight away; the rest follow moments later, in turns. */
+const TELL_AT_ONCE = 40;
 const CHAT_BURST = 5;
 const CHAT_PER_SECOND = 1;
 const TYPING_INTERVAL_MS = 2000;
@@ -147,6 +158,11 @@ interface Session {
   user?: User;
   tokens?: number;
   refilled?: number;
+  /** Flood limits: what's left of each allowance, and when they were last topped up. */
+  any?: number;
+  act?: number;
+  sig?: number;
+  topped?: number;
   lastTyping?: number;
   endpoint?: Endpoint;
 }
@@ -236,6 +252,7 @@ export class StromServer extends DurableObject<Env> {
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
       CREATE TABLE IF NOT EXISTS notified (key TEXT NOT NULL, channel INTEGER NOT NULL, PRIMARY KEY (key, channel));
+      CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS images (
         id TEXT PRIMARY KEY, uploader TEXT NOT NULL, type TEXT NOT NULL, data BLOB NOT NULL,
         size INTEGER NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
@@ -490,14 +507,21 @@ export class StromServer extends DurableObject<Env> {
     if (!serverId) return;
     const names = new Map<string, string>();
     const keys: string[] = [];
-    for (const row of this.sql.exec("SELECT key, name FROM accounts WHERE key NOT IN (SELECT key FROM bans) LIMIT 1000")) {
-      keys.push(String(row.key));
-      names.set(String(row.key), String(row.name));
-    }
+    // A plain message (nobody pinged) only concerns people who haven't heard about this
+    // channel yet: in a lively channel that's nobody, and nothing more is read.
+    const pings = MENTION.test(m.text) || ROLE_MENTION.test(m.text) || CROWD.test(m.text) || !!m.reply;
+    MENTION.lastIndex = ROLE_MENTION.lastIndex = CROWD.lastIndex = 0;
+    const rows = pings
+      ? this.sql.exec("SELECT key, name FROM accounts WHERE key NOT IN (SELECT key FROM bans) LIMIT 1000")
+      : this.sql.exec("SELECT key, name FROM accounts WHERE key NOT IN (SELECT key FROM bans) AND key NOT IN (SELECT key FROM notified WHERE channel = ?) LIMIT 1000", m.channel);
     const ch = this.channels().find((c) => c.id === m.channel);
-    const visible = keys.filter((key) => this.canSee(key, ch));
-    keys.length = 0;
-    keys.push(...visible);
+    const allowed = this.whoCanSee(ch);
+    for (const row of rows) {
+      const key = String(row.key);
+      if (allowed && !allowed.has(key)) continue;
+      keys.push(key);
+      names.set(key, String(row.name));
+    }
     const here = new Set(this.members().map(([, s]) => s.key));
     const mentioned = new Set([...m.text.matchAll(MENTION)].map((x) => x[1]));
     if (m.reply) mentioned.add(m.reply.author_key);
@@ -524,16 +548,48 @@ export class StromServer extends DurableObject<Env> {
     // Each call to an account counts against Cloudflare's free daily limit, so they're few:
     // people in the server already have the message, and the author has read it. Everyone
     // else hears once that a channel has news, until they next come in; mentions always.
-    const told = new Set(this.sql.exec("SELECT key FROM notified WHERE channel = ?", m.channel).toArray().map((r) => String(r.key)));
+    const told = pings ? new Set(this.sql.exec("SELECT key FROM notified WHERE channel = ?", m.channel).toArray().map((r) => String(r.key))) : new Set<string>();
+    let sent = 0;
+    let waiting = false;
     for (const key of keys) {
       if (key === m.author_key) continue;
       const mention = mentioned.has(key) || crowd.has(key);
       if (!mention && (here.has(key) || told.has(key))) continue;
       if (!here.has(key)) this.sql.exec("INSERT OR IGNORE INTO notified (key, channel) VALUES (?, ?)", key, m.channel);
       // "Only by @everyone/@here", so people who turned those off can skip them.
-      const call = accountOf(this.env, key).channelActivity({ ...activity, mention, crowd: !mentioned.has(key) && crowd.has(key), preview });
-      this.ctx.waitUntil(call.catch(() => {}));
+      const payload = { ...activity, mention, crowd: !mentioned.has(key) && crowd.has(key), preview };
+      // Only so many calls fit in one go: the first ones leave now, the rest in turns right after.
+      if (sent < TELL_AT_ONCE) {
+        sent++;
+        this.ctx.waitUntil(accountOf(this.env, key).channelActivity(payload).catch(() => {}));
+      } else {
+        this.sql.exec("INSERT INTO outbox (key, payload) VALUES (?, ?)", key, JSON.stringify(payload));
+        waiting = true;
+      }
     }
+    if (waiting) this.ctx.waitUntil(this.wakeForOutbox());
+  }
+
+  /** Sees to it that the accounts still waiting to be told get their turn very soon. */
+  private async wakeForOutbox() {
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 200);
+  }
+
+  /** The next accounts in line are told about their message; then the ones after, until none wait. */
+  async alarm() {
+    const rows = this.sql.exec("SELECT id, key, payload FROM outbox ORDER BY id LIMIT ?", TELL_AT_ONCE).toArray();
+    if (!rows.length) return;
+    this.sql.exec("DELETE FROM outbox WHERE id <= ?", Number(rows[rows.length - 1].id));
+    await Promise.allSettled(
+      rows.map((r) => {
+        try {
+          return accountOf(this.env, String(r.key)).channelActivity(JSON.parse(String(r.payload)));
+        } catch (err) {
+          return Promise.reject(err);
+        }
+      }),
+    );
+    if (this.sql.exec("SELECT 1 FROM outbox LIMIT 1").toArray().length) await this.ctx.storage.setAlarm(Date.now() + 200);
   }
 
   private members(): [WebSocket, Session][] {
@@ -799,6 +855,24 @@ export class StromServer extends DurableObject<Env> {
     return ch.private_roles.some((r) => mine.has(r));
   }
 
+  /**
+   * Everyone who may see a channel, or `null` when that's everyone. Worked out for the
+   * whole server at once, not person by person: a busy private channel stays cheap.
+   */
+  private whoCanSee(ch: Channel | undefined): Set<string> | null {
+    if (!ch?.private_roles?.length) return null;
+    const keys = new Set<string>();
+    const owner = this.meta("owner");
+    if (owner) keys.add(owner);
+    for (const r of this.sql.exec("SELECT key FROM accounts WHERE role = 'admin'")) keys.add(String(r.key));
+    const wanted = new Set(ch.private_roles);
+    const adminRoles = new Set(this.customRoles().filter((r) => r.level === "admin").map((r) => r.id));
+    for (const r of this.sql.exec("SELECT key, role FROM member_roles")) {
+      if (wanted.has(Number(r.role)) || adminRoles.has(Number(r.role))) keys.add(String(r.key));
+    }
+    return keys;
+  }
+
   private channelsFor(key: string | undefined): Channel[] {
     return this.channels().filter((c) => this.canSee(key, c));
   }
@@ -815,7 +889,16 @@ export class StromServer extends DurableObject<Env> {
   /** Sent only to the people who may see the channel. */
   private broadcastChannel(channel: number, msg: object, except?: WebSocket) {
     const ch = this.channels().find((c) => c.id === channel);
-    for (const [ws, s] of this.members()) if (ws !== except && this.canSee(s.key, ch)) this.send(ws, msg);
+    const allowed = this.whoCanSee(ch);
+    const text = JSON.stringify(msg);
+    for (const [ws, s] of this.members()) {
+      if (ws === except || (allowed && !(s.key && allowed.has(s.key)))) continue;
+      try {
+        ws.send(text);
+      } catch {
+        // Closing; ignore.
+      }
+    }
   }
 
   /** Someone's roles changed: their name card follows, everywhere. */
@@ -914,7 +997,30 @@ export class StromServer extends DurableObject<Env> {
     return false;
   }
 
+  /** Takes one from an allowance that fills up again over time. False when it's used up. */
+  private spend(ws: WebSocket, s: Session, which: "any" | "act" | "sig"): boolean {
+    const now = Date.now();
+    const gone = (now - (s.topped ?? now)) / 1000;
+    s.topped = now;
+    s.any = Math.min(ANY_BURST, (s.any ?? ANY_BURST) + gone * ANY_PER_SECOND);
+    s.act = Math.min(ACT_BURST, (s.act ?? ACT_BURST) + gone * ACT_PER_SECOND);
+    s.sig = Math.min(SIGNAL_BURST, (s.sig ?? SIGNAL_BURST) + gone * SIGNAL_PER_SECOND);
+    const ok = s[which]! >= 1;
+    if (ok) s[which]! -= 1;
+    ws.serializeAttachment(s);
+    return ok;
+  }
+
   private async onMember(ws: WebSocket, s: Session, msg: ClientMsg) {
+    // Nobody gets to flood the server (or everyone in it) with anything.
+    if (msg.type === "screen_signal") {
+      if (!this.spend(ws, s, "sig")) return;
+    } else if (!this.spend(ws, s, "any")) {
+      return;
+    } else if ((msg.type === "react" || msg.type === "edit_message" || msg.type === "typing") && !this.spend(ws, s, "act")) {
+      if (msg.type === "typing") return;
+      return this.error(ws, "You're doing that too fast. Slow down a little.");
+    }
     const user = s.user!;
     const owner = user.owner;
     const myRole = this.roleOf(s.key!);
@@ -1066,10 +1172,15 @@ export class StromServer extends DurableObject<Env> {
             reply?.id ?? null, reply?.sender_name ?? null, reply?.author_key ?? null, reply?.text ?? null,
           )
           .one();
-        this.sql.exec(
-          "DELETE FROM messages WHERE channel = ? AND id <= (SELECT id FROM messages WHERE channel = ? ORDER BY id DESC LIMIT 1 OFFSET ?)",
+        // The oldest make room; a picture among them goes too.
+        const trimmed = this.sql.exec(
+          "DELETE FROM messages WHERE channel = ? AND id <= (SELECT id FROM messages WHERE channel = ? ORDER BY id DESC LIMIT 1 OFFSET ?) RETURNING text",
           ch.id, ch.id, CHAT_KEEP,
         );
+        for (const old of trimmed) {
+          const gone = String(old.text).match(IMAGE_TOKEN);
+          if (gone) this.sql.exec("DELETE FROM images WHERE id = ?", gone[1]);
+        }
         const message: ChatMessage = {
           id: Number(row.id), channel: ch.id, sender: user.session_id, sender_name: user.name,
           author_key: s.key!, text, sent_at: now,
@@ -1137,11 +1248,13 @@ export class StromServer extends DurableObject<Env> {
         ws.serializeAttachment(s);
         if (needle.length < 2 || needle.length > 100) return this.send(ws, { type: "search_results", query, messages: [] });
         const pattern = "%" + needle.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+        // Only in channels you can see, so hidden ones never use up the results.
+        const mine = this.channelsFor(s.key).map((c) => c.id);
+        if (!mine.length) return this.send(ws, { type: "search_results", query, messages: [] });
         const messages = this.sql
-          .exec("SELECT * FROM messages WHERE text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?", pattern, SEARCH_RESULTS)
+          .exec(`SELECT * FROM messages WHERE channel IN (${mine.map(() => "?").join(",")}) AND text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`, ...mine, pattern, SEARCH_RESULTS)
           .toArray()
-          .map(rowToMessage)
-          .filter((m) => this.canSee(s.key, this.channels().find((c) => c.id === m.channel)));
+          .map(rowToMessage);
         return this.send(ws, { type: "search_results", query, messages });
       }
       case "load_older": {

@@ -400,6 +400,30 @@ function outranks(u) {
 function myVoice() {
   return me()?.voice_channel ?? null;
 }
+/**
+ * Voice in a server you left for another one keeps going: this is that server and how it
+ * looks (`state.voiceAway = { id, roster }`), until you come back, hang up or join elsewhere.
+ */
+function awayVoice() {
+  const a = state.voiceAway;
+  if (!a) return null;
+  const channel = a.roster.users.find((u) => u.session_id === a.roster.me)?.voice_channel ?? null;
+  if (channel === null) return null;
+  const server = prefs.servers.find((x) => x.id === a.id);
+  return { server, channel, roster: a.roster, name: a.roster.channels.find((c) => c.id === channel)?.name ?? "", label: server?.label ?? a.roster.server_name };
+}
+/** Voice ended in the server you aren't looking at. */
+function endAwayVoice(sound = true) {
+  if (!state.voiceAway) return;
+  state.voiceAway = null;
+  state.awaySpeaking = false;
+  state.latency = null;
+  if (sound) playSound("leave");
+  setActivityFromVoice();
+  renderVoicePanel();
+  renderUserPanel();
+  renderRail();
+}
 function channel(id) {
   return state.roster?.channels.find((c) => c.id === id);
 }
@@ -765,6 +789,8 @@ async function logout() {
   if (syncState.dirty && syncState.ready) await pushSync();
   Object.assign(syncState, { version: 0, saving: false, dirty: false, timer: null, ready: false });
   await call("logout");
+  state.voiceAway = null;
+  state.awaySpeaking = false;
   // The next account connects its own servers in the background.
   warmStarted = false;
   state.account = null;
@@ -1072,6 +1098,12 @@ function railServer(s, folder) {
   b.classList.toggle("connecting", s.id === state.connectingId);
   b.classList.toggle("unread", serverUnread(s));
   b.append(serverIcon("rail-icon server-tint", s.label, s.icon));
+  // Where your voice is, also while you look at another server.
+  if (s.id === (state.voiceAway ? state.voiceAway.id : connected() && myVoice() !== null ? state.activeId : null)) {
+    const v = el("span", "rail-voice");
+    v.append(icon("volume", "xs"));
+    b.append(v);
+  }
   railBadge(b, serverMentions(s));
   b.addEventListener("click", () => {
     if (railDrag.justDropped) return;
@@ -1629,6 +1661,14 @@ async function connectTo(server, create, reconnecting) {
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
   rememberServerView();
+  // In voice here: you stay in the channel while you look at the other server (video ends,
+  // it belongs to the view). Older servers can't wait in the background, so voice ends there.
+  if (connected() && myVoice() !== null && state.activeId !== server.id) {
+    stopShare();
+    stopWatching();
+    stopAllMedia();
+    if (state.roster.features?.includes("resync")) state.voiceAway = { id: state.activeId, roster: state.roster };
+  }
   // The server we leave stays connected in the background (connect parks it), so no disconnect here.
   state.activeId = null;
   state.roster = null;
@@ -1669,6 +1709,11 @@ async function connectTo(server, create, reconnecting) {
     state.roster = roster;
     state.activeId = server.id;
     state.notice = null;
+    // Back where your voice is.
+    if (state.voiceAway?.id === server.id) {
+      state.voiceAway = null;
+      state.awaySpeaking = false;
+    }
     freshView();
     rememberServerLook(server, roster);
     // We're a member now; the invite has done its job.
@@ -1718,12 +1763,65 @@ async function joinVoice(id) {
   if (state.call) await endCall();
   state.voiceState = { ready: false };
   state.latency = null;
+  // ...and voice in a server you aren't looking at.
+  const wasAway = !!state.voiceAway;
+  if (wasAway) endAwayVoice(false);
   await call("join_voice", { channel: id });
+  if (wasAway) {
+    state.appliedVolumes.clear();
+    applyUserVolumes();
+  }
 }
 
 $("hangup-btn").addEventListener("click", () => {
+  if (state.voiceAway) {
+    invoke("leave_voice").catch(() => {});
+    return endAwayVoice();
+  }
   state.voiceByMe = true;
   call("leave_voice");
+});
+
+/** The voice panel's line takes you to the channel you're in, wherever it is. */
+$("voice-where").addEventListener("click", async () => {
+  const away = awayVoice();
+  if (away) {
+    if (away.server && (await connectTo(away.server))) openTextChannel(away.channel);
+    return;
+  }
+  if (!connected() || myVoice() === null) return;
+  if (state.atHome) await connectTo(activeServer());
+  if (voiceChat()) openTextChannel(myVoice());
+});
+
+// Voice in a server that isn't in view: who's there with you, and when it ends.
+listen("voice-away", (e) => {
+  const a = state.voiceAway;
+  const server = a && prefs.servers.find((x) => x.id === a.id);
+  if (!a) return;
+  // The server was taken off your list meanwhile: its voice went with it.
+  if (!server) return endAwayVoice();
+  if (endpoint(server) !== e.payload.address) return;
+  const roster = e.payload.roster;
+  const mine = (r) => r.users.find((u) => u.session_id === r.me)?.voice_channel ?? null;
+  if (!roster || mine(roster) === null) {
+    endAwayVoice();
+    if (e.payload.lost) toast("Voice ended: the connection to " + server.label + " was lost.", true);
+    else if (roster) toast("You were disconnected from voice in " + server.label + ".");
+    return;
+  }
+  const company = (r) => new Set(r.users.filter((u) => u.voice_channel === mine(r) && u.session_id !== r.me).map((u) => u.session_id));
+  const before = company(a.roster);
+  const after = company(roster);
+  const moved = mine(a.roster) !== mine(roster);
+  a.roster = roster;
+  if (!moved) {
+    if ([...after].some((id) => !before.has(id))) playSound("user_join");
+    else if ([...before].some((id) => !after.has(id))) playSound("user_leave");
+  }
+  setActivityFromVoice();
+  renderVoicePanel();
+  renderUserPanel();
 });
 
 // ---------- server & voice events ----------
@@ -1823,6 +1921,14 @@ listen("roster", (e) => {
 
 listen("voice", (e) => {
   const ev = e.payload;
+  // Voice in a server that isn't in view: its people's numbers mean nothing in this one.
+  if (state.voiceAway && (ev.type === "speaking" || ev.type === "peer_quality" || ev.type === "peer_reach")) {
+    if (ev.type === "speaking" && ev.session_id === state.voiceAway.roster.me) {
+      state.awaySpeaking = ev.speaking;
+      renderUserPanel();
+    }
+    return;
+  }
   if (ev.type === "speaking") {
     ev.speaking ? state.speaking.add(ev.session_id) : state.speaking.delete(ev.session_id);
     // Who is talking shows in the voice channel (and on your own panel); not in the member list.
@@ -2376,7 +2482,7 @@ function userRow(u, className, size, sub) {
     live.dataset.tip = watching?.from === u.session_id ? "You're watching" : isSelf ? "See your own stream" : "Watch their screen";
     live.addEventListener("click", (e) => {
       e.stopPropagation();
-      watchScreen(u.session_id);
+      watchScreen(u.session_id, true);
     });
     row.append(live);
   }
@@ -2402,12 +2508,26 @@ function userRow(u, className, size, sub) {
 
 function renderVoicePanel() {
   const panel = $("voice-panel");
-  const voice = connected() ? myVoice() : null;
-  panel.hidden = voice === null;
+  const away = awayVoice();
+  const voice = away ? null : connected() ? myVoice() : null;
+  panel.hidden = voice === null && !away;
   if (panel.hidden) return;
   const status = panel.querySelector(".voice-status");
   const ms = state.latency;
   const { ready, error } = state.voiceState;
+  if (away) {
+    // In voice in another server: where, how it's going, and the way out. Video belongs to the view.
+    status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 80 && ms < 150)));
+    status.classList.toggle("bad", !!error || (ms !== null && ms >= 150));
+    $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
+    const where = away.name + " / " + away.label;
+    $("voice-where").textContent = ms === null ? where : where + " · " + (ms < 1 ? "<1 ms" : ms + " ms");
+    $("voice-actions").hidden = false;
+    $("cam-btn").hidden = true;
+    $("share-btn").hidden = true;
+    $("voice-actions").classList.add("sound-only");
+    return;
+  }
   status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 80 && ms < 150)));
   status.classList.toggle("bad", !!error || (ms !== null && ms >= 150));
   $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
@@ -2439,21 +2559,22 @@ function renderUserPanel() {
   $("me-avatar-slot").replaceChildren(avatar(name, "", statusDot(myStatus), state.me?.avatar));
   const card = $("me-card");
   card.dataset.user = on ? state.roster.me : "";
-  const live = on && state.speaking.has(state.roster.me);
+  const away = awayVoice();
+  const live = away ? !!state.awaySpeaking : on && state.speaking.has(state.roster.me);
   card.classList.toggle("speaking", live);
   $("me-name").textContent = name;
 
   const status = $("me-status");
   const sending = live && !state.muted && !state.deafened;
-  const voice = on ? myVoice() : null;
+  const voice = away ? away.channel : on ? myVoice() : null;
   status.classList.toggle("live", sending);
-  status.textContent = !on
+  status.textContent = !on && !away
     ? state.connectingId ? "Connecting…" : state.accountConnected ? statusLine(state.me?.custom_status) ?? STATUS_LABEL[state.me?.status ?? "online"] : "Offline"
     : state.deafened ? "Deafened"
     : state.muted ? "Muted"
     : sending ? "Speaking"
     : voice !== null && prefs.mode === "push_to_talk" && !prefs.pttKey ? "No push-to-talk key"
-    : voice !== null ? (state.micTesting ? "Hearing yourself" : `In ${channelName(voice)}`)
+    : voice !== null ? (state.micTesting ? "Hearing yourself" : `In ${away ? away.name : channelName(voice)}`)
     : statusLine(state.me?.custom_status) ?? STATUS_LABEL[state.me?.status ?? "online"] ?? "Online";
 
   // Deafened also means nobody hears you, so the microphone shows as off too.
@@ -3722,7 +3843,7 @@ $("settings").addEventListener("close", () => editName(false));
 
 // The mic check: outside voice it opens the microphone just for the settings screen.
 function inVoice() {
-  return connected() && myVoice() !== null;
+  return (connected() && myVoice() !== null) || !!state.voiceAway;
 }
 function renderMicTest() {
   const btn = $("mic-check");
@@ -4313,7 +4434,8 @@ function placePopover(pop, x, y) {
 }
 
 function applyUserVolumes() {
-  if (!state.roster) return;
+  // Volumes are for the people you're in voice with; while that's in another server, theirs stay.
+  if (!state.roster || state.voiceAway) return;
   for (const u of state.roster.users) {
     // Someone a moderator muted is silent for everyone; back to your setting when it's lifted.
     let vol = isBlocked(keyOf(u)) || u.server_muted ? 0 : userVolume(u);
@@ -4741,8 +4863,10 @@ function setActivityFromVoice() {
   // that server too see where and can join; others just see "In voice". A LAN server's
   // address is never shared (it would show where you are on your network).
   const activity = inVoice() ? "In voice" : null;
-  const server = activeServer();
-  const voice = activity && server && isCloud(server) && myVoice() !== null ? server.address + "#" + myVoice() : null;
+  const away = awayVoice();
+  const server = away ? away.server : activeServer();
+  const channel = away ? away.channel : myVoice();
+  const voice = activity && server && isCloud(server) && channel !== null ? server.address + "#" + channel : null;
   const key = activity + "|" + voice;
   if (key === lastActivity || !state.accountConnected) return;
   lastActivity = key;
@@ -7395,7 +7519,10 @@ function handleCallSelf(m) {
 }
 
 async function beginCallVoice(c) {
-  if (myVoice() !== null) {
+  if (state.voiceAway) {
+    await invoke("leave_voice").catch(() => {});
+    endAwayVoice(false);
+  } else if (myVoice() !== null) {
     state.voiceByMe = true;
     await call("leave_voice");
   }
@@ -9095,6 +9222,10 @@ const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|cpl|ps1|
 const FILE_MAX = 4 * 1024 ** 3;
 const FILE_CHUNK = 64 * 1024;
 const FILE_CONNECT_MS = 25_000;
+/** How far the sender may run ahead of what the receiver has written to disk. */
+const FILE_WINDOW = 16 * 1024 * 1024;
+/** The receiver says how far it has got about this often. */
+const FILE_ACK_EVERY = 1024 * 1024;
 const FILE_ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
 state.outgoingFiles = new Map(); // transfer -> { file, peer, status, sent, error, pc }
 state.incomingFiles = new Map(); // transfer -> { peer, name, size, status, received, path, error, pc, download }
@@ -9145,18 +9276,19 @@ function addressesReady(pc) {
   });
 }
 
-let fileCardTimer = null;
-/** Redraws a transfer's cards in place (not the whole conversation), at most ~8 times a second. */
+const fileCardTimers = new Map();
+/** Redraws a transfer's cards in place (not the whole conversation), at most ~8 times a second each. */
 function refreshFileCards(transfer, now) {
   const draw = () => {
-    fileCardTimer = null;
+    clearTimeout(fileCardTimers.get(transfer));
+    fileCardTimers.delete(transfer);
     for (const card of document.querySelectorAll(`.file-card[data-transfer="${transfer}"]`)) {
       const fresh = fileCard(card.peer, card.message);
       card.replaceWith(fresh);
     }
   };
   if (now) return draw();
-  if (!fileCardTimer) fileCardTimer = setTimeout(draw, 120);
+  if (!fileCardTimers.has(transfer)) fileCardTimers.set(transfer, setTimeout(draw, 120));
 }
 
 function failIncoming(transfer, error) {
@@ -9175,6 +9307,7 @@ function failOutgoing(transfer, error) {
   out.status = "failed";
   out.error = error;
   out.pc?.close();
+  out.onAck?.();
   refreshFileCards(transfer, true);
 }
 
@@ -9216,6 +9349,7 @@ async function startSending(transfer, out) {
   out.pc = pc;
   out.status = "connecting";
   out.sent = 0;
+  out.acked = null;
   out.error = null;
   refreshFileCards(transfer, true);
   const channel = pc.createDataChannel("file", { ordered: true });
@@ -9233,6 +9367,10 @@ async function startSending(transfer, out) {
       out.status = "sent";
       refreshFileCards(transfer, true);
       setTimeout(() => pc.close(), 500);
+    } else if (typeof e.data === "string" && e.data.startsWith("ack ")) {
+      // How much the other side has saved: we never run far ahead of a slow disk.
+      out.acked = Number(e.data.slice(4)) || 0;
+      out.onAck?.();
     }
   });
   channel.addEventListener("close", () => {
@@ -9256,6 +9394,11 @@ async function pump(transfer, out, channel) {
       if (channel.bufferedAmount > 4 * 1024 * 1024) {
         await new Promise((done) => channel.addEventListener("bufferedamountlow", done, { once: true }));
       }
+      // (Older versions never say how far they've got; they get it all as before.)
+      while (out.acked !== null && out.sent - out.acked > FILE_WINDOW && out.status === "sending") {
+        await new Promise((done) => (out.onAck = done));
+      }
+      if (out.status !== "sending") return;
       const piece = await out.file.slice(out.sent, out.sent + FILE_CHUNK).arrayBuffer();
       channel.send(piece);
       out.sent += piece.byteLength;
@@ -9306,6 +9449,16 @@ function receive(transfer, inc, channel) {
   channel.binaryType = "arraybuffer";
   let writing = Promise.resolve();
   let started = null;
+  let written = 0;
+  let told = 0;
+  const tell = () => {
+    told = written;
+    try {
+      channel.send("ack " + written);
+    } catch {
+      // Closing; the transfer ends by itself.
+    }
+  };
   // The channel may already be open when it arrives.
   const begin = () => {
     if (started) return;
@@ -9316,6 +9469,7 @@ function receive(transfer, inc, channel) {
       return d.id;
     });
     writing = started;
+    tell();
     refreshFileCards(transfer, true);
   };
   if (channel.readyState === "open") begin();
@@ -9339,7 +9493,13 @@ function receive(transfer, inc, channel) {
     const piece = new Uint8Array(e.data);
     inc.received += piece.byteLength;
     if (inc.received > inc.size) return failIncoming(transfer, "The file was bigger than announced, so it was stopped.");
-    writing = writing.then((id) => invoke("download_chunk", piece, { headers: { "x-download": inc.download ?? id } }).then(() => id));
+    writing = writing.then((id) =>
+      invoke("download_chunk", piece, { headers: { "x-download": inc.download ?? id } }).then(() => {
+        written += piece.byteLength;
+        if (written - told >= FILE_ACK_EVERY) tell();
+        return id;
+      }),
+    );
     writing.catch((err) => failIncoming(transfer, friendlyError(err)));
     refreshFileCards(transfer);
   });
@@ -10296,8 +10456,11 @@ function stopShare(quiet = false) {
 /** Someone asked to watch: a connection carrying our screen to them. */
 async function serveViewer(viewer) {
   screenShare.peers.get(viewer)?.close();
+  // Held at once, so asking twice in a row doesn't leave a second connection behind.
+  const hold = { close() {}, pendingIce: [] };
+  screenShare.peers.set(viewer, hold);
   const pc = new RTCPeerConnection({ iceServers: await fileIce() });
-  if (!screenShare.stream) return pc.close();
+  if (!screenShare.stream || screenShare.peers.get(viewer) !== hold) return pc.close();
   pc.pendingIce = [];
   screenShare.peers.set(viewer, pc);
   pc.onicecandidate = (e) => e.candidate && screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
@@ -10321,12 +10484,14 @@ function tuneScreenSender(pc) {
   }
 }
 
-function watchScreen(session) {
+function watchScreen(session, asked = false) {
+  if (asked) skippedStreams.delete(session);
   // Like Discord: watching takes you to their voice channel, where the stream shows big.
   const where = state.roster?.users.find((u) => u.session_id === session)?.voice_channel;
   if (where != null && voiceChat() && state.view !== where) openTextChannel(where);
   // Not in their voice channel: join it, then the stream starts (streams are for who's there).
   if (where != null && session !== state.roster?.me && myVoice() !== where) {
+    skippedStreams.delete(session);
     state.pendingWatch = { session, channel: where, at: Date.now() };
     joinVoice(where);
     return;
@@ -10342,17 +10507,52 @@ function watchScreen(session) {
     renderSidebar();
     return;
   }
-  const w = { from: session, pc: null, pending: [] };
+  const w = { from: session, pc: null, pending: [], tries: 0 };
   watching = w;
   renderScreenStage();
   renderSidebar();
-  screenSend(session, { k: "watch", s: "sharer" });
+  askForScreen(w);
+}
+
+/** Streams you closed (or that couldn't be reached): they wait for a click instead of starting again. */
+var skippedStreams = new Set();
+
+/** Asks the one sharing for their screen; says so if nothing comes of it. */
+function askForScreen(w) {
+  const attempt = ++w.tries;
+  screenSend(w.from, { k: "watch", s: "sharer" });
   setTimeout(() => {
-    if (watching === w && !w.pc) {
-      toast("Couldn't reach their screen. Try again in a moment.", true);
-      stopWatching();
-    }
+    if (watching !== w || w.tries !== attempt || w.pc?.connectionState === "connected") return;
+    retryScreen(w);
   }, 10_000);
+}
+
+/** The stream didn't come through: once more from the start, then give up and say why. */
+function retryScreen(w) {
+  if (watching !== w) return;
+  w.pc?.close();
+  w.pc = null;
+  w.pending = [];
+  if (w.tries >= 3) {
+    skippedStreams.add(w.from);
+    toast("Couldn't connect to " + (userName(w.from) ?? "their") + (userName(w.from) ? "'s" : "") + " screen. Their network or yours is blocking it.", true);
+    return stopWatching();
+  }
+  $("screen-video").srcObject = null;
+  $("screen-wait").hidden = false;
+  askForScreen(w);
+}
+
+/**
+ * In the voice channel you're looking at, a screen someone shares starts by itself: when it's
+ * the only one, and you didn't close it. Several at once wait for you to pick.
+ */
+function autoWatch() {
+  if (watching || state.pendingWatch || !state.roster || !online()) return;
+  const mine = myVoice();
+  if (mine === null || state.view !== mine) return;
+  const sharers = state.roster.users.filter((u) => u.sharing && u.voice_channel === mine && u.session_id !== state.roster.me);
+  if (sharers.length === 1 && !skippedStreams.has(sharers[0].session_id)) watchScreen(sharers[0].session_id);
 }
 
 function stopWatching(tell = true) {
@@ -10380,6 +10580,11 @@ listen("screen-signal", async (e) => {
     if (m.k === "watch") return serveViewer(from);
     const pc = screenShare.peers.get(from);
     if (!pc) return;
+    if (!pc.setRemoteDescription) {
+      // Still being set up: only "stop" means anything yet.
+      if (m.k === "stop") screenShare.peers.delete(from);
+      return;
+    }
     if (m.k === "answer") {
       await pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
       for (const c of pc.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
@@ -10403,6 +10608,9 @@ listen("screen-signal", async (e) => {
     w.pc = pc;
     pc.ontrack = (ev) => ($("screen-video").srcObject = ev.streams[0] ?? new MediaStream([ev.track]));
     pc.onicecandidate = (ev) => ev.candidate && screenSend(from, { k: "ice", s: "sharer", c: ev.candidate.toJSON() });
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" && watching === w && w.pc === pc) retryScreen(w);
+    };
     await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
     for (const c of w.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
     await pc.setLocalDescription(await pc.createAnswer());
@@ -10420,8 +10628,10 @@ function syncScreen() {
   if (!canShare()) {
     stopShare(true);
     stopWatching(false);
+    skippedStreams.clear();
     return;
   }
+  for (const id of skippedStreams) if (!state.roster.users.some((u) => u.session_id === id && u.sharing && u.voice_channel === myVoice())) skippedStreams.delete(id);
   // Your own stays while you share (the server may not have said so yet).
   if (watching && !watching.local) {
     const u = state.roster.users.find((x) => x.session_id === watching.from);
@@ -10455,7 +10665,11 @@ function renderScreenStage() {
 $("screen-video").addEventListener("playing", () => ($("screen-wait").hidden = true));
 $("screen-video").addEventListener("dblclick", () => toggleScreenFull());
 $("screen-full").addEventListener("click", () => toggleScreenFull());
-$("screen-close").addEventListener("click", () => stopWatching());
+$("screen-close").addEventListener("click", () => {
+  // Closed by hand: it stays closed until you ask for it again.
+  if (watching && !watching.local) skippedStreams.add(watching.from);
+  stopWatching();
+});
 $("share-btn").addEventListener("click", () => (screenShare.stream ? stopShare() : startShare()));
 
 function toggleScreenFull() {
@@ -10748,12 +10962,15 @@ function renderVoiceStage() {
     if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
     return;
   }
+  autoWatch();
   const here = state.roster.users.filter((u) => u.voice_channel === view).sort(byName);
   const mine = myVoice() === view;
   const camOf = (u) => mediaStream("cam", u.session_id === state.roster.me ? "me" : u.session_id);
   const screenFocus = !!watching && here.some((u) => u.session_id === watching.from);
   const camFocus = !screenFocus && focusTile !== null && here.some((u) => u.session_id === focusTile && camOf(u));
-  const focused = screenFocus || camFocus;
+  // Screens being shared that you aren't watching: offered big, in the middle.
+  const offers = screenFocus || camFocus ? [] : here.filter((u) => u.sharing && u.session_id !== state.roster.me);
+  const focused = screenFocus || camFocus || offers.length > 0;
   const tiles = el("div", "voice-tiles" + (focused ? " strip" : ""));
   const main = focused ? el("div", "stage-main") : null;
   for (const u of here) {
@@ -10771,19 +10988,33 @@ function renderVoiceStage() {
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
     tile.append(el("span", "voice-tile-name ellipsis", u.name), marks);
     tile.addEventListener("click", (e) => {
-      if (e.target.closest(".live-pill")) return watchScreen(u.session_id);
+      if (e.target.closest(".live-pill")) return watchScreen(u.session_id, true);
       // A camera: in the middle, big (click it again for everyone).
       if (cam) {
         focusTile = focusTile === u.session_id ? null : u.session_id;
         return renderVoiceStage();
       }
-      if (u.sharing) return watchScreen(u.session_id);
+      if (u.sharing) return watchScreen(u.session_id, true);
       if (!isMe) openUserCard(u, tile);
     });
     if (camFocus && u.session_id === focusTile) {
       tile.classList.add("focus");
       main.append(tile);
     } else tiles.append(tile);
+  }
+  if (offers.length) {
+    const cards = el("div", "stream-cards");
+    for (const u of offers) {
+      const card = el("button", "stream-card");
+      card.type = "button";
+      card.dataset.stream = u.session_id;
+      const badge = el("span", "stream-card-icon");
+      badge.append(icon("monitor"));
+      card.append(badge, el("strong", "ellipsis", u.name), el("span", "stream-card-sub", "is sharing their screen"), el("span", "btn primary sm", mine ? "Watch" : "Join and watch"));
+      card.addEventListener("click", () => watchScreen(u.session_id, true));
+      cards.append(card);
+    }
+    main.append(cards);
   }
   if (screenFocus) {
     main.append(screen);
@@ -11095,6 +11326,15 @@ async function offerMedia(kind, peer) {
   pc.pendingIce = [];
   out.peers.set(peer, pc);
   pc.onicecandidate = (e) => e.candidate && out.room.send(peer, { v: "m", t: kind, d: "r", k: "ice", c: e.candidate.toJSON() });
+  // Didn't get through: twice more from the start (the other side takes a new offer as a fresh one).
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") out.tries?.delete(peer);
+    if (pc.connectionState !== "failed" || media.out[kind] !== out || out.peers.get(peer) !== pc) return;
+    out.tries ??= new Map();
+    const tries = (out.tries.get(peer) ?? 0) + 1;
+    out.tries.set(peer, tries);
+    if (tries <= 2) offerMedia(kind, peer);
+  };
   pc.addTrack(out.stream.getVideoTracks()[0], out.stream);
   await pc.setLocalDescription(await pc.createOffer());
   out.room.send(peer, { v: "m", t: kind, d: "r", k: "offer", sdp: pc.localDescription.sdp });
