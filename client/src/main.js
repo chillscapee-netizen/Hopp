@@ -2378,10 +2378,18 @@ function openTextChannel(id) {
     setReply(null);
     state.editing = null;
   }
+  const changed = state.view !== id;
   state.view = id;
   restoreDraft();
   renderSidebar();
   renderChannelView();
+  // Another channel eases in, so the change reads as a change and not a flicker.
+  if (changed) {
+    const list = $("messages");
+    list.classList.remove("ease-in");
+    void list.offsetWidth;
+    list.classList.add("ease-in");
+  }
   $("chat-input").focus();
 }
 
@@ -10340,7 +10348,7 @@ prefs.custom = { a: load("themeColor", "#3b4a46"), b: null, contrast: 50, satura
 prefs.custom.mode ??= hexToHsl(prefs.custom.a)[2] > 60 ? "light" : "dark";
 for (const b of document.querySelectorAll(".theme-mode .segment")) b.addEventListener("click", () => saveCustom({ mode: b.dataset.look }));
 prefs.chatSize = Number(load("chatSize", "15"));
-prefs.chatSpace = Number(load("chatSpace", "16"));
+prefs.chatSpace = Number(load("chatSpace", "18"));
 
 $("theme-a").addEventListener("input", (e) => saveCustom({ a: e.target.value }));
 $("theme-b").addEventListener("input", (e) => saveCustom({ b: e.target.value }));
@@ -12463,12 +12471,18 @@ var newsSection = "news";
 
 async function loadWhatsNew() {
   if (whatsNew) return whatsNew;
-  try {
-    whatsNew = await (await fetch("whats-new.json")).json();
-  } catch {
-    whatsNew = {};
+  // The app's own copy; if that can't be read, the same file from Hopp Cloud. A miss isn't
+  // remembered, so the page fills in the next time it's opened.
+  for (const from of ["whats-new.json", typeof cloudHttp === "function" ? cloudHttp().replace(/\/$/, "") + "/whats-new.json" : null]) {
+    if (!from) continue;
+    try {
+      const notes = await (await fetch(from)).json();
+      if (notes && Object.keys(notes).length) return (whatsNew = notes);
+    } catch {
+      // Try the next place.
+    }
   }
-  return whatsNew;
+  return {};
 }
 
 function versionKey(v) {

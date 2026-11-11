@@ -3661,3 +3661,25 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 /* The server your voice is in. */
 .rail-voice { position: absolute; right: 6px; top: -2px; display: grid; place-items: center; width: 16px; height: 16px; border: 3px solid var(--frame); border-radius: 50%; background: var(--green); color: #fff; }
 .rail-voice .i { width: 10px; height: 10px; }
+
+/* ---------- a calmer, fresher look ---------- */
+/* Page heads in Discover: plain and quiet, no colour band. */
+.news-hero { padding: 26px 28px; border-radius: 18px; background: var(--layer-2); }
+.news-hero h1 { font-size: 28px; }
+.news-hero p { font-size: 15px; }
+.news-hero-art { width: 76px; height: 76px; border-radius: 22px; background: rgb(127 127 127 / 0.14); }
+.news-hero-art .i { width: 36px; height: 36px; }
+/* Add friend is a main button like the others: white, not green (green means someone's talking). */
+.friend-tab.add { background: var(--text); color: var(--frame); }
+.friend-tab.add:hover { background: var(--primary-hover); color: var(--frame); filter: brightness(0.94); }
+.friend-tab.add.active { background: var(--active); color: var(--text); filter: none; }
+/* Chat breathes between people and sits tight within one person's lines. */
+.msg { padding-top: 1px; padding-bottom: 1px; }
+.msg.first { margin-top: var(--chat-space, 18px); padding-top: 3px; }
+.msg-text { line-height: 1.42; }
+/* A channel you pick eases in. */
+@keyframes ease-in { from { opacity: 0.35; transform: translateY(4px); } }
+.messages.ease-in { animation: ease-in 140ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .messages.ease-in { animation: none; } }
+/* Rows answer the pointer softly instead of snapping. */
+.channel-row, .dm-row, .member, .friend-row, .nav-row, .news-nav, .menu-item, .server-row { transition: background 90ms ease-out, color 90ms ease-out; }
