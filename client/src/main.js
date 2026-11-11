@@ -2922,7 +2922,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     } else {
       const head = el("div", "msg-head");
       const author = el("span", "msg-author", nameHere(m.author_key) ?? m.sender_name);
-      author.style.color = roleColorByKey(m.author_key) ?? `hsl(${hue(m.sender_name)} var(--name-s) var(--name-l))`;
+      author.style.color = nameColor(m.author_key, m.sender_name);
       head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
         const pin = icon("pin", "xs msg-pin");
@@ -2969,7 +2969,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), pickedNameColor(m.author_key)]);
     items.push(li);
     prev = m;
   }
@@ -3781,9 +3781,12 @@ function renderProfilePreview() {
     bannerFrom(picture);
   }
   renderBannerColors();
+  if (typeof NAME_COLORS !== "undefined" && NAME_COLORS) renderNameColors();
   $("profile-avatar-slot").replaceChildren(avatar(name, "s80", undefined, picture));
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
+  // Your name as others see it in chat.
+  $("profile-name").style.color = state.me?.name_color ? readableColor(state.me.name_color) : "";
   $("profile-display").textContent = name;
   $("profile-handle").textContent = state.me?.username ? `@${state.me.username}` : "";
   const bio = state.me?.bio ?? "";
@@ -4817,7 +4820,10 @@ listen("account", (e) => {
       const before = state.friends.get(m.friend.key);
       state.friends.set(m.friend.key, m.friend);
       if ((before?.state === "blocked") !== (m.friend.state === "blocked")) blockChanged();
-      if (before?.avatar !== m.friend.avatar) renderPictures();
+      if (before?.avatar !== m.friend.avatar || (before?.name_color ?? null) !== (m.friend.name_color ?? null)) {
+        renderPictures();
+        if (state.openDm) renderDmAreas(state.openDm);
+      }
       if (m.request) {
         toast(`${m.friend.display_name} (@${m.friend.username}) sent you a friend request.`);
         playSound("user_join");
@@ -5527,8 +5533,57 @@ function renderDmAreas(peer, keepScroll) {
   if (state.openDm === peer) renderDmView(keepScroll);
 }
 
+// ---------- friends who wrote, under the Hopp button ----------
+//
+// Someone you haven't answered shows right under Home, like Discord's: their picture and how
+// many messages wait. A click opens the conversation; reading it takes them away again.
+
+var DM_PEEKS = 4;
+var peeksShown = new Set();
+
+/** Draws them; returns how many conversations are shown this way. */
+function renderDmPeeks() {
+  const box = $("dm-peeks");
+  if (!box) return 0;
+  const me = state.me?.key;
+  const waiting = [...(state.conversations ?? [])]
+    .filter(([peer, c]) => c.last_at > c.last_read && !dmMuted(peer) && (isGroup(peer) ? state.groups?.has(peer) : state.friends?.get(peer)?.state !== "blocked"))
+    .sort((a, b) => b[1].last_at - a[1].last_at);
+  const shown = waiting.slice(0, DM_PEEKS);
+  const nodes = shown.map(([peer, c]) => {
+    const person = personFor(peer);
+    const b = el("button", "rail-item dm-peek" + (peeksShown.has(peer) ? "" : " fresh"));
+    b.type = "button";
+    b.dataset.dm = peer;
+    b.setAttribute("aria-label", "Unread messages from " + person.display_name);
+    const face = personAvatar(person, "", false);
+    face.classList.add("rail-icon");
+    b.append(face);
+    // How many, when the messages are here; at least the one we know of.
+    const count = (state.dmMessages.get(peer) ?? []).filter((m) => m.sent_at > c.last_read && m.from_key !== me).length;
+    railBadge(b, Math.max(1, count));
+    b.addEventListener("click", () => {
+      state.atNews = false;
+      openDm(peer);
+    });
+    return b;
+  });
+  if (waiting.length > shown.length) {
+    const more = el("button", "rail-item dm-peek more");
+    more.type = "button";
+    more.setAttribute("aria-label", (waiting.length - shown.length) + " more unread conversations");
+    more.append(el("span", "rail-icon", "+" + (waiting.length - shown.length)));
+    more.addEventListener("click", () => $("home-btn").click());
+    nodes.push(more);
+  }
+  peeksShown = new Set(shown.map(([peer]) => peer));
+  box.replaceChildren(...nodes);
+  return shown.length;
+}
+
 function renderHomeBadge() {
-  const n = unreadDms() + [...(state.friends?.values() ?? [])].filter((f) => f.state === "incoming").length;
+  // Conversations shown under the button speak for themselves; the badge is for the rest.
+  const n = unreadDms() - renderDmPeeks() + [...(state.friends?.values() ?? [])].filter((f) => f.state === "incoming").length;
   let badge = $("home-btn").querySelector(".rail-badge");
   if (!badge) {
     badge = el("span", "rail-badge");
@@ -5755,6 +5810,8 @@ function renderDmView(keepScroll) {
       const author = personFor(m.from_key);
       const headLine = el("div", "msg-head");
       const name = el("span", "msg-author", author.display_name);
+      const picked = pickedNameColor(m.from_key);
+      if (picked) name.style.color = readableColor(picked);
       headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
@@ -5806,7 +5863,7 @@ function renderDmView(keepScroll) {
       });
     }
     li.dataset.key = `${peer}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews]);
+    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews, pickedNameColor(m.from_key)]);
     items.push(li);
     prev = m;
   }
@@ -6118,9 +6175,9 @@ function loadProfile(key) {
   if (p?.loading || !/^[0-9a-f]{64}$/.test(key)) return p?.loading || null;
   const loading = invoke("fetch_profile", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), key }).then(
     (r) => {
-      const changed = (p?.avatar ?? null) !== (r.avatar ?? null) || p?.display_name !== r.display_name;
+      const changed = (p?.avatar ?? null) !== (r.avatar ?? null) || p?.display_name !== r.display_name || (p?.name_color ?? null) !== (r.name_color ?? null);
       const statusChanged = JSON.stringify(p?.custom_status ?? null) !== JSON.stringify(r.custom_status ?? null);
-      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, bio: r.bio ?? "", custom_status: r.custom_status ?? null, banner: r.banner ?? null, at: Date.now() });
+      profiles.set(key, { avatar: r.avatar ?? null, display_name: r.display_name, username: r.username, bio: r.bio ?? "", custom_status: r.custom_status ?? null, banner: r.banner ?? null, name_color: r.name_color ?? null, at: Date.now() });
       if (changed || statusChanged) renderPictures();
     },
     () => profiles.set(key, { ...(p ?? { avatar: null }), loading: false, at: Date.now() }),
@@ -6702,7 +6759,7 @@ function outboxItem(o, grouped) {
   const head = el("div", "msg-head");
   const name = state.account?.name ?? "";
   const author = el("span", "msg-author", name);
-  author.style.color = `hsl(${hue(name)} var(--name-s) var(--name-l))`;
+  author.style.color = nameColor(state.account?.publicKey, name);
   head.append(author, el("span", "msg-time", o.failed ? "Not sent" : "Sending…"));
   li.append(avatar(name, "s40", undefined, state.me?.avatar ?? null), head, messageText(o.text));
   if (o.failed) {
@@ -10183,7 +10240,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
       frame: at(-9), "side-2": at(-6), side: at(-4), main: at(0), elev: at(-7), "elev-2": at(-11), "elev-3": at(-15), deep: at(-5),
       border: at(-11), "border-strong": at(-17), "border-active": at(-25), "border-focus": at(-32), "focus-ring": at(-35),
       hover: "rgb(0 0 0 / 0.05)", active: "rgb(0 0 0 / 0.08)", "msg-hover": "rgb(0 0 0 / 0.03)",
-      layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", tile: "rgb(0 0 0 / 0.07)", "app-solid": at(-6),
+      layer: "rgb(255 255 255 / 0.55)", "layer-2": "rgb(255 255 255 / 0.8)", sink: "rgb(0 0 0 / 0.045)", tile: "rgb(0 0 0 / 0.07)", "app-solid": at(-6), "rail-shade": "rgb(0 0 0 / 0.045)",
       text: tint(12), "text-2": tint(22), muted: tint(38), faint: tint(53),
       link: "#1a63d6", "primary-hover": tint(25), "name-s": "38%", "name-l": "34%", green: "#15804f", yellow: "#b7791f", red: "#d93a40", scheme: "light",
     };
@@ -10192,8 +10249,8 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
     frame: at(-6.7), "side-2": at(-3.9), side: at(-2.1), main: at(0), elev: at(4.3), "elev-2": at(8.2), "elev-3": at(12.4), deep: at(-7.8),
     border: at(4.3), "border-strong": at(10.4), "border-active": at(16.3), "border-focus": at(20.4), "focus-ring": at(21.5),
     hover: "rgb(255 255 255 / 0.05)", active: "rgb(255 255 255 / 0.09)", "msg-hover": "rgb(0 0 0 / 0.06)",
-    layer: "rgb(255 255 255 / 0.045)", "layer-2": "rgb(255 255 255 / 0.065)", sink: "rgb(0 0 0 / 0.16)", tile: "rgb(255 255 255 / 0.065)", "app-solid": at(-4.5),
-    text: tint(95), "text-2": tint(86), muted: tint(71), faint: tint(62),
+    layer: "rgb(255 255 255 / 0.06)", "layer-2": "rgb(255 255 255 / 0.09)", sink: "rgb(0 0 0 / 0.2)", tile: "rgb(255 255 255 / 0.065)", "app-solid": at(-6.5), "rail-shade": "rgb(0 0 0 / 0.16)",
+    text: tint(98), "text-2": tint(91), muted: tint(72), faint: tint(62),
     link: "#8ab4f8", "primary-hover": "#ffffff", "name-s": "22%", "name-l": "80%", green: "#3ccf8e", yellow: "#f0b232", red: "#f2555a", scheme: "dark",
   };
 }
@@ -11672,6 +11729,32 @@ function roleColorByKey(key) {
   return roleColor(state.roster?.users.find((u) => keyOf(u) === key));
 }
 
+/** The colour someone picked for their own name (theirs to choose in their profile), if any. */
+function pickedNameColor(key) {
+  if (!key) return null;
+  if (key === state.account?.publicKey || key === state.me?.key) return state.me?.name_color ?? null;
+  const friend = state.friends?.get(key);
+  if (friend) return friend.state === "blocked" ? null : friend.name_color ?? null;
+  return profiles.get(key)?.name_color ?? null;
+}
+
+/** Any colour, made to read on the theme: never too dark on dark, never too pale on light. */
+function readableColor(hex) {
+  const [h, sat, l] = hexToHsl(hex);
+  const light = isLightTheme();
+  const lightness = light ? Math.min(l, 40) : Math.max(l, 64);
+  return "hsl(" + h.toFixed(0) + " " + Math.min(sat, 90).toFixed(0) + "% " + lightness.toFixed(0) + "%)";
+}
+
+/**
+ * How a name is written in chat: the server's role colour first (the server decides), then
+ * the colour the person picked, then a soft one from the name.
+ */
+function nameColor(key, name) {
+  const picked = pickedNameColor(key);
+  return roleColorByKey(key) ?? (picked ? readableColor(picked) : "hsl(" + hue(name) + " var(--name-s) var(--name-l))");
+}
+
 /** "Roles" in someone's menu, for admins: tick to give, untick to take. */
 function roleItems(u) {
   // Admin-level roles are the owner's to give: others don't see them here.
@@ -12306,6 +12389,39 @@ function paintBanner(node, banner, name) {
     node.style.backgroundPosition = "center";
   }
 }
+
+// ---------- your name's colour ----------
+//
+// Yours to pick, for your name in chat. A server's role colour comes first there; whatever
+// you pick is adjusted a little so it always reads, on dark themes and light.
+
+var NAME_COLORS = ["#8ab4f8", "#7fd6c2", "#9be28a", "#f2d16b", "#f5a36a", "#f28b9b", "#d9a4f4", "#b3b9ff"];
+
+function renderNameColors() {
+  const current = state.me?.name_color ?? null;
+  $("name-colors").replaceChildren(...NAME_COLORS.map((c) => {
+    const b = el("button", "banner-swatch" + (c === current ? " active" : ""));
+    b.type = "button";
+    b.style.background = c;
+    b.setAttribute("aria-label", "Name colour " + c);
+    b.addEventListener("click", () => setNameColor(c));
+    return b;
+  }));
+  $("name-color-remove").hidden = !current;
+  if (current) $("name-color-own").value = current;
+  $("name-color-own").parentElement.classList.toggle("active", !!current && !NAME_COLORS.includes(current));
+}
+
+async function setNameColor(color) {
+  try {
+    await accountSend({ type: "set_profile", name_color: color });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+$("name-color-remove").addEventListener("click", () => setNameColor(null));
+// Dragging in the colour box fires all the time: only where you land is saved.
+$("name-color-own").addEventListener("change", (e) => setNameColor(e.target.value));
 
 function renderBannerColors() {
   const current = state.me?.banner ?? null;

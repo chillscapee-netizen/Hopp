@@ -185,6 +185,7 @@
       <button id="home-btn" class="rail-item home" data-tip="Home" data-tip-pos="right">
         <span class="rail-icon"><svg class="i"><use href="#i-logo"/></svg></span>
       </button>
+      <div id="dm-peeks" class="dm-peeks"></div>
       <div class="rail-sep"></div>
       <div id="server-list" class="server-list"></div>
       <button id="add-server" class="rail-item add" data-tip="Add a server" data-tip-pos="right">
@@ -1133,6 +1134,16 @@
                   <button id="banner-remove" type="button" class="btn-link sm">Remove</button>
                   <button id="banner-upload" type="button" class="btn sm">Upload</button>
                   <input id="banner-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+                </span>
+              </div>
+              <div class="field-row banner-row">
+                <span class="row-label">
+                  <span class="field-row-title">Name colour</span>
+                  <span id="name-colors" class="banner-colors"></span>
+                </span>
+                <span class="row-control">
+                  <button id="name-color-remove" type="button" class="btn-link sm">Default</button>
+                  <label class="color-field" aria-label="Pick your own name colour"><input id="name-color-own" type="color" value="#8ab4f8"></label>
                 </span>
               </div>
               <div class="field-row">

@@ -66,6 +66,8 @@ export interface PublicProfile {
   custom_status?: CustomStatus | null;
   /** The top of your profile card: a colour ("#rrggbb") or a small picture. */
   banner?: string | null;
+  /** The colour of your name in chat ("#rrggbb"), if you picked one. */
+  name_color?: string | null;
 }
 
 /** What a friend sees of you right now. "offline" also covers invisible. */
@@ -89,6 +91,7 @@ interface FriendRow {
   activity: string | null;
   voice: string | null;
   custom_status?: string | null;
+  name_color?: string | null;
 }
 
 interface Session {
@@ -292,6 +295,7 @@ export class StromAccount extends DurableObject<Env> {
     const friendColumns = new Set(this.sql.exec("PRAGMA table_info(friends)").toArray().map((c) => String(c.name)));
     if (!friendColumns.has("voice")) this.sql.exec("ALTER TABLE friends ADD COLUMN voice TEXT");
     if (!friendColumns.has("custom_status")) this.sql.exec("ALTER TABLE friends ADD COLUMN custom_status TEXT");
+    if (!friendColumns.has("name_color")) this.sql.exec("ALTER TABLE friends ADD COLUMN name_color TEXT");
     const dmColumns = new Set(this.sql.exec("PRAGMA table_info(dms)").toArray().map((c) => String(c.name)));
     if (!dmColumns.has("edited_at")) this.sql.exec("ALTER TABLE dms ADD COLUMN edited_at INTEGER");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
@@ -317,12 +321,12 @@ export class StromAccount extends DurableObject<Env> {
     return this.sql.exec("SELECT * FROM friends WHERE key = ?", key).toArray()[0] as unknown as FriendRow | undefined;
   }
 
-  private upsertFriend(row: Omit<FriendRow, "status" | "activity" | "voice" | "custom_status"> & Partial<Pick<FriendRow, "status" | "activity">>) {
+  private upsertFriend(row: Omit<FriendRow, "status" | "activity" | "voice" | "custom_status" | "name_color"> & Partial<Pick<FriendRow, "status" | "activity" | "name_color">>) {
     this.sql.exec(
-      `INSERT INTO friends (key, username, display_name, avatar, state, since, status, activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO friends (key, username, display_name, avatar, state, since, status, activity, name_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET username = excluded.username, display_name = excluded.display_name,
-         avatar = excluded.avatar, state = excluded.state, since = excluded.since`,
-      row.key, row.username, row.display_name, row.avatar, row.state, row.since, row.status ?? "offline", row.activity ?? null,
+         avatar = excluded.avatar, state = excluded.state, since = excluded.since, name_color = coalesce(excluded.name_color, name_color)`,
+      row.key, row.username, row.display_name, row.avatar, row.state, row.since, row.status ?? "offline", row.activity ?? null, row.name_color ?? null,
     );
   }
 
@@ -345,6 +349,7 @@ export class StromAccount extends DurableObject<Env> {
       bio: this.meta("bio") ?? "",
       custom_status: this.customStatus(),
       banner: this.meta("banner"),
+      name_color: this.meta("name_color"),
     };
   }
 
@@ -547,6 +552,12 @@ export class StromAccount extends DurableObject<Env> {
           else if (typeof b === "string" && (/^#[0-9a-f]{6}$/i.test(b) || (b.length <= MAX_BANNER && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(b)))) this.setMeta("banner", b);
           else return error("That banner can't be used. Try a smaller picture.");
         }
+        if (msg.name_color !== undefined) {
+          const c = msg.name_color;
+          if (c === null) this.setMeta("name_color", null);
+          else if (typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c)) this.setMeta("name_color", c.toLowerCase());
+          else return error("That colour can't be used.");
+        }
         if (msg.avatar !== undefined) {
           if (msg.avatar === null) this.setMeta("avatar", null);
           else if (typeof msg.avatar === "string" && validAvatar(msg.avatar)) this.setMeta("avatar", msg.avatar);
@@ -646,6 +657,7 @@ export class StromAccount extends DurableObject<Env> {
         const profile = known ?? (await accountOf(this.env, key).publicProfile());
         this.upsertFriend({
           key,
+          name_color: profile.name_color ?? null,
           username: profile.username ?? null,
           display_name: profile.display_name || "Unknown",
           avatar: profile.avatar ?? null,
@@ -978,6 +990,7 @@ export class StromAccount extends DurableObject<Env> {
     const profile = await them.publicProfile();
     this.upsertFriend({
       key,
+      name_color: profile.name_color ?? null,
       username: profile.username,
       display_name: profile.display_name,
       avatar: profile.avatar,
@@ -1060,6 +1073,7 @@ export class StromAccount extends DurableObject<Env> {
     const mutual = existing?.state === "outgoing";
     this.upsertFriend({
       key: from.key,
+      name_color: from.name_color ?? null,
       username: from.username,
       display_name: from.display_name,
       avatar: from.avatar,
@@ -1078,7 +1092,7 @@ export class StromAccount extends DurableObject<Env> {
   async friendAccepted(from: PublicProfile): Promise<"ok" | "gone"> {
     const row = this.friend(from.key);
     if (row?.state !== "outgoing") return "gone";
-    this.upsertFriend({ ...row, username: from.username, display_name: from.display_name, avatar: from.avatar, state: "friend", since: Date.now() });
+    this.upsertFriend({ ...row, username: from.username, display_name: from.display_name, avatar: from.avatar, name_color: from.name_color ?? null, state: "friend", since: Date.now() });
     this.toDevices({ type: "friend", friend: this.friend(from.key), accepted: true });
     await accountOf(this.env, from.key).presenceChanged(this.meta("key")!, this.presence());
     await this.learnPresence(from.key);
@@ -1229,7 +1243,7 @@ export class StromAccount extends DurableObject<Env> {
   async profileChanged(fromKey: string, profile: PublicProfile): Promise<void> {
     const row = this.friend(fromKey);
     if (!row || row.state === "blocked") return;
-    this.sql.exec("UPDATE friends SET username = ?, display_name = ?, avatar = ?, custom_status = ? WHERE key = ?", profile.username, profile.display_name, profile.avatar, profile.custom_status ? JSON.stringify(profile.custom_status) : null, fromKey);
+    this.sql.exec("UPDATE friends SET username = ?, display_name = ?, avatar = ?, custom_status = ?, name_color = ? WHERE key = ?", profile.username, profile.display_name, profile.avatar, profile.custom_status ? JSON.stringify(profile.custom_status) : null, profile.name_color ?? null, fromKey);
     this.toDevices({ type: "friend", friend: this.friend(fromKey) });
   }
 }

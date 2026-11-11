@@ -3683,3 +3683,34 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .messages.ease-in { animation: none; } }
 /* Rows answer the pointer softly instead of snapping. */
 .channel-row, .dm-row, .member, .friend-row, .nav-row, .news-nav, .menu-item, .server-row { transition: background 90ms ease-out, color 90ms ease-out; }
+
+/* ---------- sharper, and backgrounds that flow ----------
+   Whiter text on slightly deeper greys. The window goes from dark to light in three calm
+   steps, left to right: the server list and the top (deepest), the channel list, then the
+   conversation (lightest). No lines between them: the steps themselves do the dividing, and
+   a colour theme keeps fading underneath all of it. */
+:root {
+  --text: #fafafc;
+  --text-2: #e8e8ec;
+  --muted: #b4b4bd;
+  --app-solid: #2c2c31;
+  --layer: rgb(255 255 255 / 0.06);
+  --layer-2: rgb(255 255 255 / 0.09);
+  --sink: rgb(0 0 0 / 0.2);
+  --rail-shade: rgb(0 0 0 / 0.16);
+}
+.msg-text { color: var(--text); }
+.shell { background: linear-gradient(var(--rail-shade), var(--rail-shade)), var(--app-bg, var(--app-solid)); }
+.frame { border: none; border-top-left-radius: 14px; background: var(--app-bg, var(--app-solid)) fixed; }
+.channel-view, .home-view, .news-view { border-left: none; border-top-left-radius: 14px; }
+.status-dot, .rail-badge, .rail-voice { border-color: var(--app-solid); }
+
+/* Friends who wrote, under the Hopp button. */
+.dm-peeks { display: contents; }
+.dm-peek .rail-icon.avatar { width: 48px; height: 48px; border-radius: 50%; font-size: 16px; transition: border-radius 140ms ease-out; }
+.dm-peek:hover .rail-icon.avatar { border-radius: 16px; }
+.dm-peek .rail-icon.avatar img { border-radius: inherit; }
+.dm-peek.more .rail-icon { display: grid; place-items: center; width: 48px; height: 32px; border-radius: 16px; background: var(--layer-2); color: var(--muted); font-size: 13px; font-weight: 700; }
+.dm-peek.fresh { animation: folder-in 220ms ease-out; }
+.dm-peek::before { display: none; }
+@media (prefers-reduced-motion: reduce) { .dm-peek.fresh { animation: none; } }
