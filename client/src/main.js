@@ -2080,7 +2080,9 @@ listen("disconnected", () => {
     return;
   }
   const voice = myVoice();
-  playSound("disconnect");
+  // The sound is for losing voice. A connection that blinks while you only read reconnects
+  // by itself within moments, and a sound out of nowhere would just be puzzling.
+  if (voice !== null) playSound("disconnect");
   // What was on screen stays while Hopp reconnects.
   rememberServerView();
   state.activeId = null;
@@ -7283,7 +7285,7 @@ function openMessageMenu(m, e) {
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
       { label: "Mark unread", icon: "bell", action: () => markUnreadFrom(m) },
-      { label: "Copy text", icon: "message", action: () => copy(plainText(m.text), "Text") },
+      { label: "Copy text", icon: "copy", action: () => copy(plainText(m.text), "Text") },
       { label: "Copy message link", icon: "link", action: () => copy(messageLink(m), "Link") },
       ...(canDelete(m) ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteMessage(m) }] : []),
     ],
