@@ -32,7 +32,12 @@ const URL_PATTERN = /\bhttps?:\/\/[^\s<>"]+[^\s<>".,:;!?)\]'*]/gi;
 // ---------- persisted preferences ----------
 
 /** What belongs to one account, not to this computer: kept apart per Hopp ID. */
-const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "closedCategories"];
+const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "closedCategories", "settingsAt"];
+/** Your own settings, which follow your Hopp ID to every device (and back after restoring
+ *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
+ *  processing, push to talk, the window. */
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes"];
+let applyingSettings = false;
 let accountScope = null;
 
 function storageKey(key) {
@@ -46,6 +51,11 @@ function load(key, fallback) {
 function save(key, value) {
   if (ACCOUNT_DATA.includes(key) && !accountScope) return;
   try { localStorage.setItem(storageKey(key), value); } catch { /* storage unavailable */ }
+  // A setting you changed here goes to your other devices.
+  if (SYNCED_SETTINGS.includes(key) && !applyingSettings && accountScope && typeof syncState !== "undefined" && syncState.ready) {
+    save("settingsAt", String(Date.now()));
+    scheduleSync();
+  }
 }
 
 /**
@@ -5436,7 +5446,69 @@ function syncDoc() {
       .filter((item) => item.address || item.addresses?.length),
     removed: prefs.removedServers,
     notify: prefs.notify,
+    settings: { at: Number(load("settingsAt", "0")), values: settingValues() },
   };
+}
+
+/** The synced settings as saved here (only the ones ever set). */
+function settingValues() {
+  const values = {};
+  for (const k of SYNCED_SETTINGS) {
+    try {
+      const v = localStorage.getItem(k);
+      if (v !== null) values[k] = v;
+    } catch {
+      // Storage unavailable: nothing to send.
+    }
+  }
+  return values;
+}
+
+/** Takes the account's settings from another device: saved here, then shown at once. */
+function applySyncedSettings(remote) {
+  applyingSettings = true;
+  try {
+    for (const k of SYNCED_SETTINGS) {
+      try {
+        if (k in remote.values) localStorage.setItem(k, remote.values[k]);
+        else localStorage.removeItem(k);
+      } catch {
+        // Storage unavailable.
+      }
+    }
+    save("settingsAt", String(remote.at));
+    prefs.theme = load("theme", "mid");
+    prefs.custom = { a: load("themeColor", "#3b4a46"), b: null, contrast: 50, saturation: 50, ...JSON.parse(load("themeCustom", "{}") || "{}") };
+    prefs.custom.mode ??= hexToHsl(prefs.custom.a)[2] > 60 ? "light" : "dark";
+    prefs.chatSize = Number(load("chatSize", "15"));
+    prefs.chatSpace = Number(load("chatSpace", "18"));
+    applyTheme();
+    syncThemePage();
+    prefs.linkPreviews = load("linkPreviews", "1") === "1";
+    $("link-previews").checked = prefs.linkPreviews;
+    prefs.desktopNotify = load("desktopNotify", "1") === "1";
+    prefs.notifyText = load("notifyText", "1") === "1";
+    $("desktop-notify").checked = prefs.desktopNotify;
+    $("notify-text").checked = prefs.notifyText;
+    $("notify-text").disabled = !prefs.desktopNotify;
+    prefs.sounds = load("sounds", "1") === "1";
+    $("sounds").checked = prefs.sounds;
+    prefs.soundStyle = load("soundStyle", "hopp");
+    document.querySelectorAll("[data-sound-style]").forEach((b) => b.classList.toggle("active", b.dataset.soundStyle === prefs.soundStyle));
+    prefs.soundVolume = Number(load("soundVolume", "50"));
+    $("sound-volume").value = prefs.soundVolume;
+    $("sound-volume-value").textContent = `${prefs.soundVolume}%`;
+    prefs.soundEvents = loadJson("soundEvents", {});
+    renderSoundEvents();
+    const hideIp = load("hideIp", "0") === "1";
+    if (hideIp !== prefs.hideIp) invoke("set_private_route", { on: hideIp }).catch(() => {});
+    prefs.hideIp = hideIp;
+    $("hide-ip").checked = hideIp;
+    prefs.shareSound = load("shareSound", "1") === "1";
+    prefs.userVolumes = loadJson("userVolumes", {});
+  } finally {
+    applyingSettings = false;
+  }
 }
 
 /** Folds the other device's list into ours: theirs decides order and folders, nothing added here is lost. */
@@ -5486,6 +5558,10 @@ async function receiveSync(sealed, conflict) {
     try {
       const remote = JSON.parse(await invoke("open_private", { sealed }));
       mergeSync(remote);
+      // Settings: the newest change wins; a device that never changed any (new, or just
+      // restored) takes the account's.
+      const localAt = Number(load("settingsAt", "0"));
+      if (remote.settings?.values && (remote.settings.at > localAt || localAt === 0)) applySyncedSettings(remote.settings);
       renderAll();
       // Anything only this device knew goes back up.
       if (conflict || JSON.stringify(syncDoc()) !== JSON.stringify(remote)) scheduleSync(true);
