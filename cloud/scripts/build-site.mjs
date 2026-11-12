@@ -38,7 +38,7 @@ ${body}
 <footer class="foot">
   <div class="foot-brand"><a class="brand" href="index.html"><img src="site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
   <div><h4>Hopp</h4><a href="features.html">Features</a><a href="whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
-  <div><h4>Learn more</h4><a href="about.html">About Hopp</a><a href="limits.html">Limits</a><a href="hopp-id.html">Your Hopp ID</a><a href="privacy.html">Privacy &amp; safety</a><a href="help.html">Help</a></div>
+  <div><h4>Learn more</h4><a href="about.html">About Hopp</a><a href="limits.html">Limits</a><a href="hopp-id.html">Your Hopp ID</a><a href="privacy.html">Privacy &amp; safety</a><a href="help.html">Help</a><a href="code-signing.html">Code signing</a></div>
 </footer>
 <script src="site/site.js"></script>
 </body>
@@ -407,6 +407,29 @@ const hoppId = head("Your Hopp ID", "How your account works", "Hopp doesn't ask 
   <p>If you lose both your password and your 24 words, the account can't be recovered. You can make a new Hopp ID right away and add your friends again, but your old account, its friends and its messages stay out of reach. That's the price of nobody else holding the keys, and it's why the words matter.</p>
 </section>`;
 
+// ---------- code signing ----------
+// SignPath Foundation's open-source programme asks for this page (linked from every page).
+const SIGNING_PENDING = true; // set false once SignPath has approved Hopp
+const codeSigning = head("Code signing", "Code signing policy", "How Hopp's installer is built and signed, and who decides what gets signed.") + `
+<section class="prose">
+  <p><strong>Free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>.</strong>${SIGNING_PENDING ? " Hopp has applied; until the application is approved, the installer isn't signed yet and Windows may warn about an unknown publisher." : ""}</p>
+  <h2>What is signed</h2>
+  <p>The Hopp installer for Windows. It is built automatically by GitHub Actions from the source code in <a href="https://github.com/chillscapee-netizen/Hopp">github.com/chillscapee-netizen/Hopp</a>, and only that build is sent for signing. Nothing built on someone's own computer is signed.</p>
+  <h2>Who does what</h2>
+  <p><strong>Committers and reviewers:</strong> <a href="https://github.com/chillscapee-netizen">Marcus</a>. Changes from anyone else are reviewed before they're taken in.</p>
+  <p><strong>Approvers:</strong> <a href="https://github.com/chillscapee-netizen">Marcus</a>. Every release is approved by hand before it's signed.</p>
+  <h2>Privacy</h2>
+  <p>Hopp talks to the internet only for what you use it for:</p>
+  <ul>
+    <li>Hopp Cloud: your account, your servers and messages, and whether a new version of Hopp is out.</li>
+    <li>Servers you join, and your friends' computers while you're in a call or voice channel with them.</li>
+    <li>For calls to find a way between computers: Google's and Cloudflare's connection helpers (STUN), and Cloudflare's relay when a direct way doesn't work.</li>
+    <li>When a link is shared in a chat: that web page, to show a preview of it (turn previews off in Settings → Privacy &amp; safety). YouTube, when a YouTube link is shown.</li>
+    <li>KLIPY, when you search for GIFs and when GIFs are shown.</li>
+  </ul>
+  <p>Nothing is sent anywhere else, and Hopp has no ads or tracking. <a href="privacy.html">What Hopp keeps, and what's encrypted</a>.</p>
+</section>`;
+
 // ---------- what's new ----------
 const news = head("What's new", "Better every week", "Every version of Hopp and what it brought. The app tells you when a new one is ready.") + `
 <section class="news full"><div class="releases" data-show="all"></div></section>`;
@@ -418,5 +441,6 @@ writeFileSync(out + "hopp-id.html", page("hopp-id", "hopp-id", "Your Hopp ID · 
 writeFileSync(out + "about.html", page("about", "about", "About · Hopp", "What Hopp is, how it stays free, and every limit and why.", about));
 writeFileSync(out + "privacy.html", page("privacy", "privacy", "Privacy & safety · Hopp", "What's encrypted in Hopp, what Hopp Cloud keeps, and how you stay in control.", privacy));
 writeFileSync(out + "help.html", page("help", "help", "Help · Hopp", "Answers to the most common questions about Hopp.", help));
+writeFileSync(out + "code-signing.html", page("code-signing", "", "Code signing · Hopp", "How Hopp's installer is built and signed, and who approves it.", codeSigning));
 writeFileSync(out + "whats-new.html", page("whats-new", "whats-new", "What's new · Hopp", "Every version of Hopp and what it brought.", news));
 console.log("built");

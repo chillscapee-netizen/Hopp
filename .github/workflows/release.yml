@@ -1,0 +1,103 @@
+# Builds Hopp's Windows installer from the source in this repository, so anyone can see
+# exactly what went into a release. Started by pushing a version tag (v0.3.20) or by hand.
+#
+# Signing, once SignPath Foundation has accepted Hopp (free for open source):
+#   repository secrets  SIGNPATH_API_TOKEN, SIGNPATH_ORGANIZATION_ID
+#   repository variables SIGNPATH_PROJECT_SLUG (hopp), SIGNPATH_POLICY_SLUG (release-signing)
+# Without them the installer is built but not signed. Either way the updater's own signature
+# is made last, over the final installer, with the secret TAURI_SIGNING_PRIVATE_KEY.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # Only whether they are set, so the keys themselves stay in the steps that use them.
+      HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the app's tools
+        working-directory: client
+        run: npm ci
+
+      - name: Build the installer
+        working-directory: client
+        # The updater signature is made at the end, over the final (signed) installer.
+        run: npx tauri build --config src-tauri/tauri.ci.conf.json
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+      - name: Collect the installer
+        id: built
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force unsigned | Out-Null
+          Copy-Item $setup.FullName unsigned/
+          "name=$($setup.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload the unsigned installer
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: hopp-unsigned
+          path: unsigned/
+
+      # Sent to SignPath, which checks it came from this repository's build, waits for the
+      # approver to say yes, and gives it back signed.
+      - name: Sign with SignPath
+        if: ${{ env.HAS_SIGNPATH == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Use the signed installer when there is one
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          $from = if (Test-Path "signed/${{ steps.built.outputs.name }}") { "signed" } else { "unsigned" }
+          Copy-Item "$from/${{ steps.built.outputs.name }}" release/
+          Write-Output "Installer from: $from"
+
+      # The updater checks this signature before installing an update, so it's made over the
+      # installer exactly as people will download it.
+      - name: Sign for the updater
+        if: ${{ env.HAS_UPDATER_KEY == 'true' }}
+        working-directory: client
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npx tauri signer sign "../release/${{ steps.built.outputs.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hopp-release
+          path: release/

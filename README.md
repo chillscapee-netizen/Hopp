@@ -49,6 +49,10 @@ Headless test client: `cargo run -p strom-voice --example cli -- localhost name 
 cargo test --workspace
 ```
 
+## Code signing
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org) (applied for; until it is approved the installer is not signed yet). The Windows installer is built by [GitHub Actions](.github/workflows/release.yml) from this repository, and only that build is signed. Committer, reviewer and approver: [Marcus](https://github.com/chillscapee-netizen). Full policy, including what Hopp connects to: [Code signing policy](https://hopp-cloud.hoppchat.workers.dev/code-signing.html).
+
 ## Licence
 
 Hopp is free software under the [GNU General Public License v3.0](LICENSE): you may use, study, change and share it, and anything you hand out that is built from it stays open under the same licence.
