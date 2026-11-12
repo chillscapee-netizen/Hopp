@@ -690,6 +690,33 @@ test("search finds words in any case across channels, newest first", async () =>
   owner.close();
 });
 
+test("search filters: from:, in: and has:, alone or with words", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("search-filters"));
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  const say = async (who, text) => {
+    who.send({ type: "send_chat", channel: general, text });
+    await who.waitFor((x) => x.type === "chat" && x.message.text === text);
+  };
+  await say(owner, "gg see https://example.com/clip");
+  await say(bob, "gg from bob");
+  await say(bob, "plain words");
+  const search = async (query) => {
+    await sleep(450);
+    owner.send({ type: "search", query });
+    return (await owner.waitFor((x) => x.type === "search_results" && x.query === query)).messages.map((m) => m.text);
+  };
+  assert.deepEqual(await search("from:bob gg"), ["gg from bob"]);
+  assert.deepEqual(await search("from:@Bob"), ["plain words", "gg from bob"]);
+  assert.deepEqual(await search("has:link"), ["gg see https://example.com/clip"]);
+  assert.deepEqual(await search("in:#general from:bob plain"), ["plain words"]);
+  assert.deepEqual(await search("in:nowhere gg"), []);
+  assert.deepEqual(await search("has:nonsense gg"), []);
+  owner.close();
+  bob.close();
+});
+
 test("screen sharing: a flag for the voice channel, handshakes passed on within it only", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("screen"));

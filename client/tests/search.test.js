@@ -63,5 +63,18 @@ async function type(input, text, enter = true) {
   dmItems[0].click();
   await wait(100);
   check("goes to it in the conversation", !!document.querySelector("li.flash"));
+
+  // Filters work in a conversation too, without any words.
+  await type(dmInput, "from:me");
+  await wait(250);
+  let found = [...panel.querySelectorAll(".search-item")].map((n) => n.textContent);
+  check("from:me finds only yours", found.length >= 1 && found.every((t) => t.includes("Marcus")), found.join(" | "));
+  await type(dmInput, "from:elin tonight");
+  await wait(250);
+  found = [...panel.querySelectorAll(".search-item")].map((n) => n.textContent);
+  check("from: with words", found.length === 1 && found[0].includes("Ready for tonight"), found.join(" | "));
+  check("the words are marked, not the filter", panel.querySelector(".search-item mark")?.textContent.toLowerCase() === "tonight");
+  await type(dmInput, "x");
+  check("a single letter shows how to filter", count().includes("from:name") && !count().includes("in:channel"));
   report();
 })();

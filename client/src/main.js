@@ -10576,18 +10576,33 @@ function searchStatus(text, items = []) {
   $("search-results").replaceChildren(...items);
 }
 
+/** "from:elin in:general has:link gg" → the filters (lowercase) and the words left to find
+ *  (the server reads the same; names with spaces go in quotes: from:"Big Sam"). */
+function parseSearch(query) {
+  const out = { words: "", from: [], in: [], has: [] };
+  const rest = query.replace(/(^|\s)(from|in|has):(?:"([^"]{1,64})"|(\S{1,64}))/gi, (_, space, key, quoted, word) => {
+    out[key.toLowerCase()].push(String(quoted ?? word).toLowerCase().replace(/^[@#]/, ""));
+    return space;
+  });
+  out.words = rest.replace(/\s+/g, " ").trim();
+  return out;
+}
+var SEARCH_HINT = "Type at least two letters, or narrow it down with from:name, in:channel, has:link or has:image";
+
 async function runSearch(query, where) {
-  const needle = query.trim().toLowerCase();
+  const f = parseSearch(query.trim());
+  const filtered = f.from.length || f.in.length || f.has.length;
   showSearchPanel(where);
-  if (needle.length < 2) {
+  if (!filtered && f.words.length < 2) {
     searching = null;
-    return searchStatus("Type at least two letters");
+    return searchStatus(where.dm ? SEARCH_HINT.replace(", in:channel", "") : SEARCH_HINT);
   }
+  if (filtered && !where.dm && !state.roster?.features?.includes("search-filters")) return searchStatus("This server needs an update before it can use from:, in: and has:");
   const mine = { query, where };
   searching = mine;
   searchStatus("Searching…");
   if (where.dm) {
-    const found = await searchConversation(where.dm, needle);
+    const found = await searchConversation(where.dm, f);
     if (searching === mine) showResults(mine, found);
     return;
   }
@@ -10604,8 +10619,22 @@ listen("search-results", (e) => {
   showResults(s, e.payload.messages);
 });
 
-/** A conversation's messages containing the words, newest first, after loading what's older. */
-async function searchConversation(peer, needle) {
+/** A conversation's messages matching the words and filters, newest first, after loading
+ *  what's older. */
+async function searchConversation(peer, f) {
+  const needle = f.words.toLowerCase();
+  const me = state.me?.key ?? state.account?.publicKey;
+  const isFrom = (m) =>
+    !f.from.length ||
+    f.from.some((name) => {
+      const p = personFor(m.from_key);
+      return [p.display_name, p.username, m.from_key === me ? "me" : null].some((n) => n && n.toLowerCase() === name);
+    });
+  const has = (m) =>
+    f.has.every((h) =>
+      /^links?$/.test(h) ? /https?:\/\//i.test(m.text) : /^(images?|pictures?)$/.test(h) ? DM_PICTURE.test(m.text) || PICTURE.test(m.text) : /^files?$/.test(h) ? FILE_OFFER.test(m.text) : false,
+    );
+  if (f.in.length) return [];
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   for (let page = 0; page < 20 && !state.dmComplete.has(peer); page++) {
     const list = state.dmMessages.get(peer) ?? [];
@@ -10617,14 +10646,14 @@ async function searchConversation(peer, needle) {
     if ((state.dmMessages.get(peer)?.length ?? 0) === had) break;
   }
   return (state.dmMessages.get(peer) ?? [])
-    .filter((m) => m.text && !m.pending && previewText(m.text).toLowerCase().includes(needle))
+    .filter((m) => m.text && !m.pending && previewText(m.text).toLowerCase().includes(needle) && isFrom(m) && has(m))
     .reverse()
     .slice(0, 25);
 }
 
 function showResults(s, messages) {
   s.done = true;
-  const needle = s.query.trim().toLowerCase();
+  const needle = parseSearch(s.query.trim()).words.toLowerCase();
   if (!messages.length) return searchStatus("Nothing found");
   const items = messages.map((m) => {
     const dm = s.where.dm;

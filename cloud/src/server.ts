@@ -77,6 +77,18 @@ function replyPreview(text: string): string {
 }
 
 /** A stored row as the message clients see. */
+/** "from:elin in:general has:link gg" → the filters (lowercase) and the words left to find.
+ *  Names with spaces go in quotes: from:"Big Sam". A leading @ or # is allowed. */
+function parseSearch(query: string): { words: string; from: string[]; in: string[]; has: string[] } {
+  const out = { words: "", from: [] as string[], in: [] as string[], has: [] as string[] };
+  const rest = query.replace(/(^|\s)(from|in|has):(?:"([^"]{1,64})"|(\S{1,64}))/gi, (_, space, key, quoted, word) => {
+    out[key.toLowerCase() as "from" | "in" | "has"].push(String(quoted ?? word).toLowerCase().replace(/^[@#]/, ""));
+    return space;
+  });
+  out.words = rest.replace(/\s+/g, " ").trim();
+  return out;
+}
+
 function rowToMessage(r: Record<string, any>): ChatMessage {
   const m: ChatMessage = {
     id: Number(r.id), channel: Number(r.channel), sender: Number(r.sender), sender_name: String(r.sender_name),
@@ -819,7 +831,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1292,13 +1304,34 @@ export class StromServer extends DurableObject<Env> {
         if (now - (s.searchedAt ?? 0) < SEARCH_GAP_MS) return this.error(ws, "Searching too fast. Try again in a moment.");
         s.searchedAt = now;
         ws.serializeAttachment(s);
-        if (needle.length < 2 || needle.length > 100) return this.send(ws, { type: "search_results", query, messages: [] });
-        const pattern = "%" + needle.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+        const none = () => this.send(ws, { type: "search_results", query, messages: [] });
+        if (needle.length > 200) return none();
+        const f = parseSearch(needle);
+        const filtered = f.from.length || f.in.length || f.has.length;
+        if ((!filtered && f.words.length < 2) || f.words.length > 100) return none();
         // Only in channels you can see, so hidden ones never use up the results.
-        const mine = this.channelsFor(s.key).map((c) => c.id);
-        if (!mine.length) return this.send(ws, { type: "search_results", query, messages: [] });
+        let mine = this.channelsFor(s.key);
+        if (f.in.length) mine = mine.filter((c) => f.in.includes(c.name.toLowerCase()));
+        if (!mine.length) return none();
+        const where = [`channel IN (${mine.map(() => "?").join(",")})`];
+        const args: (string | number)[] = mine.map((c) => c.id);
+        if (f.words) {
+          where.push("text LIKE ? ESCAPE '\\'");
+          args.push("%" + f.words.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+        }
+        if (f.from.length) {
+          // By name, nickname, or the name they had when they wrote it.
+          const marks = f.from.map(() => "?").join(",");
+          where.push(`(author_key IN (SELECT key FROM accounts WHERE lower(name) IN (${marks}) OR lower(coalesce(nick, '')) IN (${marks})) OR lower(sender_name) IN (${marks}))`);
+          args.push(...f.from, ...f.from, ...f.from);
+        }
+        for (const has of f.has) {
+          if (/^links?$/.test(has)) where.push("(text LIKE '%http://%' OR text LIKE '%https://%')");
+          else if (/^(images?|pictures?)$/.test(has)) where.push("text LIKE 'hopp-image:%'");
+          else return none();
+        }
         const messages = this.sql
-          .exec(`SELECT * FROM messages WHERE channel IN (${mine.map(() => "?").join(",")}) AND text LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`, ...mine, pattern, SEARCH_RESULTS)
+          .exec(`SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?`, ...args, SEARCH_RESULTS)
           .toArray()
           .map(rowToMessage);
         return this.send(ws, { type: "search_results", query, messages });
