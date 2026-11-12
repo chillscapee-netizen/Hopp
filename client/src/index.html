@@ -79,6 +79,7 @@
 
   <div id="shell" class="shell locked offline">
     <header class="topbar" data-tauri-drag-region>
+      <button id="streamer-pill" type="button" class="streamer-pill" aria-label="Streamer mode is on: click to turn it off" hidden>Streamer mode</button>
       <button id="backup-pill" class="backup-pill" hidden>
         <svg class="i sm"><use href="#i-shield"/></svg> Back up your account
       </button>
@@ -682,7 +683,7 @@
         </div>
         <span id="invite-link-label" class="field-label">Or send a server invite link</span>
         <div class="link-box">
-          <input id="invite-link" readonly placeholder="Generating…" spellcheck="false">
+          <input id="invite-link" data-private readonly placeholder="Generating…" spellcheck="false">
           <button id="invite-copy" type="button" class="btn primary sm">Copy</button>
         </div>
         <p class="invite-foot"><span id="invite-summary"></span> <button id="invite-edit" type="button" class="link">Edit invite link</button></p>
@@ -1170,7 +1171,7 @@
               </button>
               <span class="account-names">
                 <span id="profile-name" class="profile-name"></span>
-                <span id="profile-handle" class="profile-handle"></span>
+                <span id="profile-handle" class="profile-handle" data-private></span>
               </span>
             </div>
             <div class="account-fields">
@@ -1195,7 +1196,7 @@
               <div class="field-row">
                 <span class="row-label">
                   <span class="field-row-title">Username</span>
-                  <span id="profile-username" class="field-row-value"></span>
+                  <span id="profile-username" class="field-row-value" data-private></span>
                 </span>
                 <button id="profile-username-btn" type="button" class="btn sm">Edit</button>
               </div>
@@ -1302,6 +1303,24 @@
 
         <section data-panel="privacy" class="settings-page" hidden>
           <h2 class="page-title">Privacy &amp; safety</h2>
+          <div class="card-title">Streamer mode</div>
+          <div class="card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Streamer mode</span>
+                <span class="row-sub">Blurs invite links and your username, keeps message text out of notifications, and hides your recovery phrase.</span>
+              </span>
+              <input id="streamer-mode" type="checkbox" class="switch">
+            </label>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Turn on while I share my screen</span>
+                <span class="row-sub">On by itself when you start sharing, off again when you stop.</span>
+              </span>
+              <input id="streamer-auto" type="checkbox" class="switch" checked>
+            </label>
+          </div>
+          <div class="card-title">Safety</div>
           <div class="card">
             <label class="row">
               <span class="row-label">

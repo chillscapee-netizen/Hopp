@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -920,6 +920,8 @@ function backupStep(step) {
 
 /** With `phrase` (right after creating an account) it starts at the phrase; otherwise asks who you are first. */
 async function openBackup({ phrase = null, viewOnly = false } = {}) {
+  // Never on a stream.
+  if (streamer.on) return toast("Turn off streamer mode to see your recovery phrase.");
   backup.viewOnly = viewOnly;
   $("backup-later").hidden = viewOnly;
   $("backup-written").textContent = viewOnly ? "Done" : "I've saved it";
@@ -5316,7 +5318,9 @@ function addFriendPanel() {
   const copy = el("button", "link", "Copy");
   copy.type = "button";
   copy.addEventListener("click", () => copyText(state.me.username, copy, "Copy"));
-  mine.append(`Your username is @${state.me.username} · `, copy);
+  const handle = el("span", "", "@" + state.me.username);
+  handle.dataset.private = "";
+  mine.append("Your username is ", handle, " · ", copy);
   panel.append(form, result, mine);
   return panel;
 }
@@ -5755,7 +5759,7 @@ function notifyDm(peer, text, from) {
 async function desktopNotify(person, body, action, title = person.display_name) {
   if (document.hasFocus() || state.me?.status === "dnd" || !prefs.desktopNotify) return;
   // What a message says stays off the screen when you'd rather it did.
-  if (!prefs.notifyText && /^(dm|channel):/.test(action) && !/friend request/.test(body)) body = "Sent a message";
+  if ((!prefs.notifyText || streamer.on) && /^(dm|channel):/.test(action) && !/friend request/.test(body)) body = "Sent a message";
   const image = await notifyPicture(person).catch(() => null);
   invoke("notify", { title, body, image, action }).catch(() => {});
 }
@@ -11824,6 +11828,7 @@ async function startShare() {
   // Windows' own "Stop sharing" ends it too.
   track.addEventListener("ended", () => stopShare());
   screenShare.stream = stream;
+  queueMicrotask(syncStreamerAuto);
   tellSendingVideo();
   call("set_sharing", { on: true });
   renderVoicePanel();
@@ -11832,6 +11837,7 @@ async function startShare() {
 }
 
 function stopShare(quiet = false) {
+  queueMicrotask(syncStreamerAuto);
   if (!screenShare.stream) return;
   for (const [viewer, pc] of screenShare.peers) {
     if (!quiet) screenSend(viewer, { k: "stop", s: "viewer" });
@@ -12752,6 +12758,7 @@ async function startCallScreen() {
 }
 
 function startOut(kind, stream, room) {
+  if (kind === "screen") queueMicrotask(syncStreamerAuto);
   const out = (media.out[kind] = { stream, room, peers: new Map(), told: new Set() });
   queueMicrotask(tellSendingVideo);
   queueMicrotask(syncStreamAudio);
@@ -12792,6 +12799,7 @@ function stopWatchingCallScreen(peer) {
 }
 
 function stopOut(kind, quiet = false) {
+  if (kind === "screen") queueMicrotask(syncStreamerAuto);
   const out = media.out[kind];
   if (!out) return;
   delete media.out[kind];
@@ -13694,6 +13702,53 @@ document.querySelectorAll("[data-sound-style]").forEach((b) => {
     playSound("join", "You picked a sound style");
   });
 });
+
+// ---------- streamer mode ----------
+//
+// For streaming or sharing your screen: what others shouldn't see is blurred (anything marked
+// data-private: invite links, your username), notifications don't show what was
+// written, and the recovery phrase can't be shown. Turned on by hand, or by itself while you
+// share your screen (and off again after, unless you turned it on yourself).
+
+var streamer = { manual: load("streamerMode", "0") === "1", auto: false, on: false };
+prefs.streamerAuto = load("streamerAuto", "1") === "1";
+
+function applyStreamer() {
+  streamer.on = streamer.manual || streamer.auto;
+  document.documentElement.classList.toggle("streamer", streamer.on);
+  $("streamer-pill").hidden = !streamer.on;
+  $("streamer-mode").checked = streamer.on;
+  $("streamer-auto").checked = prefs.streamerAuto;
+}
+
+/** Sharing your screen (in voice or a call) turns it on by itself, when that's wanted. */
+function syncStreamerAuto() {
+  const sharing = !!(typeof media !== "undefined" && media.out?.screen) || !!(typeof screenShare !== "undefined" && screenShare.stream);
+  const auto = prefs.streamerAuto && sharing;
+  if (auto === streamer.auto) return;
+  streamer.auto = auto;
+  applyStreamer();
+}
+
+$("streamer-mode").addEventListener("change", (e) => {
+  streamer.manual = e.target.checked;
+  // Turned off by hand while sharing: it stays off until the next share.
+  if (!e.target.checked) streamer.auto = false;
+  save("streamerMode", streamer.manual ? "1" : "0");
+  applyStreamer();
+});
+$("streamer-auto").addEventListener("change", (e) => {
+  prefs.streamerAuto = e.target.checked;
+  save("streamerAuto", prefs.streamerAuto ? "1" : "0");
+  syncStreamerAuto();
+});
+$("streamer-pill").addEventListener("click", () => {
+  streamer.manual = false;
+  streamer.auto = false;
+  save("streamerMode", "0");
+  applyStreamer();
+});
+applyStreamer();
 
 // ---------- custom status ----------
 //

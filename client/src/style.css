@@ -3924,3 +3924,9 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .compact-chat .msg-gutter { width: 56px; text-align: right; opacity: 1; top: 2px; }
 .compact-chat .msg::after { content: ""; display: block; clear: both; }
 .compact-chat .msg.first:has(> .msg-reply) .msg-clock { top: auto; }
+
+/* Streamer mode: private things blurred, and a quiet note in the top bar that it's on. */
+.streamer [data-private] { filter: blur(6px); transition: filter 120ms; }
+.streamer-pill { position: absolute; right: 196px; top: 50%; transform: translateY(-50%); height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.streamer-pill:hover { background: color-mix(in srgb, var(--text) 18%, transparent); }
+.streamer-pill[hidden] { display: none; }
