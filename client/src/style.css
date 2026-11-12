@@ -3809,3 +3809,10 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .send-btn .i { width: 20px; height: 20px; }
 .composer-box:has(textarea:not(:placeholder-shown)) .send-btn,
 .composer-box:has(.attach-tray:not([hidden])) .send-btn { color: var(--text); }
+
+/* In a call the area is often low: the "is sharing" card fits without scrolling. */
+#call-stage .stream-card { min-height: 0; padding: 12px 16px; }
+#call-stage .stream-card-icon { width: 36px; height: 36px; margin-bottom: 2px; }
+#call-stage .stream-card .btn { margin-top: 6px; }
+.screen-offer .screen-offer-go, .screen-offer .screen-offer-wait { margin-top: 8px; pointer-events: none; }
+.screen-offer-wait { font-size: 13px; color: var(--muted); }

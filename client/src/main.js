@@ -8128,6 +8128,21 @@ function renderCallStage(c) {
       st.append(marks);
       st.addEventListener("click", () => setCallFocus("screen|" + p.id));
       tiles.push(st);
+    } else if (p.id !== "me" && liveIn.has(p.id)) {
+      // Sharing, and not watched yet: a tile to start watching (or one saying it's on its way).
+      const st = el("button", "voice-tile screen-back screen-offer");
+      st.type = "button";
+      st.dataset.offer = p.id;
+      st.dataset.key = "screen|" + p.id;
+      const mark = el("span", "screen-back-icon");
+      mark.append(icon("monitor"));
+      const marks = el("span", "voice-tile-marks");
+      marks.append(el("span", "live-pill", "LIVE"));
+      st.append(mark, el("span", "voice-tile-name ellipsis", p.name + "'s screen"), marks);
+      if (wantIn.has(p.id)) st.append(el("span", "screen-offer-wait", "Connecting…"));
+      else st.append(el("span", "btn primary sm screen-offer-go", "Watch"));
+      st.addEventListener("click", () => !wantIn.has(p.id) && watchCallScreen(p.id));
+      tiles.push(st);
     }
   }
   // A screen just shared (by anyone else) goes in the middle by itself, once.
@@ -8139,15 +8154,33 @@ function renderCallStage(c) {
   for (const k of [...callSeen]) if (!screens.includes(k)) callSeen.delete(k);
   if (callFocus && !tiles.some((t) => t.dataset.key === callFocus)) callFocus = null;
 
-  const grid = el("div", "voice-tiles" + (callFocus ? " strip" : ""));
+  // Nothing in the middle and someone is sharing: offered big there, as in a voice channel.
+  const offers = callFocus ? [] : people.filter((p) => p.id !== "me" && liveIn.has(p.id) && !wantIn.has(p.id) && !mediaStream("screen", p.id));
+  const grid = el("div", "voice-tiles" + (callFocus || offers.length ? " strip" : ""));
   let main = null;
   for (const t of tiles) {
     if (t.dataset.key === callFocus) {
       t.classList.add("focus");
       main = el("div", "stage-main");
       main.append(t);
-    } else grid.append(t);
+    } else if (!offers.some((p) => p.id === t.dataset.offer)) grid.append(t);
   }
+  if (offers.length) {
+    main = el("div", "stage-main");
+    const cards = el("div", "stream-cards");
+    for (const p of offers) {
+      const card = el("button", "stream-card");
+      card.type = "button";
+      card.dataset.stream = p.id;
+      const badge = el("span", "stream-card-icon");
+      badge.append(icon("monitor"));
+      card.append(badge, el("strong", "ellipsis", p.name), el("span", "stream-card-sub", "is sharing their screen"), el("span", "btn primary sm", "Watch"));
+      card.addEventListener("click", () => watchCallScreen(p.id));
+      cards.append(card);
+    }
+    main.append(cards);
+  }
+  const watchedHere = callFocus?.startsWith("screen|") && callFocus !== "screen|me" ? callFocus.slice(7) : null;
 
   // Top: how long, and the view's buttons.
   const top = el("div", "call-top");
@@ -8161,13 +8194,14 @@ function renderCallStage(c) {
     x.addEventListener("click", fn);
     bar.append(x);
   };
-  if (main) {
+  if (main && !offers.length) {
     btn("pip", "Pop out", () => {
       const v = main.querySelector("video");
       if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
       else v?.requestPictureInPicture?.().catch(() => toast("This video can't pop out right now.", true));
     });
     btn("grid", "Show everyone", () => setCallFocus(null));
+    if (watchedHere) btn("eye-off", "Stop watching", () => stopWatchingCallScreen(watchedHere));
   }
   btn(document.fullscreenElement === stage ? "minimize" : "maximize", "Full screen", () => (document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen()).catch(() => {}));
   top.append(bar);
@@ -12078,11 +12112,42 @@ async function startCallScreen() {
 }
 
 function startOut(kind, stream, room) {
-  media.out[kind] = { stream, room, peers: new Map() };
+  const out = (media.out[kind] = { stream, room, peers: new Map(), told: new Set() });
   queueMicrotask(tellSendingVideo);
   queueMicrotask(syncStreamAudio);
   stream.getVideoTracks()[0]?.addEventListener("ended", () => stopOut(kind));
-  for (const peer of room.peers()) offerMedia(kind, peer);
+  for (const peer of room.peers()) reachOut(kind, out, peer);
+  renderMediaViews();
+}
+
+// A camera goes to everyone at once. A screen in a call is watched on demand, like Discord: we
+// only say we're live, and send it to whoever asks to watch (and stop when they stop).
+function reachOut(kind, out, peer) {
+  if (kind !== "screen") return offerMedia(kind, peer);
+  out.told.add(String(peer));
+  out.room.send(peer, { v: "m", t: "screen", d: "r", k: "live" });
+}
+
+/** Screens being shared with us in a call (by Hopp ID), and the ones we asked to watch. */
+var liveIn = new Set();
+var wantIn = new Set();
+
+function watchCallScreen(peer) {
+  if (!state.call) return;
+  wantIn.add(peer);
+  callRoom.send(peer, { v: "m", t: "screen", d: "s", k: "want" });
+  callFocus = "screen|" + peer;
+  renderMediaViews();
+}
+
+function stopWatchingCallScreen(peer) {
+  wantIn.delete(peer);
+  callRoom.send(peer, { v: "m", t: "screen", d: "s", k: "unwant" });
+  const key = "screen|" + peer;
+  mediaIn.get(key)?.pc?.close();
+  mediaIn.delete(key);
+  videoEls.delete(key);
+  if (callFocus === key) callFocus = null;
   renderMediaViews();
 }
 
@@ -12092,10 +12157,10 @@ function stopOut(kind, quiet = false) {
   delete media.out[kind];
   queueMicrotask(tellSendingVideo);
   queueMicrotask(syncStreamAudio);
-  for (const [peer, pc] of out.peers) {
-    if (!quiet) out.room.send(peer, { v: "m", t: kind, d: "r", k: "stop" });
-    pc.close();
-  }
+  // Everyone we sent it to, or told we were live, hears that it ended.
+  const told = new Set([...out.told].concat([...out.peers.keys()].map(String)));
+  for (const pc of out.peers.values()) pc.close();
+  if (!quiet) for (const peer of told) out.room.send(peer, { v: "m", t: kind, d: "r", k: "stop" });
   out.stream.getTracks().forEach((t) => t.stop());
   videoEls.delete(kind + "|me");
   renderMediaViews();
@@ -12108,6 +12173,8 @@ function stopAllMedia() {
     videoEls.delete(key);
   }
   mediaIn.clear();
+  liveIn.clear();
+  wantIn.clear();
   focusTile = null;
 }
 
@@ -12162,7 +12229,15 @@ function mediaSignal(m) {
 async function handleMedia(from, m, room) {
   const kind = m.t === "screen" ? "screen" : "cam";
   if (m.d === "s") {
-    // To us as the one sending: their answer, their network addresses, or "stop sending".
+    // To us as the one sending: they want to watch, they stopped watching, their answer, or
+    // their network addresses.
+    if (m.k === "want") return media.out[kind] && offerMedia(kind, from);
+    if (m.k === "unwant") {
+      const out = media.out[kind];
+      out?.peers.get(from)?.close();
+      out?.peers.delete(from);
+      return;
+    }
     const pc = media.out[kind]?.peers.get(from);
     if (!pc || pc.pending) return;
     if (m.k === "answer") {
@@ -12177,7 +12252,16 @@ async function handleMedia(from, m, room) {
   }
   // To us as the one receiving.
   const key = kind + "|" + from;
+  if (m.k === "live") {
+    if (room !== callRoom) return;
+    liveIn.add(from);
+    // We were watching before (they started again, or we came back): carry on watching.
+    if (wantIn.has(from)) room.send(from, { v: "m", t: "screen", d: "s", k: "want" });
+    renderMediaViews();
+    return;
+  }
   if (m.k === "offer") {
+    if (kind === "screen" && room === callRoom) liveIn.add(from);
     mediaIn.get(key)?.pc?.close();
     const entry = { pc: null, stream: null, pending: [] };
     mediaIn.set(key, entry);
@@ -12201,6 +12285,10 @@ async function handleMedia(from, m, room) {
     mediaIn.get(key)?.pc?.close();
     mediaIn.delete(key);
     videoEls.delete(key);
+    if (kind === "screen") {
+      liveIn.delete(from);
+      wantIn.delete(from);
+    }
     if (focusTile === from) focusTile = null;
     renderMediaViews();
   }
@@ -12219,13 +12307,24 @@ function syncMedia() {
       stopOut(kind, true);
       continue;
     }
-    // Newcomers get our camera; people who left are let go.
-    for (const p of room.peers()) if (!out.peers.has(p)) offerMedia(kind, p);
+    // Newcomers get our camera (or hear our screen is live); people who left are let go.
+    for (const p of room.peers()) {
+      if (kind === "screen") {
+        if (!out.told.has(String(p))) reachOut(kind, out, p);
+      } else if (!out.peers.has(p)) offerMedia(kind, p);
+    }
     for (const [p, pc] of out.peers) {
       if (!peers.has(String(p))) {
         pc.close();
         out.peers.delete(p);
       }
+    }
+    for (const p of out.told) if (!peers.has(p)) out.told.delete(p);
+  }
+  for (const p of [...liveIn]) {
+    if (!peers.has(String(p))) {
+      liveIn.delete(p);
+      wantIn.delete(p);
     }
   }
   for (const [key, m] of mediaIn) {

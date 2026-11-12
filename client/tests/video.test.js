@@ -79,6 +79,20 @@
   callButtons()[2].click();
   const screen = await playing("#call-stage .screen-tile video");
   check("a shared screen in a call shows big", !!screen);
+  // On demand: the other side hears we're live, and gets the screen only after Watch.
+  for (let i = 0; i < 30 && !document.querySelector("#call-stage .stream-card, #call-stage .screen-offer"); i++) await wait(100);
+  check("the other side is offered it, not sent it", liveIn.has(KEYS.elin) && !mediaIn.has("screen|" + KEYS.elin) && media.out.screen.peers.size === 0);
+  watchCallScreen(KEYS.elin);
+  let theirScreen = null;
+  for (let i = 0; i < 100 && !theirScreen; i++) {
+    const v = mediaIn.get("screen|" + KEYS.elin)?.stream;
+    if (v) theirScreen = v;
+    await wait(100);
+  }
+  check("Watch brings it over a real connection", !!theirScreen && media.out.screen.peers.size === 1);
+  stopWatchingCallScreen(KEYS.elin);
+  await wait(300);
+  check("Stop watching closes it on both sides", !mediaIn.has("screen|" + KEYS.elin) && media.out.screen.peers.size === 0);
   emit("account", { type: "call", from: KEYS.elin, kind: "end", call_id: "abcdabcd-1111" });
   await wait(200);
   check("the call ending ends its video", Object.keys(media.out).length === 0 && mediaIn.size === 0);
