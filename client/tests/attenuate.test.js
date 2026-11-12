@@ -26,7 +26,7 @@
   await wait(30);
   check("talking again keeps it down without asking twice", asked.filter((a) => a.startsWith("lower")).length === 1);
   talk(elin, false);
-  await wait(900);
+  await wait(1700);
   check("after a calm moment, back to normal", asked.at(-1) === "restore", asked.join(", "));
 
   asked.length = 0;

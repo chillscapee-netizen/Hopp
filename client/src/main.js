@@ -4313,8 +4313,9 @@ listen("ptt-recorded", (e) => {
   else setPttKey(e.payload.key, e.payload.label);
 });
 // ---------- lowering other apps while people talk ----------
-// While someone else talks (in voice or a call), the backend turns every other app down to
-// the chosen share of its volume, and back when they've been quiet a moment.
+// While someone else talks (in voice or a call), the backend fades every other app down to
+// the chosen share of its volume, and back up once they've been quiet for 1.5 s (short
+// pauses between words don't make the music jump back up).
 
 prefs.attenuate = load("attenuate", "0") === "1";
 prefs.attenuateLevel = Number(load("attenuateLevel", "40"));
@@ -4346,7 +4347,7 @@ function syncAttenuation() {
       attenuation.timer = 0;
       attenuation.on = false;
       invoke("set_attenuation", { on: false, level: 1 }).catch(() => {});
-    }, 700);
+    }, 1500);
   }
 }
 
@@ -4360,8 +4361,8 @@ $("attenuate-level").addEventListener("input", (e) => {
   prefs.attenuateLevel = Number(e.target.value);
   save("attenuateLevel", String(prefs.attenuateLevel));
   renderAttenuate();
-  // Already lowered: to the new level at once.
-  if (attenuation.on) invoke("set_attenuation", { on: false, level: 1 }).then(() => invoke("set_attenuation", { on: true, level: prefs.attenuateLevel / 100 })).catch(() => {});
+  // Already lowered: it glides to the new level.
+  if (attenuation.on) invoke("set_attenuation", { on: true, level: prefs.attenuateLevel / 100 }).catch(() => {});
 });
 renderAttenuate();
 
