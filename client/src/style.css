@@ -3912,3 +3912,15 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .around-here { flex: none; color: var(--green); font-size: 12px; font-weight: 600; }
 .around-empty { margin: 4px 6px; }
 .around-empty p { margin: 0 0 8px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+
+/* Compact messages: the time, the name and the message on one line, no pictures. */
+.msg-clock { display: none; }
+.compact-chat .msg { padding-left: 64px; }
+.compact-chat .msg.first { margin-top: calc(var(--chat-space, 18px) / 3); padding-top: 1px; }
+.compact-chat .msg > .avatar { display: none; }
+.compact-chat .msg-head { float: left; margin-right: 7px; line-height: inherit; }
+.compact-chat .msg-head .msg-time { display: none; }
+.compact-chat .msg-clock { display: block; position: absolute; left: 0; width: 56px; color: var(--faint); font-size: 11px; font-weight: 500; text-align: right; line-height: 21px; }
+.compact-chat .msg-gutter { width: 56px; text-align: right; opacity: 1; top: 2px; }
+.compact-chat .msg::after { content: ""; display: block; clear: both; }
+.compact-chat .msg.first:has(> .msg-reply) .msg-clock { top: auto; }

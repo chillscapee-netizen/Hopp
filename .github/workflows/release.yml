@@ -25,9 +25,9 @@ jobs:
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload the unsigned installer
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hopp-unsigned
           path: unsigned/
@@ -68,7 +68,7 @@ jobs:
       # approver to say yes, and gives it back signed.
       - name: Sign with SignPath
         if: ${{ env.HAS_SIGNPATH == 'true' }}
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -76,6 +76,8 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
           github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
           wait-for-completion: true
+          # Time for the approver to say yes (each release is approved by hand).
+          wait-for-completion-timeout-in-seconds: 14400
           output-artifact-directory: signed
 
       - name: Use the signed installer when there is one
@@ -97,7 +99,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npx tauri signer sign "../release/${{ steps.built.outputs.name }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hopp-release
           path: release/

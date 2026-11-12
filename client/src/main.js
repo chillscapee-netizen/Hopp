@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -2971,7 +2971,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     const day = dayLabel(m.sent_at);
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
-    const grouped = !newDay && !m.reply && prev.author_key === m.author_key && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const grouped = !prefs.compact && !newDay && !m.reply && prev.author_key === m.author_key && prev.sender_name === m.sender_name && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
     if (newSince !== null && m.id > newSince && m.author_key !== state.account?.publicKey) {
       const line = el("li", "new-divider");
       line.append(el("span", "", "New"));
@@ -3003,7 +3003,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       const head = el("div", "msg-head");
       const author = el("span", "msg-author", nameHere(m.author_key) ?? m.sender_name);
       author.style.color = nameColor(m.author_key, m.sender_name);
-      head.append(author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
+      head.append(el("span", "msg-clock", clock(m.sent_at)), author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
         const pin = icon("pin", "xs msg-pin");
         pin.dataset.tip = "Pinned";
@@ -3061,7 +3061,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
   const myName = me()?.name ?? state.account?.name ?? "";
   let last = prev && !prev.blocked ? { author_key: prev.author_key, sender_name: prev.sender_name, sent_at: prev.sent_at } : null;
   for (const o of state.outbox.filter((x) => x.channel === state.view)) {
-    const grouped = !!last && !o.reply && !o.failed && last.author_key === state.account?.publicKey && last.sender_name === myName && o.at - last.sent_at < GROUP_WINDOW_MS && dayLabel(last.sent_at) === dayLabel(o.at);
+    const grouped = !prefs.compact && !!last && !o.reply && !o.failed && last.author_key === state.account?.publicKey && last.sender_name === myName && o.at - last.sent_at < GROUP_WINDOW_MS && dayLabel(last.sent_at) === dayLabel(o.at);
     items.push(outboxItem(o, grouped));
     last = { author_key: state.account?.publicKey, sender_name: myName, sent_at: o.at };
   }
@@ -5502,6 +5502,8 @@ function applySyncedSettings(remote) {
     prefs.custom.mode ??= hexToHsl(prefs.custom.a)[2] > 60 ? "light" : "dark";
     prefs.chatSize = Number(load("chatSize", "15"));
     prefs.chatSpace = Number(load("chatSpace", "18"));
+    prefs.compact = load("chatCompact", "0") === "1";
+    $("chat-compact").checked = prefs.compact;
     applyTheme();
     syncThemePage();
     prefs.linkPreviews = load("linkPreviews", "1") === "1";
@@ -6095,7 +6097,7 @@ function renderDmView(keepScroll) {
     const day = dayLabel(m.sent_at);
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
-    const grouped = !newDay && prev.from_key === m.from_key && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const grouped = !prefs.compact && !newDay && prev.from_key === m.from_key && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
     const li = el("li", "msg " + (grouped ? "cont" : "first") + (m.pending ? " pending" : "") + (m.failed ? " failed" : ""));
     if (grouped) li.append(el("span", "msg-gutter", clock(m.sent_at)));
     else {
@@ -6104,7 +6106,7 @@ function renderDmView(keepScroll) {
       const name = el("span", "msg-author", author.display_name);
       const picked = pickedNameColor(m.from_key);
       if (picked) name.style.color = readableColor(picked);
-      headLine.append(name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
+      headLine.append(el("span", "msg-clock", clock(m.sent_at)), name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
     if (state.dmEditing === m.id) {
@@ -11331,6 +11333,7 @@ function applyTheme() {
   }
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
+  document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
   if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
   // Names in role colours are adjusted for light and dark: redraw them.
   if (state.roster && typeof online === "function" && online()) {
@@ -11449,6 +11452,16 @@ prefs.custom.mode ??= hexToHsl(prefs.custom.a)[2] > 60 ? "light" : "dark";
 for (const b of document.querySelectorAll(".theme-mode .segment")) b.addEventListener("click", () => saveCustom({ mode: b.dataset.look }));
 prefs.chatSize = Number(load("chatSize", "15"));
 prefs.chatSpace = Number(load("chatSpace", "18"));
+prefs.compact = load("chatCompact", "0") === "1";
+$("chat-compact").checked = prefs.compact;
+$("chat-compact").addEventListener("change", (e) => {
+  prefs.compact = e.target.checked;
+  save("chatCompact", prefs.compact ? "1" : "0");
+  applyTheme();
+  // Every message gets its own name line in compact mode: drawn again.
+  if (typeof online === "function" && online()) renderMessages(true);
+  if (state.openDm) renderDmView(true);
+});
 
 $("theme-a").addEventListener("input", (e) => saveCustom({ a: e.target.value }));
 $("theme-b").addEventListener("input", (e) => saveCustom({ b: e.target.value }));
