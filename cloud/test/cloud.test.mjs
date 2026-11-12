@@ -757,6 +757,35 @@ test("polls: one answer each (moved, not added), several when allowed, none afte
   bob.close();
 });
 
+test("voice messages: WebM audio uploads, is sent as hopp-voice and served back; fakes refused", async () => {
+  const { id, owner } = await newServer();
+  assert.ok(owner.welcome.features.includes("voice-messages"));
+  const HTTP = BASE.replace(/^ws/, "http");
+  const upload = async (body, type) => {
+    const time = Date.now();
+    const digest = crypto.createHash("sha256").update(body).digest("hex");
+    const signature = crypto.sign(null, Buffer.from(`hopp-image-v1\0${id}\0${digest}\0${time}`), owner.key.privateKey).toString("hex");
+    const res = await fetch(`${HTTP}/servers/${id}/images`, { method: "POST", headers: { "content-type": type, "X-Hopp-Key": owner.key.pub, "X-Hopp-Time": String(time), "X-Hopp-Signature": signature }, body });
+    return res.json();
+  };
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), crypto.randomBytes(3000)]);
+  const { id: voiceId } = await upload(webm, "audio/webm");
+  assert.match(voiceId, /^[0-9a-f]{32}$/);
+  assert.match((await upload(crypto.randomBytes(3000), "audio/webm")).error, /isn't the picture it says/);
+  assert.match((await upload(webm, "audio/mpeg")).error, /voice messages/);
+  const general = channelId(owner, "general");
+  const text = `hopp-voice:${voiceId} 4200`;
+  owner.send({ type: "send_chat", channel: general, text });
+  await owner.waitFor((m) => m.type === "chat" && m.message.text === text);
+  const served = await fetch(`${HTTP}/servers/${id}/images/${voiceId}`);
+  assert.equal(served.headers.get("content-type"), "audio/webm");
+  assert.equal(Buffer.from(await served.arrayBuffer()).length, webm.length);
+  // Someone else's upload can't be sent as yours.
+  owner.send({ type: "send_chat", channel: general, text: `hopp-voice:${"ab".repeat(16)} 1000` });
+  assert.match(await errorOf(owner), /didn't upload/);
+  owner.close();
+});
+
 test("screen sharing: a flag for the voice channel, handshakes passed on within it only", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("screen"));

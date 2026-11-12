@@ -3870,3 +3870,20 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .poll-duration { display: flex; align-items: center; gap: 8px; }
 .poll-duration .field-label { margin: 0; }
 .check-row { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); }
+
+/* Voice messages: recording in the message box, and the player in the chat. */
+.recorder { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; }
+.recorder[hidden] { display: none; }
+.recorder-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: rec-pulse 1.2s ease-in-out infinite; }
+@keyframes rec-pulse { 50% { opacity: 0.35; } }
+.recorder-label { color: var(--text); font-size: 14px; }
+.recorder-time { color: var(--text); font-variant-numeric: tabular-nums; font-size: 14px; }
+.recorder-max { flex: 1; color: var(--faint); font-size: 12.5px; }
+.recorder-send { color: var(--text); }
+.recorder-send .i { width: 20px; height: 20px; }
+.voice-msg { display: flex; align-items: center; gap: 10px; width: min(340px, 100%); margin: 4px 0; padding: 8px 12px 8px 8px; background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 22px; }
+.voice-msg-play { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: none; border-radius: 50%; background: var(--text); color: var(--main); cursor: pointer; }
+.voice-msg-play .i { width: 15px; height: 15px; }
+.voice-msg-bar { position: relative; flex: 1; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 16%, transparent); cursor: pointer; }
+.voice-msg-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: var(--text); }
+.voice-msg-time { flex: none; min-width: 34px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: right; }

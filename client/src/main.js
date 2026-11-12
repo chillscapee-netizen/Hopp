@@ -2691,6 +2691,7 @@ function renderChannelView() {
   $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
+  $("voice-msg-btn").hidden = !voiceMessagesHere();
   if (typeof renderAttachment === "function") renderAttachment();
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
   $("members-toggle").classList.toggle("selected", prefs.showMembers);
@@ -3011,6 +3012,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
+    else if (VOICE_MESSAGE.test(m.text)) li.append(voiceView(m.text.match(VOICE_MESSAGE)[1], Number(m.text.match(VOICE_MESSAGE)[2])));
     else if (pollOf(m.text)) li.append(pollView(m, pollOf(m.text)));
     else if (forwardParts(m.text)) li.append(forwardView(forwardParts(m.text)));
     else if (PICTURE.test(m.text)) {
@@ -6265,6 +6267,7 @@ function previewText(text) {
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
   const poll = pollOf(text);
   if (poll) return "📊 " + (poll.question || "Poll");
+  if (VOICE_MESSAGE.test(text)) return "🎤 Voice message";
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
@@ -6668,7 +6671,7 @@ function messageActions(m) {
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (canForward(m.text)) button("forward", "Forward", () => forwardMessage(m));
-  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text)) button("edit", "Edit", () => startEdit(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -7781,7 +7784,7 @@ function openMessageMenu(m, e) {
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
       ...(canForward(m.text) ? [{ label: "Forward", icon: "forward", action: () => forwardMessage(m) }] : []),
-      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -7818,7 +7821,7 @@ function forwardParts(text) {
 }
 
 function canForward(text) {
-  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text);
+  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text) && !VOICE_MESSAGE.test(text);
 }
 
 /** The text to send: the original's own source when forwarding something forwarded. */
@@ -8683,6 +8686,134 @@ $("pins-btn").addEventListener("click", (e) => {
   placePopover(pop, r.right - 380, r.bottom + 8);
   call("get_pins", { channel: state.view });
 });
+
+// ---------- voice messages ----------
+//
+// Recorded here (Opus in WebM, up to a minute, small enough for the server's store), sent
+// as hopp-voice:<id> <length in ms>, and played in the chat with a bar you can click to seek.
+
+var VOICE_MESSAGE = /^hopp-voice:([0-9a-f]{32}) (\d{1,6})$/;
+var VOICE_MAX_MS = 60_000;
+var recording = null;
+
+function voiceMessagesHere() {
+  return online() && !!state.roster?.features?.includes("voice-messages");
+}
+
+function clockLength(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+async function startRecording() {
+  if (recording || state.view === null || !voiceMessagesHere()) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (err) {
+    return toast(err?.name === "NotAllowedError" ? "Hopp wasn't allowed to use your microphone." : "Couldn't start recording. " + (err?.message ?? ""), true);
+  }
+  const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 32_000 });
+  const r = { recorder, stream, chunks: [], started: Date.now(), channel: state.view, send: false, timer: null };
+  recording = r;
+  recorder.addEventListener("dataavailable", (e) => e.data.size && r.chunks.push(e.data));
+  recorder.addEventListener("stop", () => finishRecording(r));
+  recorder.start(250);
+  r.timer = setInterval(() => {
+    const ms = Date.now() - r.started;
+    $("recorder-time").textContent = clockLength(ms);
+    if (ms >= VOICE_MAX_MS) stopRecording(true);
+  }, 200);
+  $("recorder-time").textContent = "0:00";
+  $("recorder").hidden = false;
+  document.querySelector("#composer .composer-row").hidden = true;
+}
+
+function stopRecording(send) {
+  const r = recording;
+  if (!r) return;
+  r.send = send;
+  r.length = Math.min(VOICE_MAX_MS, Date.now() - r.started);
+  clearInterval(r.timer);
+  if (r.recorder.state !== "inactive") r.recorder.stop();
+  r.stream.getTracks().forEach((t) => t.stop());
+  $("recorder").hidden = true;
+  document.querySelector("#composer .composer-row").hidden = false;
+  recording = null;
+}
+
+async function finishRecording(r) {
+  if (!r.send) return;
+  if (r.length < 700) return toast("Hold on a little longer: that was too short to send.");
+  const bytes = new Uint8Array(await new Blob(r.chunks, { type: "audio/webm" }).arrayBuffer());
+  if (bytes.length < 200) return toast("Nothing was recorded. Check your microphone in Windows sound settings.", true);
+  if (bytes.length > 320_000) return toast("That voice message is too long to send.", true);
+  try {
+    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(bytes), kind: "audio/webm" });
+    sendChat(r.channel, `hopp-voice:${id} ${Math.round(r.length)}`, null);
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+$("voice-msg-btn").addEventListener("click", startRecording);
+$("voice-msg-btn").addEventListener("mousedown", (e) => e.preventDefault());
+$("recorder-cancel").addEventListener("click", () => stopRecording(false));
+$("recorder-send").addEventListener("click", () => stopRecording(true));
+// Escape throws a recording away.
+document.addEventListener("keydown", (e) => recording && e.key === "Escape" && stopRecording(false));
+
+/** The player in the chat: play/pause, a bar to seek, and the time. */
+function voiceView(id, length) {
+  const box = el("div", "voice-msg");
+  const play = el("button", "voice-msg-play");
+  play.type = "button";
+  play.setAttribute("aria-label", "Play");
+  play.append(icon("play"));
+  const bar = el("div", "voice-msg-bar");
+  const fill = el("div", "voice-msg-fill");
+  bar.append(fill);
+  const time = el("span", "voice-msg-time", clockLength(length));
+  let audio = null;
+  const total = () => (audio && Number.isFinite(audio.duration) ? audio.duration * 1000 : length);
+  const show = () => {
+    const at = audio ? audio.currentTime * 1000 : 0;
+    fill.style.width = Math.min(100, (at / total()) * 100) + "%";
+    time.textContent = audio && (at > 0 || !audio.paused) ? clockLength(at) + " / " + clockLength(total()) : clockLength(length);
+    play.replaceChildren(icon(audio && !audio.paused ? "pause" : "play"));
+    play.setAttribute("aria-label", audio && !audio.paused ? "Pause" : "Play");
+  };
+  const load = () => {
+    if (audio) return audio;
+    audio = new Audio(pictureUrl(id));
+    audio.addEventListener("timeupdate", show);
+    audio.addEventListener("play", show);
+    audio.addEventListener("pause", show);
+    audio.addEventListener("ended", () => {
+      audio.currentTime = 0;
+      show();
+    });
+    audio.addEventListener("error", () => toast("That voice message can't be played. It may have been removed.", true));
+    return audio;
+  };
+  play.addEventListener("click", () => {
+    const a = load();
+    // One at a time, like everywhere else.
+    for (const other of document.querySelectorAll(".voice-msg")) if (other !== box) other.pauseVoice?.();
+    if (a.paused) a.play().catch(() => {});
+    else a.pause();
+  });
+  bar.addEventListener("click", (e) => {
+    const a = load();
+    const r = bar.getBoundingClientRect();
+    const seek = ((e.clientX - r.left) / r.width) * (total() / 1000);
+    if (Number.isFinite(seek)) a.currentTime = Math.max(0, seek);
+    if (a.paused) a.play().catch(() => {});
+  });
+  box.pauseVoice = () => audio?.pause();
+  box.append(play, bar, time);
+  return box;
+}
 
 // ---------- polls ----------
 //

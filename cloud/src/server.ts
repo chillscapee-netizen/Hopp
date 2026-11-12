@@ -210,14 +210,23 @@ const IMAGES_PER_DAY = 40;
 const UPLOAD_CLOCK_SKEW_MS = 5 * 60_000;
 /** A picture message: "hopp-image:<id> <width>x<height>", then an optional caption. */
 const IMAGE_TOKEN = /^hopp-image:([0-9a-f]{32}) (\d{1,5})x(\d{1,5})(?:\n|$)/;
+/** A voice message: hopp-voice:<stored id> <length in ms>. */
+const VOICE_TOKEN = /^hopp-voice:([0-9a-f]{32}) (\d{1,6})$/;
+/** Anything kept in the server's store (a picture or a voice message): its id. */
+function storedId(text: string): string | null {
+  return (text.match(IMAGE_TOKEN) ?? text.match(VOICE_TOKEN))?.[1] ?? null;
+}
 const IMAGE_TYPES: Record<string, (b: Uint8Array) => boolean> = {
   "image/webp": (b) => b.length > 12 && String.fromCharCode(...b.subarray(0, 4)) === "RIFF" && String.fromCharCode(...b.subarray(8, 12)) === "WEBP",
   "image/jpeg": (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
   "image/png": (b) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
+  // Voice messages: Opus in WebM, as the app records them.
+  "audio/webm": (b) => b.length > 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3,
 };
 
 /** What notifications and replies show for a message: a picture reads as "Image". */
 function plainText(text: string): string {
+  if (VOICE_TOKEN.test(text)) return "🎤 Voice message";
   const m = text.match(IMAGE_TOKEN);
   if (!m) return text;
   const caption = text.slice(m[0].length).trim();
@@ -366,7 +375,7 @@ export class StromServer extends DurableObject<Env> {
     const type = (request.headers.get("content-type") ?? "").split(";")[0].trim();
     if (!/^[0-9a-f]{64}$/.test(key) || signature?.length !== 64) return fail("Not signed.", 401);
     if (!Number.isFinite(time) || Math.abs(Date.now() - time) > UPLOAD_CLOCK_SKEW_MS) return fail("Your computer's clock is off. Check the time and try again.", 401);
-    if (!IMAGE_TYPES[type]) return fail("Only WebP, JPEG and PNG pictures.");
+    if (!IMAGE_TYPES[type]) return fail("Only WebP, JPEG and PNG pictures, and voice messages.");
     const data = new Uint8Array(await request.arrayBuffer());
     if (data.length === 0 || data.length > MAX_IMAGE_BYTES) return fail("That picture is too big.");
     if (!IMAGE_TYPES[type](data)) return fail("That file isn't the picture it says it is.");
@@ -383,7 +392,7 @@ export class StromServer extends DurableObject<Env> {
     const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
     const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length > 0;
     if (!member || banned) return fail("You're not a member of this server.", 403);
-    if (this.meta("pictures_off") === "1") return fail("Pictures are turned off in this server.", 403);
+    if (this.meta("pictures_off") === "1" && type.startsWith("image/")) return fail("Pictures are turned off in this server.", 403);
     const now = Date.now();
     const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE uploader = ? AND created_at > ?", key, now - 86_400_000).one().n);
     if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
@@ -405,8 +414,8 @@ export class StromServer extends DurableObject<Env> {
   /** A message being deleted: its picture goes too. */
   private dropPicture(messageId: number) {
     const text = this.sql.exec("SELECT text FROM messages WHERE id = ?", messageId).toArray()[0]?.text;
-    const picture = typeof text === "string" ? text.match(IMAGE_TOKEN) : null;
-    if (picture) this.sql.exec("DELETE FROM images WHERE id = ?", picture[1]);
+    const stored = typeof text === "string" ? storedId(text) : null;
+    if (stored) this.sql.exec("DELETE FROM images WHERE id = ?", stored);
   }
 
   // ---------- storage helpers ----------
@@ -846,7 +855,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1228,10 +1237,11 @@ export class StromServer extends DurableObject<Env> {
           this.sql.exec("DELETE FROM images WHERE id = ?", picture[1]);
           return this.error(ws, "Pictures are turned off here.");
         }
-        if (picture) {
-          const owned = this.sql.exec("SELECT 1 FROM images WHERE id = ? AND uploader = ?", picture[1], s.key!).toArray().length > 0;
-          if (!owned) return this.error(ws, "That picture didn't upload. Try again.");
-          this.sql.exec("UPDATE images SET used = 1 WHERE id = ?", picture[1]);
+        const stored = storedId(text);
+        if (stored) {
+          const owned = this.sql.exec("SELECT 1 FROM images WHERE id = ? AND uploader = ?", stored, s.key!).toArray().length > 0;
+          if (!owned) return this.error(ws, picture ? "That picture didn't upload. Try again." : "That voice message didn't upload. Try again.");
+          this.sql.exec("UPDATE images SET used = 1 WHERE id = ?", stored);
         }
         const answered = msg.reply_to != null ? this.message(ch.id, Number(msg.reply_to)) : null;
         const reply: Reply | undefined = answered
@@ -1251,8 +1261,8 @@ export class StromServer extends DurableObject<Env> {
           ch.id, ch.id, CHAT_KEEP,
         );
         for (const old of trimmed) {
-          const gone = String(old.text).match(IMAGE_TOKEN);
-          if (gone) this.sql.exec("DELETE FROM images WHERE id = ?", gone[1]);
+          const gone = storedId(String(old.text));
+          if (gone) this.sql.exec("DELETE FROM images WHERE id = ?", gone);
         }
         const message: ChatMessage = {
           id: Number(row.id), channel: ch.id, sender: user.session_id, sender_name: user.name,

@@ -1417,7 +1417,7 @@ async fn gif_search(cloud: String, q: String, pos: Option<String>) -> CmdResult<
 /// Uploads a picture to a cloud server's chat, signed with our Hopp ID. Returns its id.
 #[tauri::command]
 async fn upload_image(state: State<'_, AppState>, cloud: String, server_id: String, data: Vec<u8>, kind: String) -> CmdResult<String> {
-    if !server_id.chars().all(|c| c.is_ascii_alphanumeric()) || !matches!(kind.as_str(), "image/webp" | "image/jpeg" | "image/png") {
+    if !server_id.chars().all(|c| c.is_ascii_alphanumeric()) || !matches!(kind.as_str(), "image/webp" | "image/jpeg" | "image/png" | "audio/webm") {
         return Err("That picture can't be sent.".into());
     }
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;

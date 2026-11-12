@@ -106,7 +106,7 @@ function cleanUp() {
 async function runLive(file, test, timeoutMs) {
   cleanUp();
   const port = 9300 + Math.floor(Math.random() * 500);
-  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", "--autoplay-policy=no-user-gesture-required", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     let target = null;
