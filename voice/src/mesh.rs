@@ -51,6 +51,14 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(200);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// A path we haven't heard on for this long is dropped and probing starts over.
 const PATH_TIMEOUT: Duration = Duration::from_secs(5);
+/// A path heard on this recently is alive: voice stays on it, whatever other address the
+/// same person's packets also arrive from (their IPv4 and IPv6, say). Answers to our pings
+/// come every second, so this is a little over that.
+const PATH_ALIVE: Duration = Duration::from_millis(2500);
+/// Another of their addresses must answer this much faster before voice moves to it.
+const FASTER_BY_MS: u32 = 10;
+/// While on a direct path, their other addresses are timed this often, to find a faster one.
+const OTHER_PATHS_EVERY: Duration = Duration::from_secs(10);
 /// A peer we haven't reached in this long is reported as unreachable (their network blocks direct voice).
 const UNREACHABLE_AFTER: Duration = Duration::from_secs(8);
 /// After either side's addresses change, every address is probed this long alongside the
@@ -247,39 +255,39 @@ pub fn open(cipher: &ChaCha20Poly1305, buf: &[u8]) -> Option<(u8, SessionId, Vec
 }
 
 /// How much of someone's voice reaches us: sequence numbers seen against the span they cover.
+///
+/// The newest few frames are left out of each count: a frame that's merely late (it took
+/// another way, or the network shuffled it) would otherwise be counted as lost.
 #[derive(Default)]
 struct LossMeter {
     /// Older frames than this belong to a window already counted.
     floor: u32,
-    first: Option<u32>,
-    highest: u32,
-    count: u32,
+    /// Frames seen in the window being counted (each once, however often it came).
+    seen: std::collections::BTreeSet<u32>,
     /// Smoothed loss in percent: rises fast, settles slowly.
     percent: f32,
     measured: bool,
 }
 
+/// Frames this close to the newest aren't counted yet: they may still arrive.
+const LATE_GRACE: u32 = 5;
+
 impl LossMeter {
     fn heard(&mut self, seq: u32) {
+        let restarted = |a: u32, b: u32| a > b && a - b > 1000;
         if seq < self.floor {
             // Far behind: they restarted their voice, so counting starts over.
-            if self.floor - seq > 1000 {
+            if restarted(self.floor, seq) {
                 *self = LossMeter::default();
             } else {
                 return;
             }
+        } else if self.seen.last().is_some_and(|&last| restarted(seq, last)) {
+            // Far ahead: the same, the other way round.
+            let (percent, measured) = (self.percent, self.measured);
+            *self = LossMeter { percent, measured, ..LossMeter::default() };
         }
-        match self.first {
-            None => {
-                self.first = Some(seq);
-                self.highest = seq;
-                self.count = 1;
-            }
-            Some(_) => {
-                self.highest = self.highest.max(seq);
-                self.count += 1;
-            }
-        }
+        self.seen.insert(seq);
     }
 
     /// The smoothed loss so far, without closing the window.
@@ -289,15 +297,17 @@ impl LossMeter {
 
     /// Closes the window once it spans enough; the smoothed loss, once there's any measurement.
     fn report(&mut self) -> Option<u8> {
-        if let Some(first) = self.first {
-            let span = self.highest - first + 1;
-            if span >= LOSS_WINDOW {
-                let lost = span.saturating_sub(self.count) as f32 * 100.0 / span as f32;
+        if let (Some(&first), Some(&last)) = (self.seen.first(), self.seen.last()) {
+            let cutoff = last.saturating_sub(LATE_GRACE);
+            if cutoff >= first && cutoff - first + 1 >= LOSS_WINDOW {
+                let span = cutoff - first + 1;
+                let newer = self.seen.split_off(&(cutoff + 1));
+                let count = self.seen.len() as u32;
+                self.seen = newer;
+                let lost = span.saturating_sub(count) as f32 * 100.0 / span as f32;
                 self.percent = if lost > self.percent { (self.percent + lost) / 2.0 } else { self.percent * 0.8 + lost * 0.2 };
                 self.measured = true;
-                self.floor = self.highest + 1;
-                self.first = None;
-                self.count = 0;
+                self.floor = cutoff + 1;
             }
         }
         self.measured.then(|| self.percent.round().min(100.0) as u8)
@@ -606,6 +616,10 @@ impl Mesh {
                         // Still on the detour: knock on the direct doors again.
                         link.last_direct_try = Some(now);
                         out.extend(link.candidates.iter().map(|&c| (c, false)));
+                    } else if !link.relayed && link.candidates.len() > 1 && !link.last_direct_try.is_some_and(|t| now - t < OTHER_PATHS_EVERY) {
+                        // Now and then their other addresses are timed: one may be faster.
+                        link.last_direct_try = Some(now);
+                        out.extend(link.candidates.iter().filter(|&&c| c != path).map(|&c| (c, false)));
                     }
                 }
                 None => {
@@ -632,12 +646,29 @@ impl Mesh {
         let now = Instant::now();
         let mut links = self.links.lock().unwrap();
         let Some(link) = links.get_mut(&id) else { return false };
+        // On the path: it's alive.
+        if link.path == Some(from) && link.relayed == relayed {
+            link.last_heard = Some(now);
+            if !relayed {
+                link.last_direct = Some(now);
+            }
+            return true;
+        }
         if !proof && !relayed && link.relayed && link.path.is_some() {
             return true;
         }
         // A live direct path stays, even when the relay delivers too.
         if relayed && !link.relayed && link.path.is_some() && link.last_direct.is_some_and(|t| now - t < DIRECT_PREFERRED_FOR) {
-            link.last_heard = Some(now);
+            return true;
+        }
+        // Another of their direct addresses while the path is alive: voice stays where it is.
+        // Hopping between them (IPv4 one packet, IPv6 the next) sends voice two ways at once,
+        // so it arrives unevenly and out of order: delay and gaps. Only an address they've
+        // told us about that the path isn't (their network changed) takes over at once; a
+        // faster one takes over once it's been timed (see pong_heard).
+        let alive = link.path.is_some() && link.last_heard.is_some_and(|t| now - t < PATH_ALIVE);
+        let moved = link.path.is_some_and(|p| !link.candidates.contains(&p)) && link.candidates.contains(&from);
+        if !relayed && !link.relayed && alive && !moved {
             return true;
         }
         if link.path != Some(from) || link.relayed != relayed {
@@ -691,7 +722,17 @@ impl Mesh {
         let mut links = self.links.lock().unwrap();
         let link = links.get_mut(&id)?;
         let on_path = link.path == Some(from) && link.relayed == relayed;
-        if !on_path {
+        if !on_path && !relayed && !link.relayed && link.path.is_some() {
+            // Another direct address of theirs, timed: voice moves only if it's clearly faster.
+            if !link.rtt_ms.is_some_and(|now| ms + FASTER_BY_MS < now) {
+                return None;
+            }
+            tracing::info!("voice path to peer {id} via {from} (faster: {ms} ms)");
+            link.path = Some(from);
+            let now = Instant::now();
+            link.last_heard = Some(now);
+            link.last_direct = Some(now);
+        } else if !on_path {
             // Only the way off the relay is weighed here; other stray answers don't count.
             if !(link.relayed && !relayed && link.path.is_some()) {
                 return None;
@@ -754,14 +795,44 @@ pub(crate) mod tests {
         assert_eq!(m.report(), Some(8));
         // Late frames from a counted window don't count twice.
         m.heard(60);
-        assert_eq!(m.first, None);
+        assert!(!m.seen.contains(&60));
         // A sender that restarted (numbers far behind) is counted afresh.
         for seq in 5000..5030 {
             m.heard(seq);
         }
         m.report();
         m.heard(3);
-        assert_eq!(m.first, Some(3), "far behind means a restart");
+        assert_eq!(m.seen.first(), Some(&3), "far behind means a restart");
+    }
+
+    #[test]
+    fn late_frames_are_not_lost_frames() {
+        let mut m = LossMeter::default();
+        // Every frame arrives, but every tenth a little late (behind the next three).
+        let mut order: Vec<u32> = (0..200).collect();
+        for i in (5..195).step_by(10) {
+            order.swap(i, i + 3);
+        }
+        for (n, seq) in order.into_iter().enumerate() {
+            m.heard(seq);
+            // Reports come at any moment, mid-shuffle.
+            if n % 37 == 0 {
+                m.report();
+            }
+        }
+        m.report();
+        assert_eq!(m.current(), Some(0), "nothing was lost, only late");
+        // The same frame twice counts once.
+        let mut d = LossMeter::default();
+        for seq in 0..60 {
+            d.heard(seq);
+            d.heard(seq);
+        }
+        for seq in (60..120).filter(|s| s % 2 == 0) {
+            d.heard(seq);
+        }
+        d.report();
+        assert!(d.current().unwrap() > 0, "duplicates don't hide what's lost");
     }
 
     #[test]
@@ -780,9 +851,9 @@ pub(crate) mod tests {
         assert_eq!(&ping[..4], &77u32.to_be_bytes());
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, false)], "not yet known to understand repeats");
         a.ping_heard(2, &ping);
-        assert_eq!(a.worst_loss(), 24, "half lost, and the first window moves halfway");
-        assert_eq!(a.quality(), vec![(2, None, 24, false)], "the connection shows the loss either way");
-        assert_eq!(b.quality(), vec![(1, None, 24, false)]);
+        assert_eq!(a.worst_loss(), 25, "half lost, and the first window moves halfway");
+        assert_eq!(a.quality(), vec![(2, None, 25, false)], "the connection shows the loss either way");
+        assert_eq!(b.quality(), vec![(1, None, 25, false)]);
         assert_eq!(a.paths(), vec![("10.0.0.2:5000".parse().unwrap(), false, true)]);
         // An old-style ping (the nonce alone) is understood as before and teaches nothing.
         let c = Mesh::new(3, &[1; 32]);
@@ -810,6 +881,45 @@ pub(crate) mod tests {
         // The new address answers: voice goes there.
         assert!(mesh.heard(2, "192.168.1.9:5000".parse().unwrap(), false));
         assert_eq!(mesh.paths(), vec![("192.168.1.9:5000".parse().unwrap(), false, false)]);
+    }
+
+    #[test]
+    fn voice_stays_on_one_path_and_moves_only_to_a_faster_one() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        let v4: SocketAddr = "203.0.113.5:5000".parse().unwrap();
+        let v6: SocketAddr = "[2001:db8::5]:5000".parse().unwrap();
+        mesh.set_peer(&PeerEndpoint { session_id: 2, public: Some(v4.to_string()), local: vec![v6.to_string()] });
+        assert!(mesh.heard(2, v4, false));
+        assert_eq!(mesh.pong_heard(2, v4, false, 60), Some(60));
+        // Their packets also come from their IPv6 (pings, voice): voice stays put, no hopping.
+        for _ in 0..10 {
+            assert!(mesh.heard(2, v6, false));
+            assert!(mesh.heard(2, v4, false));
+            assert!(mesh.heard_as(2, v6, false, false));
+        }
+        assert_eq!(mesh.paths(), vec![(v4, false, false)]);
+        // Their IPv6 answers, about as fast: still no move.
+        assert_eq!(mesh.pong_heard(2, v6, false, 55), None);
+        assert_eq!(mesh.paths(), vec![(v4, false, false)]);
+        // Clearly faster: voice moves there, and the number follows.
+        assert_eq!(mesh.pong_heard(2, v6, false, 40), Some(40));
+        assert_eq!(mesh.paths(), vec![(v6, false, false)]);
+        // And on a direct path, the other addresses are timed now and then.
+        mesh.links.lock().unwrap().get_mut(&2).unwrap().last_ping = None;
+        let due = mesh.due_pings();
+        assert!(due.contains(&(v6, false)) && due.contains(&(v4, false)), "{due:?}");
+    }
+
+    #[test]
+    fn a_path_gone_quiet_gives_way() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        let v4: SocketAddr = "203.0.113.5:5000".parse().unwrap();
+        let v6: SocketAddr = "[2001:db8::5]:5000".parse().unwrap();
+        mesh.set_peer(&PeerEndpoint { session_id: 2, public: Some(v4.to_string()), local: vec![v6.to_string()] });
+        assert!(mesh.heard(2, v4, false));
+        mesh.links.lock().unwrap().get_mut(&2).unwrap().last_heard = Some(Instant::now() - PATH_ALIVE - Duration::from_millis(10));
+        assert!(mesh.heard(2, v6, false));
+        assert_eq!(mesh.paths(), vec![(v6, false, false)]);
     }
 
     #[test]

@@ -1016,11 +1016,23 @@ impl Encoder {
         let mut roaming = Roaming::new(self.net.dual);
         let mut policy = voice_policy(0);
         let mut adapted = Instant::now();
+        // How each connection is doing goes in the log every so often (round trip, loss and
+        // which way), so a bad call can be looked into afterwards ("Copy debug info").
+        let mut logged = Instant::now();
         while !stop.load(Ordering::Relaxed) {
             if let Route::Mesh(m) = &self.net.route {
                 if adapted.elapsed() >= ADAPT_EVERY {
                     adapted = Instant::now();
-                    for (session_id, rtt_ms, loss, relayed) in m.quality() {
+                    let quality = m.quality();
+                    let log_now = logged.elapsed() >= Duration::from_secs(15);
+                    if log_now {
+                        logged = Instant::now();
+                    }
+                    for (session_id, rtt_ms, loss, relayed) in quality {
+                        if log_now {
+                            let way = if relayed { "through the relay" } else { "direct" };
+                            tracing::info!("peer {session_id}: {} round trip, {loss}% lost, {way}", rtt_ms.map(|r| format!("{r} ms")).unwrap_or_else(|| "no".into()));
+                        }
                         let _ = self.events.send(EngineEvent::PeerQuality { session_id, rtt_ms, loss, relayed });
                     }
                     let loss = m.worst_loss();
