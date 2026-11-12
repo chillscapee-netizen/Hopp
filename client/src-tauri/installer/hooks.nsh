@@ -70,3 +70,10 @@ SetFont "Segoe UI" 9
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro HOPP_CLOSE_RUNNING
 !macroend
+
+; After installing or updating: Windows keeps old icons for pinned and shortcut Hopp in a cache,
+; so a new logo would show by the clock but not in the taskbar. This asks Windows to refresh
+; them, with its own call for exactly that (no other program is started).
+!macro NSIS_HOOK_POSTINSTALL
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
