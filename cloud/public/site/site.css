@@ -181,3 +181,7 @@ i { display: block; font-style: normal; }
   .actions { flex-direction: column; align-items: flex-start; gap: 12px; }
   .rows { padding-top: 80px; gap: 80px; }
 }
+
+/* The code signing line under the footer. */
+.foot-signing { grid-column: 1 / -1; margin: 18px 0 0; color: #8b8b93; font-size: 12.5px; }
+.foot-signing a { color: inherit; text-decoration: underline; }
