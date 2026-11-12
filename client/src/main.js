@@ -1863,6 +1863,8 @@ listen("roster", (e) => {
   if ((before === null) !== (after === null)) setActivityFromVoice();
   if (before === null && after !== null) playSound("join");
   else if (before !== null && after === null) playSound("leave");
+  // Moved to another channel (by you, or by a moderator): you've joined somewhere new.
+  else if (before !== null && after !== null && before !== after) playSound("join", "You moved to " + channelName(after));
   else if (after !== null && before === after) {
     const company = voiceCompany();
     const came = [...company].find((id) => !companyBefore.has(id));
@@ -4290,6 +4292,9 @@ function playSound(name, why) {
   if (!isPtt) noteSound(name, why);
   try {
     soundCtx ??= new AudioContext();
+    // Started before any click (Hopp opened by itself with Windows, a call coming in while it
+    // sits in the tray), the page's sound may still be paused: wake it, or the ring is silent.
+    if (soundCtx.state === "suspended") soundCtx.resume().catch(() => {});
     if (prefs.soundStyle !== "classic" && HOPP_SOUNDS[name]) return playHoppSound(name, prefs.soundVolume / 100);
     const t0 = soundCtx.currentTime + 0.01;
     const peak = (prefs.soundVolume / 100) * (isPtt ? 0.08 : 0.16);

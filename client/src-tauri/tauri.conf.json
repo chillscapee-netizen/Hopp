@@ -20,7 +20,8 @@
         "visible": false,
         "decorations": false,
         "backgroundColor": "#2c2c31",
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {

@@ -29,6 +29,16 @@
   await wait(50);
   check("and who left", soundLog[0].why === "Sara left your voice channel", soundLog[0].why);
 
+  // Moved to another channel: that's joining somewhere new, and it sounds like it.
+  const gaming = state.roster.channels.find((c) => c.name === "Gaming");
+  const rm = structuredClone(r3);
+  rm.users.find((u) => u.session_id === rm.me).voice_channel = gaming.id;
+  emit("roster", rm);
+  await wait(50);
+  check("moving to another channel plays the join sound", soundLog[0].why === "You moved to Gaming", soundLog[0].why);
+  emit("roster", r3);
+  await wait(50);
+
   // A lost connection while only reading: no sound, nothing listed.
   const before = soundLog.length;
   const r4 = structuredClone(r3);
