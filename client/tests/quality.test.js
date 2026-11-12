@@ -21,7 +21,7 @@
   let bars = row().querySelector(".signal-bars");
   check("an okay one shows yellow bars", bars?.classList.contains("fair"));
   check("two of three lit", bars?.querySelectorAll("i.on").length === 2);
-  check("the tooltip has the numbers", bars?.dataset.tip === "Okay connection: 180 ms, 4% lost", bars?.dataset.tip);
+  check("the tooltip has the numbers", bars?.dataset.tip === "Okay connection: 90 ms, 4% lost", bars?.dataset.tip);
 
   // The same grade again doesn't redraw the list.
   const drawn = row();
@@ -38,10 +38,10 @@
   row().click();
   await wait(50);
   const line = document.getElementById("user-card-connection");
-  check("the card shows the connection", !line.hidden && line.textContent === "Weak connection: 90 ms, 22% lost", line.textContent);
+  check("the card shows the connection", !line.hidden && line.textContent === "Weak connection: 45 ms, 22% lost", line.textContent);
   emit("voice", { type: "peer_quality", session_id: other.session_id, rtt_ms: 40, loss: 0 });
   await wait(50);
-  check("and follows it", line.textContent === "Good connection: 40 ms", line.textContent);
+  check("and follows it", line.textContent === "Good connection: 20 ms", line.textContent);
   check("good again: the bars go", !row().querySelector(".signal-bars"));
   closePopovers();
 

@@ -2573,12 +2573,17 @@ function renderVoicePanel() {
   panel.hidden = voice === null && !away;
   if (panel.hidden) return;
   const status = panel.querySelector(".voice-status");
-  const ms = state.latency;
+  // Peer to peer, what's measured is the round trip to the others and back. What you hear is
+  // one way: how long your voice takes to reach them (half of it). That's the number shown,
+  // the one comparable to an app's "ping" to its server, and coloured by what people notice
+  // (ITU-T G.114: under about 150 ms one way is hardly noticed).
+  const oneWay = !away && !isCloud(activeServer()) ? null : state.latency === null ? null : Math.round(state.latency / 2);
+  const ms = oneWay ?? state.latency;
   const { ready, error } = state.voiceState;
   if (away) {
     // In voice in another server: where, how it's going, and the way out. Video belongs to the view.
-    status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 80 && ms < 150)));
-    status.classList.toggle("bad", !!error || (ms !== null && ms >= 150));
+    status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 100 && ms < 200)));
+    status.classList.toggle("bad", !!error || (ms !== null && ms >= 200));
     $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
     const where = away.name + " / " + away.label;
     $("voice-where").textContent = ms === null ? where : where + " · " + (ms < 1 ? "<1 ms" : ms + " ms");
@@ -2588,15 +2593,17 @@ function renderVoicePanel() {
     $("voice-actions").classList.add("sound-only");
     return;
   }
-  status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 80 && ms < 150)));
-  status.classList.toggle("bad", !!error || (ms !== null && ms >= 150));
+  // One way (peer to peer) or to the server (your own server): either way, under 100 ms is good.
+  const limits = oneWay !== null ? [100, 200] : [80, 150];
+  status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= limits[0] && ms < limits[1])));
+  status.classList.toggle("bad", !!error || (ms !== null && ms >= limits[1]));
   $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
   const latency = ms === null ? null : ms < 1 ? "<1 ms" : `${ms} ms`;
   const direct = isCloud(activeServer());
   const alone = !state.roster.users.some((u) => u.session_id !== state.roster.me && u.voice_channel === voice);
   // Cloud voice is peer to peer: the number is the slowest round trip to the others.
   status.dataset.tip = error ? friendlyError(error) : !ready ? "Opening your microphone and finding the others…" : direct
-    ? latency ? `Direct to the others, slowest round trip ${latency}` : alone ? "Voice goes straight to the others when they join" : "Connecting to the others…"
+    ? latency ? `Direct to the others: your voice reaches the farthest in ${latency}` : alone ? "Voice goes straight to the others when they join" : "Connecting to the others…"
     : latency ? `Latency to the server: ${latency}` : "Measuring latency…";
   const where = screenShare.stream ? "Sharing your screen" : `${channelName(voice)} / ${activeServer()?.label ?? state.roster.server_name}`;
   // Through the relay is a detour (a little slower); Hopp keeps trying the direct way meanwhile.
@@ -8240,7 +8247,8 @@ function connectionGrade(q) {
 /** The connection in words, for a tooltip or the profile card. */
 function connectionText(q) {
   const grade = connectionGrade(q);
-  const parts = [q.rtt != null ? q.rtt + " ms" : null, q.loss > 0 ? q.loss + "% lost" : null, q.relayed ? "through the relay" : null].filter(Boolean);
+  // One way, like the voice panel: how long voice takes to reach them.
+  const parts = [q.rtt != null ? Math.round(q.rtt / 2) + " ms" : null, q.loss > 0 ? q.loss + "% lost" : null, q.relayed ? "through the relay" : null].filter(Boolean);
   const word = grade === "good" ? "Good connection" : grade === "fair" ? "Okay connection" : "Weak connection";
   return parts.length ? word + ": " + parts.join(", ") : word;
 }
