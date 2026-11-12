@@ -32,6 +32,8 @@ pub const KIND_PONG: u8 = 0x12;
 /// Voice with earlier frames repeated inside, for networks that lose packets.
 /// Only sent to peers whose pings show they understand it.
 pub const KIND_VOICE_RED: u8 = 0x13;
+/// The sound of a shared screen: seq (4) | Opus stereo frame. Only to those watching.
+pub const KIND_STREAM: u8 = 0x14;
 /// Our pings carry this after the nonce, then loss reports; older Hopp sends the nonce alone.
 const PING_FORMAT: u8 = 1;
 /// A loss report older than this no longer steers how we send.
@@ -243,7 +245,7 @@ impl Sealer {
 
 /// Checks and decrypts a packet: (kind, sender, payload).
 pub fn open(cipher: &ChaCha20Poly1305, buf: &[u8]) -> Option<(u8, SessionId, Vec<u8>)> {
-    if buf.len() < HEADER + TAG || !matches!(buf[0], KIND_VOICE | KIND_PING | KIND_PONG | KIND_VOICE_RED) {
+    if buf.len() < HEADER + TAG || !matches!(buf[0], KIND_VOICE | KIND_PING | KIND_PONG | KIND_VOICE_RED | KIND_STREAM) {
         return None;
     }
     let (header, rest) = buf.split_at(HEADER);
@@ -369,6 +371,9 @@ pub struct Mesh {
     stun: Mutex<StunAsk>,
     /// Set to have voice look at our network again right away, as if it had changed.
     pub recheck: std::sync::atomic::AtomicBool,
+    /// Our IP address stays hidden: we announce only our relay, and everything goes through
+    /// it (the others see the relay's address, never ours). A little more delay.
+    pub private: std::sync::atomic::AtomicBool,
     /// While we send video: paths are timed ten times a second, so a queue building up in
     /// our upload shows within a fraction of a second (see `queue_delay`).
     pub watch_queue: std::sync::atomic::AtomicBool,
@@ -409,6 +414,7 @@ impl Mesh {
             stun: Mutex::new(StunAsk::default()),
             recheck: std::sync::atomic::AtomicBool::new(false),
             watch_queue: std::sync::atomic::AtomicBool::new(false),
+            private: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -521,6 +527,11 @@ impl Mesh {
 
     /// Where our voice should go: every peer with a working path, whether it's relayed,
     /// and whether they understand repeated frames.
+    /// The way to one peer, if there is one: (address, through the relay).
+    pub fn path_of(&self, id: SessionId) -> Option<(SocketAddr, bool)> {
+        self.links.lock().unwrap().get(&id).and_then(|l| l.path.map(|p| (p, l.relayed)))
+    }
+
     pub fn paths(&self) -> Vec<(SocketAddr, bool, bool)> {
         self.links.lock().unwrap().values().filter_map(|l| l.path.map(|p| (p, l.relayed, l.red))).collect()
     }
@@ -596,7 +607,16 @@ impl Mesh {
 
     /// Whether anyone has been out of reach long enough that a relay would help.
     pub fn wants_relay(&self) -> bool {
+        // Hiding our address, the relay is always needed. (Whether ours is ready is the
+        // caller's to see: it holds the relay's lock while asking.)
+        if self.is_private() {
+            return true;
+        }
         self.links.lock().unwrap().values().any(|l| l.path.is_none() && l.searching_since.elapsed() > RELAY_PROBE_AFTER)
+    }
+
+    fn is_private(&self) -> bool {
+        self.private.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn relay_ready(&self) -> bool {
@@ -607,6 +627,7 @@ impl Mesh {
     /// probes on every candidate otherwise (and through the relay once direct has failed a while).
     pub fn due_pings(&self) -> Vec<(SocketAddr, bool)> {
         let relay = self.relay_ready();
+        let private = self.is_private();
         let now = Instant::now();
         let mut out = Vec::new();
         for link in self.links.lock().unwrap().values_mut() {
@@ -629,6 +650,15 @@ impl Mesh {
                 continue;
             }
             link.last_ping = Some(now);
+            if private {
+                // Only ever through our relay: nothing leaves straight from our address.
+                match link.path {
+                    Some(path) if link.relayed => out.push((path, true)),
+                    _ if relay => out.extend(link.candidates.iter().map(|&c| (c, true))),
+                    _ => {}
+                }
+                continue;
+            }
             match link.path {
                 Some(path) => {
                     out.push((path, link.relayed));
@@ -668,6 +698,10 @@ impl Mesh {
         let now = Instant::now();
         let mut links = self.links.lock().unwrap();
         let Some(link) = links.get_mut(&id) else { return false };
+        // Hiding our address, we never answer or send straight back: only through the relay.
+        if !relayed && self.private.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
         // On the path: it's alive.
         if link.path == Some(from) && link.relayed == relayed {
             link.last_heard = Some(now);
@@ -991,6 +1025,23 @@ pub(crate) mod tests {
         mesh.watch_queue.store(true, std::sync::atomic::Ordering::Relaxed);
         mesh.links.lock().unwrap().get_mut(&2).unwrap().last_ping = Some(Instant::now() - Duration::from_millis(150));
         assert_eq!(mesh.due_pings(), vec![(v4, false)]);
+    }
+
+    #[test]
+    fn hiding_our_address_sends_only_through_the_relay() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        mesh.private.store(true, std::sync::atomic::Ordering::Relaxed);
+        let v4: SocketAddr = "203.0.113.5:5000".parse().unwrap();
+        mesh.set_peer(&PeerEndpoint { session_id: 2, public: Some(v4.to_string()), local: vec![] });
+        assert!(mesh.wants_relay(), "the relay is needed from the start");
+        // No relay yet: nothing goes out at all (never straight from our address).
+        assert!(mesh.due_pings().is_empty());
+        // Their packets straight to us aren't taken up (we'd answer straight back).
+        assert!(!mesh.heard(2, v4, false));
+        assert!(mesh.paths().is_empty());
+        // Through the relay is fine.
+        assert!(mesh.heard(2, v4, true));
+        assert_eq!(mesh.paths(), vec![(v4, true, false)]);
     }
 
     #[test]

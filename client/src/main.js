@@ -1901,6 +1901,7 @@ listen("roster", (e) => {
   applyUserVolumes();
   syncScreen();
   syncMedia();
+  syncStreamAudio();
   renderAll();
   roleLookChanged();
   // Joined to watch someone: start once we're in (within a while of asking).
@@ -7792,6 +7793,8 @@ function callStatusText(c) {
 }
 
 function renderCall() {
+  // Who's in the call hears the sound of the screen we share there.
+  if (typeof syncStreamAudio === "function") syncStreamAudio();
   const c = state.call;
   // Someone joined or left the call: video follows.
   if (c?.engineReady) syncMedia();
@@ -9533,7 +9536,7 @@ async function onFileSignal(m) {
 
 async function startSending(transfer, out) {
   out.pc?.close();
-  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  const pc = new RTCPeerConnection(await rtcConfig());
   out.pc = pc;
   out.status = "connecting";
   out.sent = 0;
@@ -9620,7 +9623,7 @@ async function downloadFile(transfer, peer, name, size) {
 }
 
 async function startReceiving(transfer, inc, sdp) {
-  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  const pc = new RTCPeerConnection(await rtcConfig());
   inc.pc = pc;
   pc.addEventListener("datachannel", (e) => receive(transfer, inc, e.channel));
   try {
@@ -10089,6 +10092,31 @@ function relayLogin() {
 }
 
 /** Where a file connection may go: straight across, or through the relay when that's blocked. */
+// ---------- hiding your IP address ----------
+//
+// On, voice and calls go only through the relay (the voice engine announces nothing of ours),
+// and so do screens, cameras and files (WebRTC uses relay addresses only). The others see
+// the relay's address, never yours.
+
+prefs.hideIp = load("hideIp", "0") === "1";
+$("hide-ip").checked = prefs.hideIp;
+invoke("set_private_route", { on: prefs.hideIp }).catch(() => {});
+$("hide-ip").addEventListener("change", (e) => {
+  prefs.hideIp = e.target.checked;
+  save("hideIp", prefs.hideIp ? "1" : "0");
+  invoke("set_private_route", { on: prefs.hideIp }).catch(() => {});
+});
+
+/** How a video, screen or file connection is made: through the relay only, when hiding your address. */
+async function rtcConfig() {
+  const iceServers = await fileIce();
+  if (!prefs.hideIp) return { iceServers };
+  if (!iceServers.some((x) => String(x.urls).includes("turn:"))) {
+    toast("Hopp's relay isn't available right now, so this can't connect without showing your IP address. Turn off Hide my IP address in Privacy & safety, or try again in a moment.", true);
+  }
+  return { iceServers, iceTransportPolicy: "relay" };
+}
+
 async function fileIce() {
   const login = await relayLogin();
   if (!login) return FILE_ICE;
@@ -10796,10 +10824,52 @@ function setShareQuality(change) {
   if (typeof media !== "undefined") for (const pc of media.out.screen?.peers.values() ?? []) tuneShare(pc);
   renderScreenStage();
 }
+// ---------- the computer's sound with a shared screen ----------
+//
+// Like Discord's "share sound": everything playing on this computer except Hopp itself (so
+// nobody hears their own voice back), to the people watching. On unless you turn it off.
+
+prefs.shareSound = load("shareSound", "1") === "1";
+var streamAudio = { told: "", failed: false };
+
+/** Who should hear our screen's sound right now, and in which (a call or a voice channel). */
+function streamListeners() {
+  if (!prefs.shareSound) return null;
+  if (screenShare.stream) return { call: false, to: [...screenShare.peers.keys()].map(Number).filter((n) => n > 0) };
+  if (typeof media !== "undefined" && media.out.screen && state.call?.engineReady) {
+    const c = state.call;
+    return { call: true, to: c.group ? [...c.inCall].map(callSession) : [c.other].filter(Boolean) };
+  }
+  return null;
+}
+
+/** Keeps the voice engine's sending of our screen's sound in step with who's watching. */
+function syncStreamAudio() {
+  const want = streamListeners();
+  const key = want ? (want.call ? "call:" : "voice:") + want.to.sort((a, b) => a - b).join(",") : "";
+  if (key === streamAudio.told) return;
+  const before = streamAudio.told;
+  streamAudio.told = key;
+  // Switching between a call and a voice channel: the old one stops first.
+  if (before && (!want || before.split(":")[0] !== key.split(":")[0])) invoke("set_stream_audio", { watchers: null, call: before.startsWith("call:") }).catch(() => {});
+  if (!want) return;
+  invoke("set_stream_audio", { watchers: want.to, call: want.call }).catch((err) => {
+    if (streamAudio.failed) return;
+    streamAudio.failed = true;
+    toast(friendlyError(err), true);
+  });
+}
+
+function setShareSound(on) {
+  prefs.shareSound = on;
+  save("shareSound", on ? "1" : "0");
+  syncStreamAudio();
+}
+
 /** "1080p · 60 fps", as chosen. */
 function shareQualityText() {
   const size = shareSize();
-  return (size.w ? size.label : "Source") + " · " + prefs.shareQuality.rate + " fps";
+  return (size.w ? size.label : "Source") + " · " + prefs.shareQuality.rate + " fps" + (prefs.shareSound ? " · sound" : "");
 }
 function openShareQuality(x, y, above) {
   const q = prefs.shareQuality;
@@ -10811,6 +10881,8 @@ function openShareQuality(x, y, above) {
     ...SHARE_RATES.map((r) => ({ label: r + " fps" + (r === 60 ? " (games, video)" : r === 30 ? " (sharpest text)" : " (light on your network)"), checked: q.rate === r, action: () => setShareQuality({ rate: r }) })),
     "sep",
     { heading: "Up to " + SHARE_MBIT[q.size][q.rate] + " Mbit/s to each viewer" },
+    "sep",
+    { label: "Share my computer's sound", check: prefs.shareSound, action: (on) => setShareSound(on) },
   ], x, y, above);
 }
 
@@ -10862,6 +10934,7 @@ function stopShare(quiet = false) {
   screenShare.stream.getTracks().forEach((t) => t.stop());
   screenShare.stream = null;
   tellSendingVideo();
+  syncStreamAudio();
   if (!quiet && connected()) call("set_sharing", { on: false });
   renderVoicePanel();
 }
@@ -10872,15 +10945,16 @@ async function serveViewer(viewer) {
   // Held at once, so asking twice in a row doesn't leave a second connection behind.
   const hold = { close() {}, pendingIce: [] };
   screenShare.peers.set(viewer, hold);
-  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  const pc = new RTCPeerConnection(await rtcConfig());
   if (!screenShare.stream || screenShare.peers.get(viewer) !== hold) return pc.close();
   pc.pendingIce = [];
   screenShare.peers.set(viewer, pc);
   pc.onicecandidate = (e) => e.candidate && screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
   pc.onconnectionstatechange = () => {
     if ((pc.connectionState === "failed" || pc.connectionState === "closed") && screenShare.peers.get(viewer) === pc) screenShare.peers.delete(viewer);
-    // How many watch shows on your own stream.
+    // How many watch shows on your own stream; whoever watches hears its sound.
     if (watching?.local) screenInfo();
+    syncStreamAudio();
   };
   const track = screenShare.stream.getVideoTracks()[0];
   pc.addTrack(track, screenShare.stream);
@@ -11013,6 +11087,7 @@ listen("screen-signal", async (e) => {
       pc.close();
       screenShare.peers.delete(from);
       if (watching?.local) screenInfo();
+      syncStreamAudio();
     }
     return;
   }
@@ -11021,7 +11096,7 @@ listen("screen-signal", async (e) => {
   if (!w || w.from !== from) return;
   if (m.k === "offer") {
     w.pc?.close();
-    const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+    const pc = new RTCPeerConnection(await rtcConfig());
     if (watching !== w) return pc.close();
     w.pc = pc;
     pc.ontrack = (ev) => ($("screen-video").srcObject = ev.streams[0] ?? new MediaStream([ev.track]));
@@ -11771,6 +11846,7 @@ async function startCallScreen() {
 function startOut(kind, stream, room) {
   media.out[kind] = { stream, room, peers: new Map() };
   queueMicrotask(tellSendingVideo);
+  queueMicrotask(syncStreamAudio);
   stream.getVideoTracks()[0]?.addEventListener("ended", () => stopOut(kind));
   for (const peer of room.peers()) offerMedia(kind, peer);
   renderMediaViews();
@@ -11781,6 +11857,7 @@ function stopOut(kind, quiet = false) {
   if (!out) return;
   delete media.out[kind];
   queueMicrotask(tellSendingVideo);
+  queueMicrotask(syncStreamAudio);
   for (const [peer, pc] of out.peers) {
     if (!quiet) out.room.send(peer, { v: "m", t: kind, d: "r", k: "stop" });
     pc.close();
@@ -11807,7 +11884,7 @@ async function offerMedia(kind, peer) {
   out.peers.get(peer)?.close();
   // Held at once, so a redraw meanwhile doesn't start a second one.
   out.peers.set(peer, { close() {}, pending: true });
-  const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+  const pc = new RTCPeerConnection(await rtcConfig());
   if (media.out[kind] !== out || !out.peers.has(peer)) return pc.close();
   pc.pendingIce = [];
   out.peers.set(peer, pc);
@@ -11870,7 +11947,7 @@ async function handleMedia(from, m, room) {
     mediaIn.get(key)?.pc?.close();
     const entry = { pc: null, stream: null, pending: [] };
     mediaIn.set(key, entry);
-    const pc = new RTCPeerConnection({ iceServers: await fileIce() });
+    const pc = new RTCPeerConnection(await rtcConfig());
     if (mediaIn.get(key) !== entry) return pc.close();
     entry.pc = pc;
     pc.ontrack = (ev) => {

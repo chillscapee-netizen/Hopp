@@ -7,6 +7,7 @@ pub mod dsp;
 pub mod engine;
 pub mod identity;
 pub mod jitter;
+pub mod loopback;
 pub mod mesh;
 pub mod turn;
 pub mod settings;

@@ -42,6 +42,19 @@ pub struct AudioSettings {
     pub(crate) clip_out: Mutex<VecDeque<f32>>,
     /// The same sound for our own ears.
     pub(crate) clip_local: Mutex<VecDeque<f32>>,
+    /// Hide our IP address: voice goes only through our relay, never straight to the others.
+    pub(crate) private_route: AtomicBool,
+}
+
+impl AudioSettings {
+    /// Hide our IP address from the people we talk to (from the next voice channel or call on).
+    pub fn set_private_route(&self, on: bool) {
+        self.private_route.store(on, Ordering::Relaxed);
+    }
+
+    pub fn private_route(&self) -> bool {
+        self.private_route.load(Ordering::Relaxed)
+    }
 }
 
 impl Default for AudioSettings {
@@ -65,6 +78,7 @@ impl Default for AudioSettings {
             monitor_queue: Mutex::new(VecDeque::new()),
             clip_out: Mutex::new(VecDeque::new()),
             clip_local: Mutex::new(VecDeque::new()),
+            private_route: AtomicBool::new(false),
         }
     }
 }

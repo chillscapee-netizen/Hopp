@@ -16,6 +16,8 @@
   }, 33);
   const sentVideo = [];
   commands.set_sending_video = ({ on }) => sentVideo.push(on);
+  const soundTo = [];
+  commands.set_stream_audio = (a) => soundTo.push(a);
   let asked = 0;
   navigator.mediaDevices.getDisplayMedia = async () => {
     asked++;
@@ -63,6 +65,10 @@
   const peer = screenShare.peers.get(viewer.session_id);
   const rate = () => peer?.getSenders()[0]?.getParameters().encodings?.[0]?.maxBitrate;
   const params = peer?.getSenders()[0]?.getParameters();
+  check("the computer's sound goes to whoever watches", soundTo.some((x) => !x.call && x.watchers?.includes(viewer.session_id)), JSON.stringify(soundTo));
+  setShareSound(false);
+  check("and stops when you turn the sound off", soundTo.at(-1)?.watchers === null, JSON.stringify(soundTo.at(-1)));
+  setShareSound(true);
   check("sent at high quality", params?.encodings?.[0]?.maxBitrate === 4_500_000, JSON.stringify(params?.encodings));
 
   // Voice comes first: when it strains while video is sent, the video shrinks; when voice is fine again, it grows back.
@@ -114,7 +120,7 @@
   openShareQuality(400, 400);
   await wait(30);
   const radios = document.querySelectorAll("#server-menu .menu-item.checked");
-  check("one size and one rate are marked, never more", radios.length === 2 && !document.querySelector("#server-menu .menu-check"), String(radios.length));
+  check("one size and one rate are marked, never more", radios.length === 2 && document.querySelectorAll("#server-menu .menu-check").length === 1, String(radios.length));
   [...document.querySelectorAll("#server-menu .menu-item")].find((b) => b.textContent.startsWith("720p")).click();
   await wait(30);
   check("picking one closes the menu and uses it", $("server-menu").hidden && prefs.shareQuality.size === "720");

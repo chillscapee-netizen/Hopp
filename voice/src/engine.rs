@@ -167,7 +167,15 @@ pub struct VoiceEngine {
     settings: Arc<AudioSettings>,
     events: Sender<EngineEvent>,
     running: Option<Running>,
+    /// The sound of our shared screen, while we share it: who hears it, and its threads.
+    stream: Mutex<Option<StreamOut>>,
 }
+
+/// Who hears our shared screen's sound, and the threads capturing and sending it.
+type StreamOut = (Arc<Mutex<Vec<SessionId>>>, Running);
+
+/// The sound of a shared screen: stereo, at music quality (people share games, films, music).
+const STREAM_BITRATE: i32 = 128_000;
 
 impl VoiceEngine {
     /// Opens the chosen audio devices and starts streaming voice to the relay at `server`.
@@ -199,9 +207,16 @@ impl VoiceEngine {
         if public.is_none() {
             tracing::warn!("no STUN server answered; only peers on this network can be reached");
         }
-        let local = local_endpoints(our_addresses(mesh::is_dual(&socket)), port);
+        // Hiding our address: none of ours is told to anyone; the relay's comes once it's ready.
+        let private = settings.private_route();
+        let local = if private { Vec::new() } else { local_endpoints(our_addresses(mesh::is_dual(&socket)), port) };
+        let public = if private { None } else { public };
         let endpoint = PeerEndpoint { session_id, public: public.map(|a| a.to_string()), local };
         let mesh = Mesh::new(session_id, &key);
+        mesh.private.store(private, Ordering::Relaxed);
+        if private {
+            tracing::info!("voice hides our address: through the relay only");
+        }
         mesh.set_stun_servers(mesh::stun_servers());
         *mesh.endpoint.lock().unwrap() = Some(endpoint.clone());
         let route = Route::Mesh(Arc::new(mesh));
@@ -218,7 +233,7 @@ impl VoiceEngine {
     ) -> anyhow::Result<(Self, Receiver<EngineEvent>)> {
         socket.set_read_timeout(Some(Duration::from_millis(200)))?;
         let (events, rx) = mpsc::channel();
-        let mut engine = VoiceEngine { socket, session_id, route, endpoint, settings, events, running: None };
+        let mut engine = VoiceEngine { socket, session_id, route, endpoint, settings, events, running: None, stream: Mutex::new(None) };
         engine.set_devices(devices)?;
         Ok((engine, rx))
     }
@@ -284,6 +299,46 @@ impl VoiceEngine {
         if let Route::Mesh(m) = &self.route {
             m.watch_queue.store(on, Ordering::Relaxed);
         }
+    }
+
+    /// The computer's sound with our shared screen (everything but Hopp itself), to the people
+    /// watching (`Some`, their sessions; may change while sharing), or stopped (`None`).
+    /// Peer-to-peer voice only. Errors when this computer can't capture its sound.
+    pub fn set_stream_audio(&self, watchers: Option<Vec<SessionId>>) -> anyhow::Result<()> {
+        let mut stream = self.stream.lock().unwrap();
+        let Some(watchers) = watchers else {
+            *stream = None;
+            return Ok(());
+        };
+        if let Some((list, _)) = stream.as_ref() {
+            *list.lock().unwrap() = watchers;
+            return Ok(());
+        }
+        let Route::Mesh(_) = &self.route else { return Ok(()) };
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut running = Running { stop: stop.clone(), threads: Vec::new() };
+        let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(50);
+        running.threads.push(crate::loopback::capture(tx, stop.clone())?);
+        let list = Arc::new(Mutex::new(watchers));
+        let mut net = Net::new(self.socket.try_clone()?, self.route.clone(), self.session_id, Instant::now());
+        let to = list.clone();
+        running.threads.push(std::thread::Builder::new().name("strom-stream".into()).spawn(move || {
+            let Ok(mut encoder) = opus::Encoder::new(SAMPLE_RATE, opus::Channels::Stereo, opus::Application::Audio) else { return };
+            let _ = encoder.set_bitrate(opus::Bitrate::Bits(STREAM_BITRATE));
+            let _ = encoder.set_inband_fec(true);
+            let _ = encoder.set_packet_loss_perc(5);
+            let mut out = [0u8; 1500];
+            let mut seq = 0u32;
+            while !stop.load(Ordering::Relaxed) {
+                let Ok(frame) = rx.recv_timeout(Duration::from_millis(200)) else { continue };
+                let Ok(len) = encoder.encode_float(&frame, &mut out) else { continue };
+                let watching = to.lock().unwrap().clone();
+                net.send_stream(seq, &out[..len], &watching);
+                seq = seq.wrapping_add(1);
+            }
+        })?);
+        *stream = Some((list, running));
+        Ok(())
     }
 
     pub fn retain_peers(&self, keep: impl Fn(SessionId) -> bool) {
@@ -827,6 +882,22 @@ impl Net {
         }
     }
 
+    /// A frame of our shared screen's sound, to the people watching it.
+    fn send_stream(&mut self, seq: u32, opus: &[u8], to: &[SessionId]) {
+        let Route::Mesh(m) = &self.route else { return };
+        let m = m.clone();
+        let Some(sealer) = self.sealer.as_mut() else { return };
+        self.plain.clear();
+        self.plain.extend_from_slice(&seq.to_be_bytes());
+        self.plain.extend_from_slice(opus);
+        sealer.seal(mesh::KIND_STREAM, &self.plain, &mut self.packet);
+        for &id in to {
+            if let Some((addr, relayed)) = m.path_of(id) {
+                self.send_mesh(&m, addr, relayed);
+            }
+        }
+    }
+
     /// Answers a peer's ping with the same payload, so they can time the round trip.
     fn pong(&mut self, payload: &[u8], to: SocketAddr, relayed: bool) {
         let Route::Mesh(m) = &self.route else { return };
@@ -965,8 +1036,8 @@ impl Encoder {
                 let mut endpoint = m.endpoint.lock().unwrap();
                 if let Some(e) = endpoint.as_mut() {
                     // The old public address and relay are gone with the old network; STUN
-                    // tells us the new public one in a moment.
-                    e.local = local_endpoints(addresses, port);
+                    // tells us the new public one in a moment. (Hiding it, none is told.)
+                    e.local = if m.private.load(Ordering::Relaxed) { Vec::new() } else { local_endpoints(addresses, port) };
                     e.public = None;
                     let _ = self.events.send(EngineEvent::Endpoint { endpoint: e.clone() });
                 }
@@ -984,7 +1055,7 @@ impl Encoder {
         }
         if let Some(public) = m.take_stun_answer() {
             let mut endpoint = m.endpoint.lock().unwrap();
-            if let Some(e) = endpoint.as_mut() {
+            if let Some(e) = endpoint.as_mut().filter(|_| !m.private.load(Ordering::Relaxed)) {
                 if e.public.as_deref() != Some(public.to_string().as_str()) {
                     tracing::info!("our public address is now {public}");
                     e.public = Some(public.to_string());
@@ -1246,6 +1317,10 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
                     mixer.fill_in(sender, s, frame.to_vec());
                 }
             }
+            mesh::KIND_STREAM if payload.len() > 4 => {
+                let seq = u32::from_be_bytes(payload[..4].try_into().unwrap());
+                mixer.lock().unwrap().push_stream(sender, seq, payload[4..].to_vec());
+            }
             mesh::KIND_PING if payload.len() >= 4 => {
                 mesh.ping_heard(sender, &payload);
                 // Only the nonce comes back: that's all the round trip needs.
@@ -1274,6 +1349,13 @@ struct Peer {
     loudness: f32,
 }
 
+/// The sound of a screen someone shares with us: stereo, with a jitter buffer of its own.
+struct StreamIn {
+    decoder: opus::Decoder,
+    jitter: JitterBuffer,
+    last_heard: Instant,
+}
+
 /// A frame's loudness (root mean square).
 fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -1294,6 +1376,8 @@ struct Mixer {
     pending: VecDeque<f32>,
     events: Sender<EngineEvent>,
     settings: Arc<AudioSettings>,
+    /// The sound of screens we watch, by who shares them.
+    streams: HashMap<SessionId, StreamIn>,
     /// Everything we play from others, for the echo canceller.
     render: Option<SyncSender<AudioFrame>>,
     /// The mic test in voice plays once a little is buffered, so the microphone and
@@ -1306,6 +1390,7 @@ impl Mixer {
         Mixer {
             own_id,
             peers: HashMap::new(),
+            streams: HashMap::new(),
             resampler: Resampler::new(SAMPLE_RATE, SAMPLE_RATE),
             pending: VecDeque::new(),
             events,
@@ -1329,6 +1414,19 @@ impl Mixer {
         };
         peer.last_heard = Instant::now();
         peer.jitter.push(seq, opus);
+    }
+
+    /// A frame of the sound of a screen someone shares with us.
+    fn push_stream(&mut self, sender: SessionId, seq: u32, opus: Vec<u8>) {
+        let stream = match self.streams.entry(sender) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let Ok(decoder) = opus::Decoder::new(SAMPLE_RATE, opus::Channels::Stereo) else { return };
+                e.insert(StreamIn { decoder, jitter: JitterBuffer::default(), last_heard: Instant::now() })
+            }
+        };
+        stream.last_heard = Instant::now();
+        stream.jitter.push(seq, opus);
     }
 
     /// A frame repeated in a later packet: fills a gap if it's still missing.
@@ -1403,6 +1501,23 @@ impl Mixer {
                 changed.push((id, active));
             }
             peer.last_heard.elapsed() < PEER_TIMEOUT
+        });
+        // The sound of screens we watch, at the sharer's volume (made mono, like everything here).
+        let mut stereo = [0f32; FRAME_SAMPLES * 2];
+        self.streams.retain(|&id, stream| {
+            let decoded = match stream.jitter.pop(true) {
+                Playout::Packet(p) | Playout::Shorten(p) => stream.decoder.decode_float(&p, &mut stereo, false),
+                Playout::Fec(p) => stream.decoder.decode_float(&p, &mut stereo, true),
+                Playout::Conceal | Playout::Lengthen => stream.decoder.decode_float(&[], &mut stereo, false),
+                Playout::Idle => Ok(0),
+            };
+            if let Ok(n) = decoded {
+                let gain = volumes.get(&id).copied().unwrap_or(1.0);
+                for (i, m) in mix.iter_mut().enumerate().take(n.min(FRAME_SAMPLES)) {
+                    *m += (stereo[2 * i] + stereo[2 * i + 1]) * 0.5 * gain;
+                }
+            }
+            stream.last_heard.elapsed() < Duration::from_secs(5)
         });
         let gain = self.settings.playback_gain();
         mix.iter_mut().for_each(|m| *m = soft_limit(*m * gain));
@@ -1505,6 +1620,38 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_screens_sound_plays_without_counting_as_talking() {
+        let (mut mixer, rx, settings) = test_mixer(1);
+        let mut enc = opus::Encoder::new(SAMPLE_RATE, opus::Channels::Stereo, opus::Application::Audio).unwrap();
+        let mut out = vec![0f32; FRAME_SAMPLES * 40];
+        let mut buf = [0u8; 1500];
+        for (seq, frame) in out.chunks_mut(FRAME_SAMPLES).enumerate() {
+            // Music-ish: a tone on the left, another on the right.
+            let stereo: Vec<f32> = (0..FRAME_SAMPLES)
+                .flat_map(|i| {
+                    let t = (seq * FRAME_SAMPLES + i) as f32 / SAMPLE_RATE as f32;
+                    [(t * 440.0 * std::f32::consts::TAU).sin() * 0.4, (t * 660.0 * std::f32::consts::TAU).sin() * 0.4]
+                })
+                .collect();
+            let len = enc.encode_float(&stereo, &mut buf).unwrap();
+            mixer.push_stream(42, seq as u32, buf[..len].to_vec());
+            mixer.fill(frame);
+        }
+        let level = level_db(&out[FRAME_SAMPLES * 10..]);
+        assert!(level > -20.0, "the screen's sound is heard: {level} dB");
+        assert!(!rx.try_iter().any(|e| matches!(e, EngineEvent::Speaking { .. })), "a film playing isn't someone talking");
+        // Their volume (as set for them) applies to it too.
+        settings.set_user_volume(42, 0.0);
+        let mut quiet = vec![0f32; FRAME_SAMPLES * 5];
+        for (i, frame) in quiet.chunks_mut(FRAME_SAMPLES).enumerate() {
+            let len = enc.encode_float(&vec![0.3f32; FRAME_SAMPLES * 2], &mut buf).unwrap();
+            mixer.push_stream(42, 40 + i as u32, buf[..len].to_vec());
+            mixer.fill(frame);
+        }
+        assert_eq!(level_db(&quiet[FRAME_SAMPLES * 2..]), -100.0);
+    }
+
+    #[test]
     fn mixer_plays_remote_voice_through_packet_loss() {
         let (mut mixer, rx, _) = test_mixer(1);
         let out = play(&mut mixer, 42, 20, &[7]);
@@ -1574,6 +1721,50 @@ mod tests {
         c.set_peer(a.endpoint().unwrap());
         a.set_peer(c.endpoint().unwrap());
         assert!(!connected(&c_events));
+    }
+
+    /// Hiding our address: nothing of ours is announced, only the relay, and the other
+    /// person (who doesn't hide theirs) is reached through it all the same.
+    #[test]
+    #[ignore = "opens audio devices"]
+    fn hiding_our_address_still_connects_through_the_relay() {
+        let relay = crate::turn::testing::Relay::spawn();
+        let key = [6u8; 32];
+        let devices = DeviceChoice::default();
+        let private = Arc::new(AudioSettings::default());
+        private.set_private_route(true);
+        let (a, a_events) = VoiceEngine::start_mesh(1, key, &devices, private).unwrap();
+        let (b, b_events) = VoiceEngine::start_mesh(2, key, &devices, Default::default()).unwrap();
+        a.settings().set_muted(true);
+        b.settings().set_muted(true);
+        let mine = a.endpoint().unwrap().clone();
+        assert!(mine.public.is_none() && mine.local.is_empty(), "nothing of ours is told: {mine:?}");
+        a.set_peer(b.endpoint().unwrap());
+
+        let wait_for = |rx: &Receiver<EngineEvent>, secs: u64, pick: &dyn Fn(&EngineEvent) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(secs);
+            while Instant::now() < deadline {
+                if let Ok(ev) = rx.recv_timeout(Duration::from_millis(100)) {
+                    if pick(&ev) {
+                        return Some(ev);
+                    }
+                }
+            }
+            None
+        };
+        assert!(wait_for(&a_events, 3, &|e| matches!(e, EngineEvent::NeedRelay)).is_some(), "asks for the relay at once");
+        a.set_relay(&relay.login).unwrap();
+        let Some(EngineEvent::Endpoint { endpoint }) = wait_for(&a_events, 5, &|e| matches!(e, EngineEvent::Endpoint { .. })) else {
+            panic!("never got a relay address");
+        };
+        assert!(endpoint.public.is_none() && endpoint.local.len() == 1, "only the relay is told: {endpoint:?}");
+        b.set_peer(&endpoint);
+        let connected = |rx: &Receiver<EngineEvent>| wait_for(rx, 8, &|e| matches!(e, EngineEvent::Latency { .. })).is_some();
+        assert!(connected(&b_events), "the other person reaches us through the relay");
+        assert!(connected(&a_events), "and we hear back");
+        if let Route::Mesh(m) = &a.route {
+            assert!(m.paths().iter().all(|p| p.1), "everything of ours goes through the relay: {:?}", m.paths());
+        }
     }
 
     /// Two people whose networks block every direct path still hear each other,

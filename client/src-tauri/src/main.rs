@@ -953,6 +953,27 @@ fn set_sending_video(state: State<'_, AppState>, on: bool) {
     }
 }
 
+/// Hide our IP address in voice and calls (from the next time voice starts).
+#[tauri::command]
+fn set_private_route(state: State<'_, AppState>, on: bool) {
+    state.audio.set_private_route(on);
+}
+
+/// The computer's sound with our shared screen: to these people (their voice sessions), or off.
+/// `call` says whether it's the screen in a call or in a voice channel.
+#[tauri::command]
+fn set_stream_audio(state: State<'_, AppState>, watchers: Option<Vec<SessionId>>, call: bool) -> CmdResult {
+    let result = if call {
+        state.call.lock().unwrap().as_ref().map(|c| c.engine.set_stream_audio(watchers))
+    } else {
+        with_voice(&state, |c| c.engine.as_ref().map(|e| e.set_stream_audio(watchers))).flatten()
+    };
+    match result {
+        Some(Err(e)) => Err(format!("The computer's sound couldn't be shared: {e:#}")),
+        _ => Ok(()),
+    }
+}
+
 /// A group call: stop sending to someone who left it.
 #[tauri::command]
 fn call_drop_peer(state: State<'_, AppState>, call_id: String, session_id: SessionId) {
@@ -1823,6 +1844,8 @@ fn main() {
             app_version,
             set_autostart,
             set_sending_video,
+            set_stream_audio,
+            set_private_route,
             shell::window_compact,
             shell::window_full,
             shell::window_splash,
