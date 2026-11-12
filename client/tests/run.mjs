@@ -46,6 +46,18 @@ try {
   process.exit(1);
 }
 
+// The installed app has a content security policy these test pages don't: everything Hopp
+// loads from Hopp Cloud (pictures, voice messages, requests) must be allowed there, or it
+// works here and breaks for real.
+{
+  const csp = JSON.parse(readFileSync(join(here, "..", "src-tauri", "tauri.conf.json"), "utf8")).app.security.csp;
+  const missing = ["img-src", "media-src", "connect-src"].filter((d) => !new RegExp(`(^|;)\\s*${d} [^;]*https://hopp-cloud\\.hoppchat\\.workers\\.dev`).test(csp));
+  if (missing.length) {
+    console.log("FAIL csp: Hopp Cloud isn't allowed in " + missing.join(", ") + " (client/src-tauri/tauri.conf.json)");
+    process.exit(1);
+  }
+}
+
 // Some Edge builds (e.g. while an update waits for a restart) print nothing with --dump-dom.
 // Then every test runs live over the debugging port (slower, in real time).
 const probeFile = join(work, "probe.html");
