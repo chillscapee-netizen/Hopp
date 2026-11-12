@@ -167,14 +167,14 @@ mod toast {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    use tauri::{AppHandle, Emitter, Manager};
+    use tauri::{AppHandle, Emitter};
     use tauri_winrt_notification::{IconCrop, Toast};
     use windows::core::HSTRING;
     use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
 
     pub fn show(app: &AppHandle, title: &str, body: &str, image: Option<&[u8]>, action: Option<String>) -> Result<(), String> {
         let id = app.config().identifier.clone();
-        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("notify");
+        let dir = crate::data_dir(app).ok_or("app data folder unavailable")?.join("notify");
         let handle = app.clone();
         show_in(&id, &dir, title, body, image, move || {
             crate::shell::show_main(&handle);

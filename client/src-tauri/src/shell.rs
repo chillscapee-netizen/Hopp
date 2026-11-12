@@ -59,7 +59,9 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
 
     // Links: registered for this user (no admin needed), opened in the running app.
     #[cfg(any(windows, target_os = "linux"))]
-    if let Err(e) = app.deep_link().register_all() {
+    if crate::second_copy() {
+        // hopp:// links keep opening the everyday Hopp.
+    } else if let Err(e) = app.deep_link().register_all() {
         tracing::warn!("couldn't register strom:// links: {e}");
     }
     {
@@ -144,7 +146,7 @@ struct Bounds {
 }
 
 fn bounds_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("window.json"))
+    crate::data_dir(app).map(|d| d.join("window.json"))
 }
 
 /// Remembers where the full-size window is: once the moving or resizing has stopped for a

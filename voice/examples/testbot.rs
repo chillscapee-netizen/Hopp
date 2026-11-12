@@ -13,6 +13,12 @@
 //!
 //! Call it, or call a group it's in, and it answers and echoes you the same way. Write
 //! "call me" in a DM and it rings you.
+//!
+//! Pretend it's far away: "net italy" in a DM (or "bot net italy" in a server) makes its voice
+//! travel as if it were in Italy: the delay, the unevenness and the occasional lost packet of
+//! a real connection there. Also "net us", "net asia", "net wifi", "net mobile", "net nordic",
+//! your own "net <round trip ms> <jitter ms> <loss %>", and "net off". `--net italy` starts
+//! it that way.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -32,7 +38,73 @@ const PASSWORD: &str = "hoppbot-test-password";
 const STORE: &str = "strom-data/testbot.json";
 /// How long after you speak the bot says it back.
 const ECHO_DELAY: Duration = Duration::from_millis(1000);
-const HELP: &str = "Mention \"bot\" with: voice (I join your voice channel and repeat you), chime, leave, link, spam, help.";
+const HELP: &str = "Mention \"bot\" with: voice (I join your voice channel and repeat you), net italy / us / asia / wifi / mobile / off (I pretend to be far away), chime, leave, link, spam, help.";
+
+// ---------- pretending to be far away ----------
+
+/// How the road between you and the bot behaves: the round trip it adds, how unevenly
+/// packets arrive, and how many never do. Applied both ways, half the delay each way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Road {
+    rtt_ms: u32,
+    jitter_ms: u32,
+    loss_pct: f32,
+}
+
+static ROAD: std::sync::Mutex<Road> = std::sync::Mutex::new(Road { rtt_ms: 0, jitter_ms: 0, loss_pct: 0.0 });
+
+fn road() -> Road {
+    *ROAD.lock().unwrap()
+}
+
+/// Typical connections from Sweden, home to home (fibre or cable, both ends), plus the bad
+/// days: what people really have, so voice can be tried as they'd hear it.
+fn road_preset(name: &str) -> Option<(Road, &'static str)> {
+    let r = |rtt_ms, jitter_ms, loss_pct| Road { rtt_ms, jitter_ms, loss_pct };
+    Some(match name {
+        "off" | "none" | "home" => (r(0, 0, 0.0), "Right next to you: no added delay."),
+        "nordic" | "norway" | "finland" | "denmark" => (r(25, 4, 0.2), "The Nordics: about 25 ms round trip."),
+        "germany" | "europe" | "uk" | "france" => (r(45, 8, 0.5), "Central Europe: about 45 ms round trip."),
+        "italy" | "spain" => (r(90, 15, 1.0), "Italy: about 90 ms round trip, a little uneven, 1% lost."),
+        "us" | "usa" | "america" => (r(130, 15, 1.0), "The US east coast: about 130 ms round trip."),
+        "west" | "california" => (r(180, 20, 1.0), "The US west coast: about 180 ms round trip."),
+        "asia" | "japan" | "australia" => (r(260, 25, 2.0), "Asia or Australia: about 260 ms round trip."),
+        "wifi" => (r(15, 40, 3.0), "Weak wifi: little delay, but very uneven and 3% lost."),
+        "mobile" | "4g" => (r(70, 40, 5.0), "Mobile data: 70 ms, uneven, 5% lost."),
+        _ => return None,
+    })
+}
+
+/// "net italy", "net 120 20 3", "net off": sets the road and says how it is now.
+fn set_road(command: &str) -> String {
+    let words: Vec<&str> = command.split_whitespace().skip_while(|w| *w != "net").skip(1).collect();
+    let numbers: Vec<f32> = words.iter().filter_map(|w| w.trim_end_matches(['%', 'm', 's']).parse().ok()).collect();
+    let (road, said) = if let Some(found) = words.first().and_then(|w| road_preset(w)) {
+        (found.0, found.1.to_string())
+    } else if !numbers.is_empty() {
+        let road = Road {
+            rtt_ms: numbers[0].clamp(0.0, 1000.0) as u32,
+            jitter_ms: numbers.get(1).copied().unwrap_or(0.0).clamp(0.0, 300.0) as u32,
+            loss_pct: numbers.get(2).copied().unwrap_or(0.0).clamp(0.0, 50.0),
+        };
+        (road, format!("{} ms round trip, {} ms uneven, {}% lost.", road.rtt_ms, road.jitter_ms, road.loss_pct))
+    } else {
+        return "Say where I should be: net italy, net us, net asia, net wifi, net mobile, net nordic, net off, or your own \"net <round trip ms> <jitter ms> <loss %>\".".into();
+    };
+    *ROAD.lock().unwrap() = road;
+    println!("road: {road:?}");
+    format!("🌍 {said} Look at the number in your voice panel, and listen.")
+}
+
+/// When a packet sent now arrives at the other end, or never (lost). Half the round trip,
+/// plus up to the jitter more at random (so packets also arrive out of order, as they do).
+fn arrival(road: Road, now: Instant) -> Option<Instant> {
+    if road.loss_pct > 0.0 && rand::random::<f32>() * 100.0 < road.loss_pct {
+        return None;
+    }
+    let jitter = if road.jitter_ms > 0 { rand::random::<u32>() % (road.jitter_ms + 1) } else { 0 };
+    Some(now + Duration::from_millis((road.rtt_ms / 2 + jitter) as u64))
+}
 
 fn load_identity() -> anyhow::Result<Identity> {
     if let Ok(text) = std::fs::read_to_string(STORE) {
@@ -187,21 +259,39 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
     // Frames to say, and when.
     let mut queue: VecDeque<(Instant, Vec<u8>)> = VecDeque::new();
     let mut chimes: Vec<Vec<Vec<u8>>> = Vec::new();
-    let send_voice = |sealer: &mut Sealer, packet: &mut Vec<u8>, seq: &mut u32, opus: &[u8]| {
-        let mut plain = seq.to_be_bytes().to_vec();
-        plain.extend_from_slice(opus);
-        sealer.seal(mesh::KIND_VOICE, &plain, packet);
-        for (addr, relayed, _) in mesh.paths() {
-            if !relayed {
-                let _ = socket.send_to(packet, mesh::wire(addr, dual));
-            }
+    // Packets on the road (when "net" pretends we're far away): out to you, and in from you.
+    let mut outbound: VecDeque<(Instant, SocketAddr, Vec<u8>)> = VecDeque::new();
+    let mut inbound: VecDeque<(Instant, SocketAddr, Vec<u8>)> = VecDeque::new();
+    let on_road = |queue: &mut VecDeque<(Instant, SocketAddr, Vec<u8>)>, at: Instant, addr: SocketAddr, bytes: Vec<u8>| {
+        let pos = queue.partition_point(|(t, _, _)| *t <= at);
+        queue.insert(pos, (at, addr, bytes));
+    };
+    let send = |outbound: &mut VecDeque<(Instant, SocketAddr, Vec<u8>)>, addr: SocketAddr, bytes: &[u8]| {
+        let road = road();
+        if road == (Road { rtt_ms: 0, jitter_ms: 0, loss_pct: 0.0 }) {
+            let _ = socket.send_to(bytes, mesh::wire(addr, dual));
+        } else if let Some(at) = arrival(road, Instant::now()) {
+            on_road(outbound, at, addr, bytes.to_vec());
         }
-        *seq = seq.wrapping_add(1);
     };
     while !stop.load(Ordering::Relaxed) {
-        // What came in: pings to answer, voice to say back later.
+        // What arrived over the road: in by the time it's due (now, when nothing is pretended).
         while let Ok((len, from)) = socket.recv_from(&mut buf) {
-            let Some((kind, sender, payload)) = mesh::open(&mesh.cipher, &buf[..len]) else { continue };
+            let road = road();
+            match arrival(road, Instant::now()) {
+                Some(at) => on_road(&mut inbound, at, from, buf[..len].to_vec()),
+                None => continue,
+            }
+        }
+        let now = Instant::now();
+        let mut arrived = Vec::new();
+        while inbound.front().is_some_and(|(at, _, _)| *at <= now) {
+            let (_, from, bytes) = inbound.pop_front().unwrap();
+            arrived.push((from, bytes));
+        }
+        // What came in: pings to answer, voice to say back later.
+        for (from, bytes) in arrived {
+            let Some((kind, sender, payload)) = mesh::open(&mesh.cipher, &bytes) else { continue };
             if !mesh.heard(sender, from, false) {
                 continue;
             }
@@ -209,7 +299,7 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
                 mesh::KIND_PING if payload.len() >= 4 => {
                     mesh.ping_heard(sender, &payload);
                     sealer.seal(mesh::KIND_PONG, &payload[..4], &mut packet);
-                    let _ = socket.send_to(&packet, mesh::wire(mesh::canonical(from), dual));
+                    send(&mut outbound, mesh::canonical(from), &packet);
                 }
                 mesh::KIND_VOICE if payload.len() > 4 => {
                     mesh.heard_voice(sender, u32::from_be_bytes(payload[..4].try_into().unwrap()));
@@ -247,14 +337,27 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
             sealer.seal(mesh::KIND_PING, &mesh.ping_payload(nonce), &mut packet);
             for (addr, relayed) in due {
                 if !relayed {
-                    let _ = socket.send_to(&packet, mesh::wire(addr, dual));
+                    send(&mut outbound, addr, &packet);
                 }
             }
         }
         let now = Instant::now();
         while queue.front().is_some_and(|(at, _)| *at <= now) {
             let (_, opus) = queue.pop_front().unwrap();
-            send_voice(&mut sealer, &mut packet, &mut seq, &opus);
+            let mut plain = seq.to_be_bytes().to_vec();
+            plain.extend_from_slice(&opus);
+            sealer.seal(mesh::KIND_VOICE, &plain, &mut packet);
+            for (addr, relayed, _) in mesh.paths() {
+                if !relayed {
+                    send(&mut outbound, addr, &packet);
+                }
+            }
+            seq = seq.wrapping_add(1);
+        }
+        // What's done travelling goes out.
+        while outbound.front().is_some_and(|(at, _, _)| *at <= now) {
+            let (_, addr, bytes) = outbound.pop_front().unwrap();
+            let _ = socket.send_to(&bytes, mesh::wire(addr, dual));
         }
     }
 }
@@ -330,6 +433,8 @@ async fn join_server(cloud: String, me: Identity, code: String, link: AccountLin
                         }
                         None => say(&session.control, ch, "There's no voice channel here."),
                     }
+                } else if text.split_whitespace().any(|w| w == "net") {
+                    say(&session.control, ch, &set_road(&text));
                 } else if text.contains("leave") {
                     echo = None;
                     session.control.send(ClientMsg::LeaveVoice);
@@ -391,6 +496,9 @@ fn endpoint_json(e: &Echo) -> Value {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cloud = arg("--cloud").unwrap_or_else(|| DEFAULT_CLOUD.to_string());
+    if let Some(place) = arg("--net") {
+        println!("{}", set_road(&format!("net {place}")));
+    }
     let mut add = arg("--add");
     let me = load_identity()?;
     let my_key = me.public_key();
@@ -588,7 +696,9 @@ async fn main() -> anyhow::Result<()> {
                     let text = me.open_from(&from, message["sealed"].as_str().unwrap_or_default()).ok().and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
                     println!("message: {text}");
                     let lower = text.to_lowercase();
-                    if let Some(code) = invite_code(&text) {
+                    if lower.split_whitespace().any(|w| w == "net") {
+                        dm(&link, &me, &from, &set_road(&lower));
+                    } else if let Some(code) = invite_code(&text) {
                         dm(&link, &me, &from, "On my way…");
                         tokio::spawn(join_server(cloud.clone(), me.clone(), code, link.clone(), from.clone()));
                     } else if lower.contains("call me") || lower.contains("ring me") {
@@ -603,7 +713,7 @@ async fn main() -> anyhow::Result<()> {
                         call_send(&link, &from, &id, None, "ring", json!({ "sealed": sealed }));
                         ringing = Some((id, key, from.clone()));
                     } else {
-                        dm(&link, &me, &from, &format!("You said: \"{text}\". Call me to hear yourself, write \"call me\" and I'll ring you, or send an invite link (hopp://…) and I'll join your server."));
+                        dm(&link, &me, &from, &format!("You said: \"{text}\". Call me to hear yourself, write \"call me\" and I'll ring you, send an invite link (hopp://…) and I'll join your server, or write \"net italy\" (or us, asia, wifi, mobile, off) and I'll sound as if I were there."));
                     }
                 }
                 _ => {}

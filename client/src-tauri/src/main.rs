@@ -119,6 +119,20 @@ fn end_voice_elsewhere(state: &AppState) -> bool {
     ended
 }
 
+/// Started as `Hopp --second`: a second, separate Hopp on the same computer, with its own
+/// account, settings and window, to try things between two accounts (calls, screen sharing,
+/// cameras, moderating) without a second computer.
+pub fn second_copy() -> bool {
+    static SECOND: OnceLock<bool> = OnceLock::new();
+    *SECOND.get_or_init(|| std::env::args().any(|a| a == "--second"))
+}
+
+/// Where this copy keeps its things: the usual place, or a folder of its own for the second.
+pub fn data_dir(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    Some(if second_copy() { dir.join("second") } else { dir })
+}
+
 fn identity_path(state: &AppState) -> CmdResult<PathBuf> {
     state.identity_path.get().cloned().ok_or_else(|| "app data folder unavailable".to_string())
 }
@@ -1673,9 +1687,11 @@ Connected: {}
 }
 
 fn main() {
-    tauri::Builder::default()
-        // Must come first: a second copy hands its link to this one and quits.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app)))
+    let builder = tauri::Builder::default();
+    // Must come first: a second copy hands its link to this one and quits (the second account
+    // started on purpose with --second runs alongside).
+    let builder = if second_copy() { builder } else { builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| shell::show_main(app))) };
+    builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
@@ -1688,6 +1704,18 @@ fn main() {
         .on_window_event(shell::on_window_event)
         .setup(|app| {
             init_logging(app);
+            // The window, from the settings; the second account's with web storage of its own.
+            let mut config = app.config().app.windows.first().cloned().ok_or("no window in the settings")?;
+            let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &{
+                config.create = true;
+                config
+            })?;
+            if second_copy() {
+                if let Some(dir) = data_dir(app.handle()) {
+                    window = window.data_directory(dir.join("web")).title("Hopp · second account");
+                }
+            }
+            window.build()?;
             // Look the audio devices up now, off the main thread, so menus open instantly.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -1695,7 +1723,7 @@ fn main() {
                 *handle.state::<AppState>().device_list.lock().unwrap() = Some(list);
             });
             shell::setup(app)?;
-            let path = app.path().app_data_dir()?.join("identity.json");
+            let path = data_dir(app.handle()).ok_or("app data folder unavailable")?.join("identity.json");
             let state = app.state::<AppState>();
             let _ = state.identity_path.set(path);
             let _ = state.ptt.set(ptt::Ptt::start(app.handle().clone(), state.audio.clone()));
