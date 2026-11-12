@@ -612,6 +612,33 @@
   </dialog>
 
   <!-- ---------- invite ---------- -->
+  <dialog id="poll-dialog" class="modal poll-modal">
+    <form method="dialog" id="poll-form">
+      <div class="modal-body">
+      <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      <h2 class="forward-title">Create a poll</h2>
+      <label class="field-label" for="poll-question">Question</label>
+      <input id="poll-question" type="text" maxlength="300" placeholder="What should we play tonight?" autocomplete="off">
+      <span class="field-label">Answers</span>
+      <div id="poll-answers" class="poll-answers"></div>
+      <button type="button" id="poll-add" class="btn-link sm poll-add">Add another answer</button>
+      <div class="poll-options">
+        <label class="poll-duration"><span class="field-label">Open for</span>
+          <select id="poll-duration" class="row-select">
+            <option value="1">1 hour</option><option value="4">4 hours</option><option value="8">8 hours</option>
+            <option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">1 week</option>
+          </select>
+        </label>
+        <label class="check-row"><input id="poll-multi" type="checkbox" class="switch"> Allow more than one answer</label>
+      </div>
+      <p id="poll-error" class="error" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" id="poll-post" class="btn primary">Post</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="forward-dialog" class="modal invite-modal forward-modal">
     <div class="modal-body">
       <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>

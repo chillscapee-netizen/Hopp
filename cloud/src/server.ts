@@ -89,6 +89,21 @@ function parseSearch(query: string): { words: string; from: string[]; in: string
   return out;
 }
 
+/** A poll's message: hopp-poll:<base64url {"q": question, "a": [answers], "end": ms, "multi": bool}>. */
+function parsePoll(text: string): { answers: number; end: number; multi: boolean } | null {
+  const m = text.match(/^hopp-poll:([A-Za-z0-9_-]{4,2600})$/);
+  if (!m) return null;
+  try {
+    const bin = atob(m[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    const answers = Array.isArray(p.a) ? Math.min(p.a.length, 10) : 0;
+    if (answers < 2 || !Number.isFinite(p.end)) return null;
+    return { answers, end: Number(p.end), multi: !!p.multi };
+  } catch {
+    return null;
+  }
+}
+
 function rowToMessage(r: Record<string, any>): ChatMessage {
   const m: ChatMessage = {
     id: Number(r.id), channel: Number(r.channel), sender: Number(r.sender), sender_name: String(r.sender_name),
@@ -831,7 +846,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1266,11 +1281,22 @@ export class StromServer extends DurableObject<Env> {
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         const emoji = String(msg.emoji ?? "");
-        if (!validEmoji(emoji)) return this.error(ws, "That isn't an emoji.");
+        const vote = emoji.match(/^poll:(\d)$/);
+        if (!vote && !validEmoji(emoji)) return this.error(ws, "That isn't an emoji.");
         const m = this.message(channel, id);
         if (!m) return this.error(ws, "That message no longer exists.");
-        const reactions = m.reactions ?? [];
+        let reactions = m.reactions ?? [];
         const on = !!msg.on;
+        if (vote) {
+          // A vote in a poll: an answer it has, while it's open; one answer unless it allows more.
+          const poll = parsePoll(m.text);
+          if (!poll || Number(vote[1]) >= poll.answers) return this.error(ws, "That isn't an answer in this poll.");
+          if (Date.now() > poll.end) return this.error(ws, "This poll has closed.");
+          if (on && !poll.multi) {
+            for (const r of reactions) if (r.emoji.startsWith("poll:") && r.emoji !== emoji) r.keys = r.keys.filter((k) => k !== s.key);
+            reactions = reactions.filter((r) => r.keys.length || r.emoji === emoji);
+          }
+        }
         const i = reactions.findIndex((r) => r.emoji === emoji);
         if (i >= 0) {
           reactions[i].keys = reactions[i].keys.filter((k) => k !== s.key);

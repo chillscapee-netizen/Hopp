@@ -2690,7 +2690,7 @@ function renderChannelView() {
   $("chat-input").disabled = !!timedOutUntil(meUser());
   $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
-  $("attach-btn").hidden = !picturesAllowed();
+  $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
   if (typeof renderAttachment === "function") renderAttachment();
   document.querySelector(".channel-view").classList.toggle("no-members", !prefs.showMembers);
   $("members-toggle").classList.toggle("selected", prefs.showMembers);
@@ -3011,6 +3011,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
+    else if (pollOf(m.text)) li.append(pollView(m, pollOf(m.text)));
     else if (forwardParts(m.text)) li.append(forwardView(forwardParts(m.text)));
     else if (PICTURE.test(m.text)) {
       const [, id, w, h] = m.text.match(PICTURE);
@@ -3043,7 +3044,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(inviteEmbed(link));
     }
     li.append(...youtubeEmbeds(m.text), ...linkPreviews(m.text));
-    if (m.reactions?.length) li.append(reactionRow(m));
+    if (m.reactions?.some((r) => !r.emoji.startsWith("poll:"))) li.append(reactionRow(m));
     li.append(messageActions(m));
     li.msg = m;
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
@@ -6262,6 +6263,8 @@ function previewText(text) {
   text = emojiWords(text);
   const forwarded = forwardParts(text);
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
+  const poll = pollOf(text);
+  if (poll) return "📊 " + (poll.question || "Poll");
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
@@ -6665,7 +6668,7 @@ function messageActions(m) {
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (canForward(m.text)) button("forward", "Forward", () => forwardMessage(m));
-  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text)) button("edit", "Edit", () => startEdit(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -6845,7 +6848,7 @@ function encodeEmojis(text, withServer = true) {
 function reactionRow(m) {
   const row = el("div", "reactions");
   const me = state.account?.publicKey;
-  for (const r of m.reactions) {
+  for (const r of m.reactions.filter((x) => !x.emoji.startsWith("poll:"))) {
     const mine = r.keys.includes(me);
     const chip = el("button", "reaction" + (mine ? " mine" : ""));
     chip.type = "button";
@@ -7778,7 +7781,7 @@ function openMessageMenu(m, e) {
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
       ...(canForward(m.text) ? [{ label: "Forward", icon: "forward", action: () => forwardMessage(m) }] : []),
-      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -7815,7 +7818,7 @@ function forwardParts(text) {
 }
 
 function canForward(text) {
-  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text);
+  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text);
 }
 
 /** The text to send: the original's own source when forwarding something forwarded. */
@@ -8681,6 +8684,123 @@ $("pins-btn").addEventListener("click", (e) => {
   call("get_pins", { channel: state.view });
 });
 
+// ---------- polls ----------
+//
+// A poll is a message: hopp-poll:<base64url {"q": question, "a": [answers], "end": ms, "multi": bool}>.
+// A vote is a reaction "poll:<answer>"; the server keeps one per person unless more are
+// allowed, and none after the end. Results show once you've voted, or when it's closed.
+
+var POLL = /^hopp-poll:([A-Za-z0-9_-]{4,2600})$/;
+
+function pollOf(text) {
+  const m = typeof text === "string" && text.match(POLL);
+  if (!m) return null;
+  try {
+    const p = JSON.parse(fromBase64url(m[1]));
+    const answers = (Array.isArray(p.a) ? p.a : []).slice(0, 10).map((a) => String(a).slice(0, 55));
+    if (answers.length < 2) return null;
+    return { question: String(p.q ?? "").slice(0, 300), answers, end: Number(p.end) || 0, multi: !!p.multi };
+  } catch {
+    return null;
+  }
+}
+
+function pollsHere() {
+  return online() && !!state.roster?.features?.includes("polls");
+}
+
+/** "3 h left", "2 days left", "Closed". */
+function pollTimeLeft(end) {
+  const left = end - Date.now();
+  if (left <= 0) return "Closed";
+  const h = left / 3_600_000;
+  if (h >= 48) return Math.round(h / 24) + " days left";
+  if (h >= 1) return Math.round(h) + " h left";
+  return Math.max(1, Math.round(left / 60_000)) + " min left";
+}
+
+function pollView(m, p) {
+  const me = state.account?.publicKey;
+  const votes = p.answers.map((_, i) => m.reactions?.find((r) => r.emoji === "poll:" + i)?.keys ?? []);
+  const voters = new Set(votes.flat());
+  const mine = votes.map((keys) => keys.includes(me));
+  const closed = Date.now() > p.end;
+  const showResults = closed || mine.some(Boolean);
+  const top = Math.max(...votes.map((v) => v.length));
+  const card = el("div", "poll");
+  card.append(el("div", "poll-question", p.question || "Poll"), el("div", "poll-hint", closed ? "Results" : p.multi ? "Pick one or more answers" : "Pick one answer"));
+  p.answers.forEach((answer, i) => {
+    const row = el("button", "poll-answer" + (mine[i] ? " mine" : "") + (closed && votes[i].length === top && top > 0 ? " winner" : ""));
+    row.type = "button";
+    row.disabled = closed;
+    const share = voters.size ? Math.round((votes[i].length / voters.size) * 100) : 0;
+    if (showResults) row.style.setProperty("--share", share + "%");
+    const mark = el("span", "poll-mark" + (p.multi ? " multi" : ""));
+    if (mine[i]) mark.append(icon("check", "xs"));
+    row.append(mark, el("span", "poll-text", answer));
+    if (showResults) row.append(el("span", "poll-share", share + "%"));
+    row.addEventListener("click", () => react(m, "poll:" + i, !mine[i]));
+    card.append(row);
+  });
+  const n = voters.size;
+  card.append(el("div", "poll-foot", `${n} ${n === 1 ? "vote" : "votes"} · ${pollTimeLeft(p.end)}`));
+  return card;
+}
+
+function openPollDialog() {
+  $("poll-question").value = "";
+  $("poll-multi").checked = false;
+  $("poll-duration").value = "24";
+  $("poll-error").hidden = true;
+  $("poll-answers").replaceChildren();
+  addPollAnswer();
+  addPollAnswer();
+  openModal($("poll-dialog"));
+  $("poll-question").focus();
+}
+
+function addPollAnswer() {
+  const list = $("poll-answers");
+  if (list.children.length >= 10) return;
+  const row = el("div", "poll-answer-input");
+  const input = el("input");
+  input.type = "text";
+  input.maxLength = 55;
+  input.placeholder = "Answer " + (list.children.length + 1);
+  const remove = el("button", "icon-btn sm");
+  remove.type = "button";
+  remove.setAttribute("aria-label", "Remove answer");
+  remove.append(icon("x", "sm"));
+  remove.addEventListener("click", () => {
+    if (list.children.length > 2) row.remove();
+    $("poll-add").hidden = list.children.length >= 10;
+  });
+  row.append(input, remove);
+  list.append(row);
+  $("poll-add").hidden = list.children.length >= 10;
+}
+
+$("poll-add").addEventListener("click", () => {
+  addPollAnswer();
+  $("poll-answers").lastElementChild?.querySelector("input").focus();
+});
+
+$("poll-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("poll-question").value.trim();
+  const answers = [...$("poll-answers").querySelectorAll("input")].map((i) => i.value.trim()).filter(Boolean);
+  const fail = (text) => {
+    $("poll-error").textContent = text;
+    $("poll-error").hidden = false;
+  };
+  if (!q) return fail("Write a question.");
+  if (answers.length < 2) return fail("A poll needs at least two answers.");
+  if (state.view === null || !pollsHere()) return fail("Polls aren't available here.");
+  const end = Date.now() + Number($("poll-duration").value) * 3_600_000;
+  sendChat(state.view, "hopp-poll:" + base64url(JSON.stringify({ q, a: answers, end, multi: $("poll-multi").checked })), null);
+  $("poll-dialog").close();
+});
+
 // ---------- inbox ----------
 //
 // Every mention of you (and every reply to you) in any server, kept by your account, newest
@@ -9502,7 +9622,19 @@ function pictureView(id, width, height) {
 }
 
 $("lightbox").addEventListener("click", () => $("lightbox").close());
-$("attach-btn").addEventListener("click", () => $("attach-file").click());
+$("attach-btn").addEventListener("click", (e) => {
+  if (!pollsHere()) return $("attach-file").click();
+  const r = e.currentTarget.getBoundingClientRect();
+  openMenu(
+    [
+      ...(picturesAllowed() ? [{ label: "Upload a picture", icon: "camera", action: () => $("attach-file").click() }] : []),
+      { label: "Create a poll", icon: "grid", action: openPollDialog },
+    ],
+    r.left,
+    r.top - 8,
+    true,
+  );
+});
 $("attach-file").addEventListener("change", (e) => {
   attachPicture(e.target.files?.[0]);
   e.target.value = "";

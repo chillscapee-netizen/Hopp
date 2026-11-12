@@ -717,6 +717,46 @@ test("search filters: from:, in: and has:, alone or with words", async () => {
   bob.close();
 });
 
+test("polls: one answer each (moved, not added), several when allowed, none after it closes", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("polls"));
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  const pollText = (p) => "hopp-poll:" + Buffer.from(JSON.stringify(p)).toString("base64url");
+  const post = async (p) => {
+    const text = pollText(p);
+    owner.send({ type: "send_chat", channel: general, text });
+    return (await owner.waitFor((x) => x.type === "chat" && x.message.text === text)).message.id;
+  };
+  const vote = async (who, mid, emoji, on = true) => {
+    who.send({ type: "react", channel: general, id: mid, emoji, on });
+    return (await owner.waitFor((x) => x.type === "reactions" && x.id === mid)).reactions;
+  };
+  const one = await post({ q: "Which game?", a: ["A", "B", "C"], end: Date.now() + 3600_000, multi: false });
+  await vote(bob, one, "poll:0");
+  let r = await vote(bob, one, "poll:2");
+  assert.deepEqual(r.filter((x) => x.keys.length).map((x) => x.emoji), ["poll:2"], "the vote moved");
+  bob.send({ type: "react", channel: general, id: one, emoji: "poll:7", on: true });
+  assert.match(await errorOf(bob), /isn't an answer/);
+
+  const many = await post({ q: "Which nights?", a: ["Fri", "Sat"], end: Date.now() + 3600_000, multi: true });
+  await vote(bob, many, "poll:0");
+  bob.send({ type: "react", channel: general, id: many, emoji: "poll:1", on: true });
+  r = (await owner.waitFor((x) => x.type === "reactions" && x.id === many && x.reactions.length === 2)).reactions;
+  assert.deepEqual(r.map((x) => x.keys.length), [1, 1], "both kept");
+
+  const closed = await post({ q: "Too late?", a: ["Yes", "No"], end: Date.now() - 1000 });
+  bob.send({ type: "react", channel: general, id: closed, emoji: "poll:0", on: true });
+  assert.match(await errorOf(bob), /closed/);
+  // Not a poll: no votes.
+  owner.send({ type: "send_chat", channel: general, text: "plain" });
+  const plain = (await owner.waitFor((x) => x.type === "chat" && x.message.text === "plain")).message.id;
+  bob.send({ type: "react", channel: general, id: plain, emoji: "poll:0", on: true });
+  assert.match(await errorOf(bob), /isn't an answer/);
+  owner.close();
+  bob.close();
+});
+
 test("screen sharing: a flag for the voice channel, handshakes passed on within it only", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("screen"));
