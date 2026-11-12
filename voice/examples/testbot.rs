@@ -98,12 +98,35 @@ fn set_road(command: &str) -> String {
 
 /// When a packet sent now arrives at the other end, or never (lost). Half the round trip,
 /// plus up to the jitter more at random (so packets also arrive out of order, as they do).
-fn arrival(road: Road, now: Instant) -> Option<Instant> {
+fn arrival(road: Road, now: Instant, lane: &mut Lane) -> Option<Instant> {
     if road.loss_pct > 0.0 && rand::random::<f32>() * 100.0 < road.loss_pct {
         return None;
     }
-    let jitter = if road.jitter_ms > 0 { rand::random::<u32>() % (road.jitter_ms + 1) } else { 0 };
-    Some(now + Duration::from_millis((road.rtt_ms / 2 + jitter) as u64))
+    // Real unevenness drifts (a queue fills and empties, wifi waits its turn) with the odd
+    // spike, rather than every packet picking a delay of its own.
+    if road.jitter_ms > 0 {
+        let most = road.jitter_ms as f64;
+        lane.extra = (lane.extra + (rand::random::<f64>() - 0.5) * most * 0.4).clamp(0.0, most);
+        if rand::random::<f64>() < 0.01 {
+            lane.extra = most;
+        }
+    } else {
+        lane.extra = 0.0;
+    }
+    let mut at = now + Duration::from_millis((road.rtt_ms / 2) as u64) + Duration::from_secs_f64(lane.extra / 1000.0);
+    // A queue keeps its order: nothing overtakes the packet ahead of it.
+    if let Some(last) = lane.last {
+        at = at.max(last);
+    }
+    lane.last = Some(at);
+    Some(at)
+}
+
+/// One direction of the road: its current extra delay, and when its last packet arrives.
+#[derive(Default)]
+struct Lane {
+    extra: f64,
+    last: Option<Instant>,
 }
 
 fn load_identity() -> anyhow::Result<Identity> {
@@ -244,10 +267,59 @@ impl Drop for Echo {
     }
 }
 
+/// Frames to say: when, the number to send them under (None: the next free one), and the frame.
+type Saying = VecDeque<(Instant, Option<u32>, Vec<u8>)>;
+
 /// Puts a frame in line by when it's due.
-fn schedule(queue: &mut VecDeque<(Instant, Vec<u8>)>, at: Instant, frame: Vec<u8>) {
-    let pos = queue.partition_point(|(t, _)| *t <= at);
-    queue.insert(pos, (at, frame));
+fn schedule(queue: &mut Saying, at: Instant, seq: Option<u32>, frame: Vec<u8>) {
+    let pos = queue.partition_point(|(t, _, _)| *t <= at);
+    queue.insert(pos, (at, seq, frame));
+}
+
+/// Says your voice back in your own timing: each frame at its place on your timeline (a second
+/// later), under a number that keeps your gaps. So what the network did on the way here (late,
+/// shuffled, lost frames) reaches you as such, and your Hopp's buffer and concealment handle it
+/// as they would from a real person, instead of the bot scrambling it further.
+#[derive(Default)]
+struct EchoClock {
+    /// The first frame of this talk spurt: its number, and when it came.
+    base: Option<(u32, Instant)>,
+    last: Option<Instant>,
+    /// What we add to your numbers to get ours.
+    offset: u32,
+    /// Frames already lined up (from the packet itself or a repeat in a later one).
+    lined_up: std::collections::BTreeSet<u32>,
+}
+
+/// Room for frames that come a little late before their place has passed.
+const ECHO_SLACK: Duration = Duration::from_millis(80);
+
+impl EchoClock {
+    /// When to say your frame `seq`, and under which number; None if it's a repeat or too late.
+    fn place(&mut self, seq: u32, next_free: u32, now: Instant) -> Option<(Instant, u32)> {
+        let new_spurt = self.last.is_none_or(|t| now - t > Duration::from_millis(300));
+        self.last = Some(now);
+        if new_spurt || self.base.is_none() {
+            self.base = Some((seq, now));
+            self.offset = next_free.wrapping_sub(seq);
+            self.lined_up.clear();
+        }
+        if !self.lined_up.insert(seq) {
+            return None;
+        }
+        while self.lined_up.len() > 400 {
+            self.lined_up.pop_first();
+        }
+        let (base_seq, base_at) = self.base.unwrap();
+        let slot_ms = (seq as i64 - base_seq as i64) * 10;
+        let at = if slot_ms >= 0 {
+            base_at + Duration::from_millis(slot_ms as u64)
+        } else {
+            base_at.checked_sub(Duration::from_millis((-slot_ms) as u64))?
+        } + ECHO_DELAY
+            + ECHO_SLACK;
+        (at > now).then_some((at, seq.wrapping_add(self.offset)))
+    }
 }
 
 fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: SessionId, key: [u8; 32], plays: mpsc::Receiver<Vec<Vec<u8>>>, stop: Arc<AtomicBool>) {
@@ -257,7 +329,8 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
     let mut packet = Vec::with_capacity(1500);
     let mut buf = [0u8; 1500];
     // Frames to say, and when.
-    let mut queue: VecDeque<(Instant, Vec<u8>)> = VecDeque::new();
+    let mut queue: Saying = VecDeque::new();
+    let mut clocks: HashMap<SessionId, EchoClock> = HashMap::new();
     let mut chimes: Vec<Vec<Vec<u8>>> = Vec::new();
     // Packets on the road (when "net" pretends we're far away): out to you, and in from you.
     let mut outbound: VecDeque<(Instant, SocketAddr, Vec<u8>)> = VecDeque::new();
@@ -266,11 +339,13 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
         let pos = queue.partition_point(|(t, _, _)| *t <= at);
         queue.insert(pos, (at, addr, bytes));
     };
-    let send = |outbound: &mut VecDeque<(Instant, SocketAddr, Vec<u8>)>, addr: SocketAddr, bytes: &[u8]| {
+    let mut lane_out = Lane::default();
+    let mut lane_in = Lane::default();
+    let send = |outbound: &mut VecDeque<(Instant, SocketAddr, Vec<u8>)>, lane: &mut Lane, addr: SocketAddr, bytes: &[u8]| {
         let road = road();
         if road == (Road { rtt_ms: 0, jitter_ms: 0, loss_pct: 0.0 }) {
             let _ = socket.send_to(bytes, mesh::wire(addr, dual));
-        } else if let Some(at) = arrival(road, Instant::now()) {
+        } else if let Some(at) = arrival(road, Instant::now(), lane) {
             on_road(outbound, at, addr, bytes.to_vec());
         }
     };
@@ -278,7 +353,7 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
         // What arrived over the road: in by the time it's due (now, when nothing is pretended).
         while let Ok((len, from)) = socket.recv_from(&mut buf) {
             let road = road();
-            match arrival(road, Instant::now()) {
+            match arrival(road, Instant::now(), &mut lane_in) {
                 Some(at) => on_road(&mut inbound, at, from, buf[..len].to_vec()),
                 None => continue,
             }
@@ -299,22 +374,37 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
                 mesh::KIND_PING if payload.len() >= 4 => {
                     mesh.ping_heard(sender, &payload);
                     sealer.seal(mesh::KIND_PONG, &payload[..4], &mut packet);
-                    send(&mut outbound, mesh::canonical(from), &packet);
+                    send(&mut outbound, &mut lane_out, mesh::canonical(from), &packet);
                 }
                 mesh::KIND_VOICE if payload.len() > 4 => {
-                    mesh.heard_voice(sender, u32::from_be_bytes(payload[..4].try_into().unwrap()));
-                    schedule(&mut queue, Instant::now() + ECHO_DELAY, payload[4..].to_vec());
+                    let in_seq = u32::from_be_bytes(payload[..4].try_into().unwrap());
+                    mesh.heard_voice(sender, in_seq);
+                    if let Some((at, out)) = clocks.entry(sender).or_default().place(in_seq, seq, Instant::now()) {
+                        schedule(&mut queue, at, Some(out), payload[4..].to_vec());
+                    }
                 }
                 mesh::KIND_VOICE_RED if payload.len() > 5 => {
-                    // Earlier frames repeated in front; the frame itself is last.
+                    // Earlier frames repeated in front (each fills a gap, if it's one), the frame itself last.
+                    let in_seq = u32::from_be_bytes(payload[..4].try_into().unwrap());
+                    let mut frames: Vec<(u32, Vec<u8>)> = Vec::new();
                     let mut at = 5;
                     for _ in 0..payload[4] {
-                        let Some(len) = payload.get(at + 1..at + 3) else { break };
-                        at += 3 + u16::from_be_bytes([len[0], len[1]]) as usize;
+                        let (Some(&back), Some(len)) = (payload.get(at), payload.get(at + 1..at + 3)) else { break };
+                        let len = u16::from_be_bytes([len[0], len[1]]) as usize;
+                        if let Some(f) = payload.get(at + 3..at + 3 + len) {
+                            frames.push((in_seq.wrapping_sub(back as u32), f.to_vec()));
+                        }
+                        at += 3 + len;
                     }
                     if let Some(opus) = payload.get(at..).filter(|o| !o.is_empty()) {
-                        mesh.heard_voice(sender, u32::from_be_bytes(payload[..4].try_into().unwrap()));
-                        schedule(&mut queue, Instant::now() + ECHO_DELAY, opus.to_vec());
+                        mesh.heard_voice(sender, in_seq);
+                        frames.push((in_seq, opus.to_vec()));
+                    }
+                    let clock = clocks.entry(sender).or_default();
+                    for (s, f) in frames {
+                        if let Some((due, out)) = clock.place(s, seq, Instant::now()) {
+                            schedule(&mut queue, due, Some(out), f);
+                        }
                     }
                 }
                 _ => {}
@@ -327,7 +417,7 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
         if !chimes.is_empty() && !mesh.paths().is_empty() {
             let now = Instant::now();
             for (i, f) in chimes.drain(..).flatten().enumerate() {
-                schedule(&mut queue, now + Duration::from_millis(10 * i as u64), f);
+                schedule(&mut queue, now + Duration::from_millis(10 * i as u64), None, f);
             }
         }
         // Keep the paths open, and say what's due.
@@ -337,22 +427,26 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
             sealer.seal(mesh::KIND_PING, &mesh.ping_payload(nonce), &mut packet);
             for (addr, relayed) in due {
                 if !relayed {
-                    send(&mut outbound, addr, &packet);
+                    send(&mut outbound, &mut lane_out, addr, &packet);
                 }
             }
         }
         let now = Instant::now();
-        while queue.front().is_some_and(|(at, _)| *at <= now) {
-            let (_, opus) = queue.pop_front().unwrap();
-            let mut plain = seq.to_be_bytes().to_vec();
+        while queue.front().is_some_and(|(at, _, _)| *at <= now) {
+            let (_, number, opus) = queue.pop_front().unwrap();
+            let this = number.unwrap_or(seq);
+            let mut plain = this.to_be_bytes().to_vec();
             plain.extend_from_slice(&opus);
             sealer.seal(mesh::KIND_VOICE, &plain, &mut packet);
             for (addr, relayed, _) in mesh.paths() {
                 if !relayed {
-                    send(&mut outbound, addr, &packet);
+                    send(&mut outbound, &mut lane_out, addr, &packet);
                 }
             }
-            seq = seq.wrapping_add(1);
+            // Our next free number comes after the highest used (gaps in yours stay gaps).
+            if this.wrapping_sub(seq) < u32::MAX / 2 {
+                seq = this.wrapping_add(1);
+            }
         }
         // What's done travelling goes out.
         while outbound.front().is_some_and(|(at, _, _)| *at <= now) {
