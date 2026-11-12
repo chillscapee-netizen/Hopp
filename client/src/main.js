@@ -808,6 +808,9 @@ async function logout() {
   state.dmComplete.clear();
   state.groups = new Map();
   state.reads = new Map();
+  state.inbox = [];
+  state.inboxSeen = 0;
+  renderInboxBadge();
   state.openDm = null;
   state.readsLoaded = false;
   accountScope = null;
@@ -4956,6 +4959,9 @@ listen("account", (e) => {
       state.groups = new Map((m.groups ?? []).map((g) => [g.id, g]));
       for (const g of state.groups.values()) if (!state.conversations.has(g.id)) state.conversations.set(g.id, { last_at: g.created_at, last_read: g.created_at });
       state.readsLoaded = true;
+      state.inbox = m.inbox ?? [];
+      state.inboxSeen = m.inbox_seen ?? 0;
+      renderInboxBadge();
       renderUnread();
       // A reconnect: fetch what arrived meanwhile for conversations already open.
       for (const peer of state.dmMessages.keys()) invoke("account_send", { msg: { type: "dm_history", with: peer } }).catch(() => {});
@@ -4968,9 +4974,19 @@ listen("account", (e) => {
       }
       setActivityFromVoice();
       break;
+    case "inbox":
+      state.inbox = m.items ?? [];
+      renderInboxBadge();
+      if (!$("inbox-pop").hidden) renderInbox();
+      return;
+    case "inbox_seen":
+      state.inboxSeen = Math.max(state.inboxSeen, m.at);
+      renderInboxBadge();
+      return;
     case "channel_activity": {
       const fresh = mergeRead(m);
       if (fresh) notifyMention({ server: m.server, channel: m.channel, author_key: m.author_key, author_name: m.author_name, channel_name: m.channel_name, text: m.preview ? previewText(m.preview) : "Mentioned you", mention: m.mention && !(m.crowd && crowdQuiet(m.server)) });
+      if (m.mention) addToInbox(m);
       renderUnread();
       return;
     }
@@ -8664,6 +8680,113 @@ $("pins-btn").addEventListener("click", (e) => {
   placePopover(pop, r.right - 380, r.bottom + 8);
   call("get_pins", { channel: state.view });
 });
+
+// ---------- inbox ----------
+//
+// Every mention of you (and every reply to you) in any server, kept by your account, newest
+// first: a click takes you to it. The bell counts the ones since you last opened it, on any
+// device. @everyone and @here are left out for servers where you suppressed them.
+
+state.inbox = [];
+state.inboxSeen = 0;
+
+function inboxItems() {
+  return state.inbox.filter((i) => !(i.crowd && crowdQuiet(i.server)));
+}
+
+function renderInboxBadge() {
+  const fresh = inboxItems().filter((i) => i.at > state.inboxSeen).length;
+  for (const b of document.querySelectorAll(".inbox-badge")) {
+    b.hidden = !fresh;
+    b.textContent = fresh > 99 ? "99+" : String(fresh);
+  }
+}
+
+/** A new mention while we're here (from channel_activity). */
+function addToInbox(m) {
+  if (state.inbox.some((i) => i.server === m.server && i.channel === m.channel && i.id === m.id)) return;
+  state.inbox.unshift({ server: m.server, channel: m.channel, id: m.id, at: m.last_at || Date.now(), server_name: m.server_name, channel_name: m.channel_name, author_key: m.author_key, author_name: m.author_name, preview: m.preview ?? "", crowd: !!m.crowd });
+  state.inbox.length = Math.min(state.inbox.length, 200);
+  renderInboxBadge();
+  if (!$("inbox-pop").hidden) renderInbox();
+}
+
+/** Goes to a message in a server, connecting to it first if needed. */
+async function goToMessage(address, channel, id) {
+  const server = prefs.servers.find((s) => s.address === address);
+  if (!server) return toast("That message is in a server you're no longer in.", true);
+  if (server.id === state.activeId && online()) {
+    state.atHome = false;
+    openTextChannel(channel);
+    jumpToMessage(id);
+    return;
+  }
+  state.pendingView = channel;
+  state.pendingJump = id;
+  await connectTo(server);
+}
+
+function renderInbox() {
+  const pop = $("inbox-pop");
+  const head = el("div", "inbox-head");
+  head.append(el("span", "pins-title", "Mentions"));
+  const items = inboxItems();
+  if (items.length) {
+    const clear = el("button", "btn-link sm", "Clear all");
+    clear.type = "button";
+    clear.addEventListener("click", () => {
+      state.inbox = [];
+      renderInbox();
+      renderInboxBadge();
+      invoke("account_send", { msg: { type: "inbox_clear", all: true } }).catch(() => {});
+    });
+    head.append(clear);
+  }
+  if (!items.length) return pop.replaceChildren(head, el("div", "pins-empty", "Nothing here yet. When someone mentions you or replies to you, it shows up here."));
+  const list = el("div", "pins-list");
+  for (const i of items) {
+    const item = el("div", "pin-item inbox-item" + (i.at > state.inboxSeen ? " fresh" : ""));
+    item.tabIndex = 0;
+    const top = el("div", "pin-head");
+    top.append(avatar(i.author_name, "s24", undefined, pictureFor(i.author_key)), el("strong", "ellipsis", i.author_name), el("span", "search-where ellipsis", "#" + i.channel_name + " · " + i.server_name), el("span", "pin-date", dayLabel(i.at)));
+    const x = el("button", "icon-btn sm inbox-x");
+    x.type = "button";
+    x.setAttribute("aria-label", "Remove");
+    x.append(icon("x", "sm"));
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.inbox = state.inbox.filter((o) => o !== i);
+      renderInbox();
+      renderInboxBadge();
+      invoke("account_send", { msg: { type: "inbox_clear", server: i.server, channel: i.channel, id: i.id } }).catch(() => {});
+    });
+    top.append(x);
+    item.append(top, el("div", "pin-text", previewText(i.preview) || "Mentioned you"));
+    const go = () => {
+      closePopovers();
+      goToMessage(i.server, i.channel, i.id);
+    };
+    item.addEventListener("click", go);
+    item.addEventListener("keydown", (e) => e.key === "Enter" && go());
+    list.append(item);
+  }
+  pop.replaceChildren(head, list);
+}
+
+for (const btn of document.querySelectorAll(".inbox-btn")) {
+  btn.addEventListener("click", (e) => {
+    const pop = $("inbox-pop");
+    if (!pop.hidden) return closePopovers();
+    renderInbox();
+    const r = e.currentTarget.getBoundingClientRect();
+    placePopover(pop, r.right - 380, r.bottom + 8);
+    // Opened: what's here now counts as seen, on every device (the "new" marks stay while it's open).
+    const now = Math.max(Date.now(), ...state.inbox.map((i) => i.at));
+    state.inboxSeen = now;
+    renderInboxBadge();
+    invoke("account_send", { msg: { type: "inbox_seen", at: now } }).catch(() => {});
+  });
+}
 
 // ---------- deleting a server (owner) ----------
 

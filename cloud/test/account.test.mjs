@@ -356,6 +356,17 @@ test("server messages mark channels unread on every member's account, and mentio
   const again = await Device.open(alice, "Alice");
   const row = again.welcome.channels.find((c) => c.server === server && c.channel === general);
   assert.equal(row.mentions, 1);
+  // And kept in the inbox, which every device sees opened and cleared.
+  assert.equal(again.welcome.inbox.length, 1);
+  assert.equal(again.welcome.inbox[0].preview, "hey @alice look");
+  assert.equal(again.welcome.inbox[0].channel, general);
+  assert.equal(again.welcome.inbox[0].author_name, "bob");
+  assert.equal(again.welcome.inbox_seen, 0);
+  const seenAt = Date.now();
+  again.send({ type: "inbox_seen", at: seenAt });
+  assert.equal((await account.waitFor((m) => m.type === "inbox_seen")).at, seenAt);
+  again.send({ type: "inbox_clear", server, channel: general, id: again.welcome.inbox[0].id });
+  assert.deepEqual((await account.waitFor((m) => m.type === "inbox")).items, []);
   again.send({ type: "channel_read", server, channel: general, id: mention.last_id });
   const read = await account.waitFor((m) => m.type === "channel_read");
   assert.equal(read.read_id, mention.last_id);

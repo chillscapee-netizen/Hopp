@@ -24,6 +24,8 @@ const MAX_STATUS = 80;
 const MAX_AVATAR = 40_000;
 const MAX_BANNER = 80_000;
 const MAX_SYNC = 262_144;
+/** Mentions kept for the inbox. */
+const INBOX_KEEP = 200;
 const FRIEND_REQUESTS_PER_DAY = 30;
 /** A username given up stays reserved for its old owner this long, so it can't be hijacked. */
 const NAME_HOLD_MS = 14 * 24 * 3_600_000;
@@ -288,6 +290,9 @@ export class StromAccount extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, data BLOB NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS conversations (peer TEXT PRIMARY KEY, last_at INTEGER NOT NULL, last_read INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', members TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS inbox (
+        server TEXT NOT NULL, channel INTEGER NOT NULL, id INTEGER NOT NULL, at INTEGER NOT NULL, server_name TEXT NOT NULL, channel_name TEXT NOT NULL,
+        author_key TEXT NOT NULL, author_name TEXT NOT NULL, preview TEXT NOT NULL, crowd INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel, id));
       CREATE TABLE IF NOT EXISTS channel_reads (
         server TEXT NOT NULL, channel INTEGER NOT NULL, read_id INTEGER NOT NULL DEFAULT 0, last_id INTEGER NOT NULL DEFAULT 0,
         last_at INTEGER NOT NULL DEFAULT 0, mentions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (server, channel));
@@ -515,6 +520,8 @@ export class StromAccount extends DurableObject<Env> {
       conversations: this.conversations(),
       channels: this.channelReads(),
       groups: this.groups(),
+      inbox: this.inbox(),
+      inbox_seen: Number(this.meta("inbox_seen") ?? 0),
     });
     if (wasOffline) await this.announcePresence();
   }
@@ -607,6 +614,18 @@ export class StromAccount extends DurableObject<Env> {
         if (!PRIVACY.has(privacy)) return error("Unknown setting.");
         this.setMeta("privacy", privacy);
         return this.toDevices({ type: "privacy", requests: privacy });
+      }
+      case "inbox_seen": {
+        // The inbox was opened: its count starts again from here, on every device.
+        const at = Math.min(Date.now(), Math.max(Number(this.meta("inbox_seen") ?? 0), Number(msg.at) || 0));
+        this.setMeta("inbox_seen", String(at));
+        return this.toDevices({ type: "inbox_seen", at });
+      }
+      case "inbox_clear": {
+        // One mention (server, channel, id), or all of them.
+        if (msg.all) this.sql.exec("DELETE FROM inbox");
+        else this.sql.exec("DELETE FROM inbox WHERE server = ? AND channel = ? AND id = ?", String(msg.server ?? ""), Number(msg.channel), Number(msg.id));
+        return this.toDevices({ type: "inbox", items: this.inbox() });
       }
       case "set_sync": {
         // Opaque to us: the account data is encrypted on the device.
@@ -1122,6 +1141,15 @@ export class StromAccount extends DurableObject<Env> {
 
   // ---------- server channels: unread and mentions ----------
 
+  /** The mentions kept for the inbox, newest first. */
+  private inbox() {
+    return this.sql.exec("SELECT * FROM inbox ORDER BY at DESC LIMIT ?", INBOX_KEEP).toArray().map((r) => ({
+      server: String(r.server), channel: Number(r.channel), id: Number(r.id), at: Number(r.at),
+      server_name: String(r.server_name), channel_name: String(r.channel_name),
+      author_key: String(r.author_key), author_name: String(r.author_name), preview: String(r.preview), crowd: !!r.crowd,
+    }));
+  }
+
   private channelReads() {
     const since = Date.now() - CHANNEL_READS_DAYS * 86_400_000;
     return this.sql
@@ -1180,6 +1208,15 @@ export class StromAccount extends DurableObject<Env> {
          last_at = max(last_at, excluded.last_at)`,
       m.server, m.channel, m.id, m.at, m.mention ? 1 : 0, m.mention ? 1 : 0,
     );
+    // Mentions are kept for the inbox: the newest few hundred, for a month.
+    if (m.mention) {
+      this.sql.exec(
+        `INSERT OR IGNORE INTO inbox (server, channel, id, at, server_name, channel_name, author_key, author_name, preview, crowd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        m.server, m.channel, m.id, m.at, m.server_name.slice(0, 100), m.channel_name.slice(0, 100), m.author_key, m.author_name.slice(0, 64), (m.preview ?? "").slice(0, 200), m.crowd ? 1 : 0,
+      );
+      this.sql.exec("DELETE FROM inbox WHERE at < ? OR rowid NOT IN (SELECT rowid FROM inbox ORDER BY at DESC LIMIT ?)", Date.now() - 30 * 86_400_000, INBOX_KEEP);
+    }
     this.toDevices({
       type: "channel_activity",
       ...this.channelRead(m.server, m.channel),

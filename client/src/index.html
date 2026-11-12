@@ -274,6 +274,7 @@
           <label class="head-search dm-search" id="dm-search-input-box" hidden><svg class="i"><use href="#i-search"/></svg><input id="dm-search-input" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
           <button id="dm-call-btn" type="button" class="icon-btn dm-call-btn" data-tip="Start a voice call"><svg class="i"><use href="#i-phone"/></svg></button>
           <button id="dm-video-btn" type="button" class="icon-btn dm-call-btn" data-tip="Start a video call"><svg class="i"><use href="#i-video"/></svg></button>
+          <button id="home-inbox-btn" type="button" class="icon-btn inbox-btn" data-tip="Inbox" aria-label="Inbox"><svg class="i"><use href="#i-bell"/></svg><span class="inbox-badge" hidden></span></button>
         </header>
         <div id="call-stage" class="call-stage" hidden></div>
         <div id="home-body" class="home-body"></div>
@@ -298,6 +299,7 @@
           <label class="head-search" id="search-input-box"><svg class="i"><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
           <button id="invite-head-btn" class="icon-btn" data-tip="Invite people"><svg class="i"><use href="#i-user-plus"/></svg></button>
           <button id="voice-chat-btn" class="icon-btn voice-chat-btn" data-tip="Chat" aria-label="Chat" hidden><svg class="i"><use href="#i-message"/></svg><span id="voice-chat-dot" class="head-dot" hidden></span></button>
+          <button id="inbox-btn" type="button" class="icon-btn inbox-btn" data-tip="Inbox" aria-label="Inbox"><svg class="i"><use href="#i-bell"/></svg><span class="inbox-badge" hidden></span></button>
           <button id="pins-btn" class="icon-btn" data-tip="Pinned messages"><svg class="i"><use href="#i-pin"/></svg></button>
           <button id="members-toggle" class="icon-btn" data-tip="Member list"><svg class="i"><use href="#i-users"/></svg></button>
         </header>
@@ -1609,6 +1611,7 @@
   <dialog id="lightbox" class="lightbox"><img id="lightbox-img" alt=""></dialog>
   <div id="emoji-picker" class="popover emoji-picker" hidden></div>
   <div id="pins-pop" class="popover pins-pop" hidden></div>
+  <div id="inbox-pop" class="popover pins-pop inbox-pop" hidden></div>
   <div id="server-submenu" class="popover menu submenu" hidden></div>
   <div id="soundboard" class="popover soundboard" hidden></div>
   <aside id="search-panel" class="search-panel" hidden>

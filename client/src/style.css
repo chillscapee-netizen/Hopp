@@ -3825,3 +3825,16 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .forward-title { margin: 0 0 12px; font-size: 18px; }
 .forward-preview { max-height: 120px; overflow: hidden; margin-bottom: 12px; }
 .forward-channel-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: rgb(127 127 127 / 0.18); color: var(--muted); }
+
+/* The inbox: a bell with how many mentions are new, and the list under it. */
+.inbox-btn { position: relative; }
+.inbox-badge { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; pointer-events: none; }
+.friends-head .inbox-btn { margin-left: auto; }
+.friends-head .dm-search:not([hidden]) ~ .inbox-btn, .friends-head .dm-call-btn:not([hidden]) ~ .inbox-btn { margin-left: 0; }
+.inbox-head { display: flex; align-items: center; justify-content: space-between; padding-right: 6px; }
+.inbox-head .pins-title { padding-bottom: 10px; }
+.inbox-item { cursor: pointer; }
+.inbox-item .search-where { min-width: 0; color: var(--faint); font-size: 12px; }
+.inbox-item.fresh { background: color-mix(in srgb, var(--link) 10%, var(--side)); }
+.inbox-x { margin: -4px -4px -4px 0; opacity: 0; }
+.inbox-item:hover .inbox-x, .inbox-x:focus-visible { opacity: 1; }
