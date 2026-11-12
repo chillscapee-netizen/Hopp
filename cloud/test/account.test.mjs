@@ -267,6 +267,15 @@ test("profiles: name, bio and picture reach friends", async () => {
   assert.match((await a.d.waitFor((m) => m.type === "error" && /banner/.test(m.message))).message, /banner/);
   a.d.send({ type: "set_profile", custom_status: null });
   await b.d.waitFor((m) => m.type === "friend" && !m.friend.custom_status);
+  // A name style: a colour, a fade between two, a font; reaches friends and the public profile.
+  a.d.send({ type: "set_profile", name_color: "#AABBCC #ddeeff f:hand" });
+  const styled = await b.d.waitFor((m) => m.type === "friend" && m.friend.name_color === "#aabbcc #ddeeff f:hand");
+  assert.equal(styled.friend.name_color, "#aabbcc #ddeeff f:hand");
+  assert.equal((await (await fetch(`${HTTP}/profiles/${a.key.pub}`)).json()).name_color, "#aabbcc #ddeeff f:hand");
+  a.d.send({ type: "set_profile", name_color: "f:pixel" });
+  await b.d.waitFor((m) => m.type === "friend" && m.friend.name_color === "f:pixel");
+  a.d.send({ type: "set_profile", name_color: "red; background:url(x)" });
+  assert.match((await a.d.waitFor((m) => m.type === "error" && /colour/.test(m.message))).message, /colour/);
   a.d.close();
   b.d.close();
 });

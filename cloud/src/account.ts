@@ -562,7 +562,8 @@ export class StromAccount extends DurableObject<Env> {
         if (msg.name_color !== undefined) {
           const c = msg.name_color;
           if (c === null) this.setMeta("name_color", null);
-          else if (typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c)) this.setMeta("name_color", c.toLowerCase());
+          // A colour, a fade between two ("#aabbcc #ddeeff") and/or a font ("f:hand").
+          else if (typeof c === "string" && c.length <= 40 && /^(?:#[0-9a-f]{6}(?: #[0-9a-f]{6})?)?(?:(?:^| )f:[a-z]{2,12})?$/i.test(c) && c) this.setMeta("name_color", c.toLowerCase());
           else return error("That colour can't be used.");
         }
         if (msg.avatar !== undefined) {

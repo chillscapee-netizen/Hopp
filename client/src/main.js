@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -3071,7 +3071,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     } else {
       const head = el("div", "msg-head");
       const author = el("span", "msg-author", nameHere(m.author_key) ?? m.sender_name);
-      author.style.color = nameColor(m.author_key, m.sender_name);
+      styleName(author, m.author_key, m.sender_name);
       head.append(el("span", "msg-clock", clock(m.sent_at)), author, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       if (m.pinned) {
         const pin = icon("pin", "xs msg-pin");
@@ -3121,7 +3121,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), pickedNameColor(m.author_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), rawNameStyle(m.author_key)]);
     items.push(li);
     prev = m;
   }
@@ -4031,7 +4031,7 @@ function renderProfilePreview() {
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
   // Your name as others see it in chat.
-  $("profile-name").style.color = state.me?.name_color ? readableColor(state.me.name_color) : "";
+  styleName($("profile-name"), state.me?.key ?? state.account?.publicKey, name, false);
   $("profile-display").textContent = name;
   $("profile-handle").textContent = state.me?.username ? `@${state.me.username}` : "";
   const bio = state.me?.bio ?? "";
@@ -5697,6 +5697,8 @@ function applySyncedSettings(remote) {
     prefs.chatSpace = Number(load("chatSpace", "18"));
     prefs.compact = load("chatCompact", "0") === "1";
     $("chat-compact").checked = prefs.compact;
+    prefs.appFont = load("appFont", "inter");
+    $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
     applyTheme();
     syncThemePage();
     prefs.linkPreviews = load("linkPreviews", "1") === "1";
@@ -6301,8 +6303,7 @@ function renderDmView(keepScroll) {
       const author = personFor(m.from_key);
       const headLine = el("div", "msg-head");
       const name = el("span", "msg-author", author.display_name);
-      const picked = pickedNameColor(m.from_key);
-      if (picked) name.style.color = readableColor(picked);
+      styleName(name, m.from_key, author.display_name, false);
       headLine.append(el("span", "msg-clock", clock(m.sent_at)), name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
@@ -6362,7 +6363,7 @@ function renderDmView(keepScroll) {
       });
     }
     li.dataset.key = `${peer}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews, pickedNameColor(m.from_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews, rawNameStyle(m.from_key)]);
     items.push(li);
     prev = m;
   }
@@ -7400,7 +7401,7 @@ function outboxItem(o, grouped) {
   const head = el("div", "msg-head");
   const name = state.account?.name ?? "";
   const author = el("span", "msg-author", name);
-  author.style.color = nameColor(state.account?.publicKey, name);
+  styleName(author, state.account?.publicKey, name);
   head.append(author, el("span", "msg-time", o.failed ? "Not sent" : "Sending…"));
   li.append(avatar(name, "s40", undefined, state.me?.avatar ?? null), head, messageText(o.text));
   if (o.failed) {
@@ -11537,6 +11538,8 @@ function applyTheme() {
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
+  const font = (typeof APP_FONTS !== "undefined" && APP_FONTS[prefs.appFont]) || '"Inter"';
+  document.documentElement.style.setProperty("--app-font", font);
   if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
   // Names in role colours are adjusted for light and dark: redraw them.
   if (state.roster && typeof online === "function" && online()) {
@@ -11657,6 +11660,15 @@ prefs.chatSize = Number(load("chatSize", "15"));
 prefs.chatSpace = Number(load("chatSpace", "18"));
 prefs.compact = load("chatCompact", "0") === "1";
 $("chat-compact").checked = prefs.compact;
+/** The font for all of Hopp (Appearance → Chat). */
+var APP_FONTS = { inter: '"Inter"', rounded: '"Nunito"', readable: '"Atkinson Hyperlegible"', dyslexic: '"OpenDyslexic"', system: '"Segoe UI"' };
+prefs.appFont = load("appFont", "inter");
+$("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
+$("app-font").addEventListener("change", (e) => {
+  prefs.appFont = e.target.value;
+  save("appFont", prefs.appFont);
+  applyTheme();
+});
 $("chat-compact").addEventListener("change", (e) => {
   prefs.compact = e.target.checked;
   save("chatCompact", prefs.compact ? "1" : "0");
@@ -13406,13 +13418,59 @@ function roleColorByKey(key) {
   return roleColor(state.roster?.users.find((u) => keyOf(u) === key));
 }
 
-/** The colour someone picked for their own name (theirs to choose in their profile), if any. */
-function pickedNameColor(key) {
+/**
+ * Someone's name style, as kept with their profile: "#rrggbb", "#rrggbb #rrggbb" (a fade
+ * between two colours) and/or "f:<font>" (one of NAME_FONTS). Older apps read just the colour.
+ */
+var NAME_FONTS = {
+  rounded: ["Rounded", '"Nunito"'],
+  hand: ["Handwritten", '"Caveat"'],
+  graffiti: ["Graffiti", '"Sedgwick Ave Display"'],
+  block: ["Block", '"Bungee"'],
+  pixel: ["Pixel", '"Pixelify Sans"'],
+  serif: ["Serif", '"Playfair Display"'],
+  mono: ["Mono", '"JetBrains Mono"'],
+};
+function parseNameStyle(raw) {
+  const out = { c1: null, c2: null, font: null };
+  for (const t of String(raw ?? "").split(" ")) {
+    if (/^#[0-9a-f]{6}$/i.test(t)) {
+      if (!out.c1) out.c1 = t;
+      else out.c2 ??= t;
+    } else if (t.startsWith("f:") && NAME_FONTS[t.slice(2)]) out.font = t.slice(2);
+  }
+  return out;
+}
+function joinNameStyle(s) {
+  return [s.c1, s.c1 && s.c2, s.font && "f:" + s.font].filter(Boolean).join(" ") || null;
+}
+/** The style someone picked for their own name (theirs to choose in their profile), if any. */
+function rawNameStyle(key) {
   if (!key) return null;
   if (key === state.account?.publicKey || key === state.me?.key) return state.me?.name_color ?? null;
   const friend = state.friends?.get(key);
   if (friend) return friend.state === "blocked" ? null : friend.name_color ?? null;
   return profiles.get(key)?.name_color ?? null;
+}
+/** The (first) colour someone picked for their name, if any. */
+function pickedNameColor(key) {
+  return parseNameStyle(rawNameStyle(key)).c1;
+}
+/**
+ * Writes a name the way its owner styled it: their font, and their colour or fade (a server's
+ * role colour still comes first in that server). `fallback` false: no made-up colour.
+ */
+function styleName(node, key, name, fallback = true) {
+  const s = parseNameStyle(rawNameStyle(key));
+  const role = roleColorByKey(key);
+  node.style.color = fallback ? nameColor(key, name) : s.c1 ? readableColor(s.c1) : "";
+  node.style.fontFamily = s.font ? NAME_FONTS[s.font][1] + ", Inter, sans-serif" : "";
+  if (s.font) node.dataset.nameFont = s.font;
+  else delete node.dataset.nameFont;
+  const fade = !role && s.c1 && s.c2;
+  node.classList.toggle("name-fade", !!fade);
+  node.style.backgroundImage = fade ? "linear-gradient(90deg, " + readableColor(s.c1) + ", " + readableColor(s.c2) + ")" : "";
+  return node;
 }
 
 /** Any colour, made to read on the theme: never too dark on dark, never too pale on light. */
@@ -14126,7 +14184,8 @@ function paintBanner(node, banner, name) {
 var NAME_COLORS = ["#8ab4f8", "#7fd6c2", "#9be28a", "#f2d16b", "#f5a36a", "#f28b9b", "#d9a4f4", "#b3b9ff"];
 
 function renderNameColors() {
-  const current = state.me?.name_color ?? null;
+  const style = parseNameStyle(state.me?.name_color);
+  const current = style.c1;
   $("name-colors").replaceChildren(...NAME_COLORS.map((c) => {
     const b = el("button", "banner-swatch" + (c === current ? " active" : ""));
     b.type = "button";
@@ -14138,15 +14197,42 @@ function renderNameColors() {
   $("name-color-remove").hidden = !current;
   if (current) $("name-color-own").value = current;
   $("name-color-own").parentElement.classList.toggle("active", !!current && !NAME_COLORS.includes(current));
+  // A fade needs a first colour to start from.
+  $("name-fade-row").hidden = !current;
+  $("name-fade-off").hidden = !style.c2;
+  if (style.c2) $("name-color-two").value = style.c2;
+  $("name-color-two").parentElement.classList.toggle("active", !!style.c2);
+  const me = state.account?.name ?? "Aa";
+  $("name-fonts").replaceChildren(
+    ...[[null, "Default", ""], ...Object.entries(NAME_FONTS).map(([id, [label, family]]) => [id, label, family])].map(([id, label, family]) => {
+      const b = el("button", "name-font" + ((style.font ?? null) === id ? " active" : ""));
+      b.type = "button";
+      b.setAttribute("aria-label", label);
+      const sample = el("span", "name-font-sample", me);
+      if (family) sample.style.fontFamily = family + ", Inter, sans-serif";
+      if (id) sample.dataset.nameFont = id;
+      b.append(sample, el("span", "name-font-label", label));
+      b.addEventListener("click", () => setNameStyle({ font: id }));
+      return b;
+    }),
+  );
 }
 
-async function setNameColor(color) {
+/** Changes part of your name style (colour, second colour or font), keeping the rest. */
+async function setNameStyle(change) {
+  const next = { ...parseNameStyle(state.me?.name_color), ...change };
+  if (!next.c1) next.c2 = null;
   try {
-    await accountSend({ type: "set_profile", name_color: color });
+    await accountSend({ type: "set_profile", name_color: joinNameStyle(next) });
   } catch (err) {
     toast(friendlyError(err), true);
   }
 }
+function setNameColor(color) {
+  return setNameStyle({ c1: color });
+}
+$("name-fade-off").addEventListener("click", () => setNameStyle({ c2: null }));
+$("name-color-two").addEventListener("change", (e) => setNameStyle({ c2: e.target.value }));
 $("name-color-remove").addEventListener("click", () => setNameColor(null));
 // Dragging in the colour box fires all the time: only where you land is saved.
 $("name-color-own").addEventListener("change", (e) => setNameColor(e.target.value));

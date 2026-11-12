@@ -60,7 +60,7 @@ html, body { height: 100%; margin: 0; }
 body {
   background: var(--frame);
   color: var(--text);
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--app-font, "Inter"), "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.4;
   font-feature-settings: "cv11", "ss01";
@@ -3947,3 +3947,16 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .msg-text u { text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .msg-masked .msg-link-host { margin-left: 4px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--faint); font-size: 0.78em; vertical-align: 1px; }
 ul.msg-list { list-style: disc; }
+
+/* Name styles: a font of your own and a fade between two colours, seen by everyone. */
+.name-fade { -webkit-background-clip: text; background-clip: text; color: transparent !important; }
+[data-name-font="hand"] { font-size: 1.5em; line-height: 0.9; }
+[data-name-font="graffiti"] { font-size: 1.65em; line-height: 0.9; letter-spacing: 0.02em; }
+[data-name-font="block"] { font-size: 0.86em; letter-spacing: 0.02em; }
+[data-name-font="pixel"] { font-size: 0.98em; }
+.name-fonts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.name-font { display: grid; gap: 2px; min-width: 92px; padding: 8px 10px; border: none; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.name-font:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.name-font.active { background: color-mix(in srgb, var(--link) 22%, transparent); }
+.name-font-sample { max-width: 130px; overflow: hidden; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.name-font-label { color: var(--faint); font-size: 11px; }

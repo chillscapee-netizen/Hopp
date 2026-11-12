@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hopp</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="fonts.css">
 </head>
 <body>
   <!-- The logo's shine: a mask can't live in the hidden sprite (it wouldn't draw). -->
@@ -1221,6 +1222,22 @@
                   <label class="color-field" aria-label="Pick your own name colour"><input id="name-color-own" type="color" value="#8ab4f8"></label>
                 </span>
               </div>
+              <div class="field-row" id="name-fade-row">
+                <span class="row-label">
+                  <span class="field-row-title">Fade into a second colour</span>
+                  <span class="row-sub">Your name goes from one colour to the other.</span>
+                </span>
+                <span class="row-control">
+                  <button id="name-fade-off" type="button" class="btn-link sm">Off</button>
+                  <label class="color-field" aria-label="Pick the second colour"><input id="name-color-two" type="color" value="#d9a4f4"></label>
+                </span>
+              </div>
+              <div class="field-row name-font-row">
+                <span class="row-label">
+                  <span class="field-row-title">Name font</span>
+                  <span id="name-fonts" class="name-fonts"></span>
+                </span>
+              </div>
               <div class="field-row">
                 <span class="row-label">
                   <span class="field-row-title">About me</span>
@@ -1522,6 +1539,19 @@
 
           <div class="card-title">Chat</div>
           <div class="card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Font</span>
+                <span class="row-sub">For all of Hopp, just for you.</span>
+              </span>
+              <select id="app-font" class="row-select">
+                <option value="inter">Inter (Hopp's own)</option>
+                <option value="rounded">Rounded (Nunito)</option>
+                <option value="readable">Easy to read (Atkinson Hyperlegible)</option>
+                <option value="dyslexic">For dyslexia (OpenDyslexic)</option>
+                <option value="system">Windows (Segoe UI)</option>
+              </select>
+            </label>
             <label class="row">
               <span class="row-title">Text size</span>
               <span class="row-control slider-control"><input id="chat-size" type="range" min="12" max="20" step="1"><output id="chat-size-value"></output></span>
