@@ -59,8 +59,21 @@
   check("shown above the chat", !document.getElementById("screen-stage").hidden && document.getElementById("screen-who").textContent.endsWith("'s screen"));
   check("'Connecting…' goes once it plays", document.getElementById("screen-wait").hidden);
   const peer = screenShare.peers.get(viewer.session_id);
+  const rate = () => peer?.getSenders()[0]?.getParameters().encodings?.[0]?.maxBitrate;
   const params = peer?.getSenders()[0]?.getParameters();
-  check("sent at high quality", params?.encodings?.[0]?.maxBitrate === 6_000_000, JSON.stringify(params?.encodings));
+  check("sent at high quality", params?.encodings?.[0]?.maxBitrate === 4_500_000, JSON.stringify(params?.encodings));
+
+  // Voice comes first: when it strains while video is sent, the video shrinks; when voice is fine again, it grows back.
+  emit("voice", { type: "peer_quality", session_id: viewer.session_id, rtt_ms: 40, loss: 0, relayed: false });
+  await wait(30);
+  check("voice doing fine leaves the video alone", rate() === 4_500_000 && videoBudget() === 1);
+  for (let i = 0; i < 3; i++) emit("voice", { type: "peer_quality", session_id: viewer.session_id, rtt_ms: 190, loss: 6, relayed: false });
+  await wait(60);
+  check("voice straining makes the video smaller at once", videoBudget() < 0.5 && rate() < 2_300_000, videoBudget() + " " + rate());
+  check("and your own stream says why", $("screen-info").textContent.includes("making room for voice") || !watching?.local, $("screen-info").textContent);
+  for (let i = 0; i < 80; i++) emit("voice", { type: "peer_quality", session_id: viewer.session_id, rtt_ms: 42, loss: 0, relayed: false });
+  await wait(60);
+  check("voice fine again: the video gets its room back", videoBudget() === 1 && rate() === 4_500_000, videoBudget() + " " + rate());
 
   // Stopping: the viewer is told, the server too.
   sent.length = 0;

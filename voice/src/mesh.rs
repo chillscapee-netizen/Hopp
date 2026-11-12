@@ -360,6 +360,10 @@ const RELAY_PROBE_AFTER: Duration = Duration::from_secs(2);
 /// On the relay, the direct addresses are tried again this often: the relay is a detour, and
 /// a direct path often opens a little later (both sides' routers need a moment).
 const DIRECT_RETRY: Duration = Duration::from_secs(3);
+/// Voice leaves the relay for a direct path only when that path is about as fast or faster:
+/// this much slower at most. The relay runs on a fast network, and the plain internet
+/// between two homes is sometimes the slower way round.
+const DIRECT_SLACK_MS: u32 = 15;
 /// A direct path heard from this recently wins over the relay.
 const DIRECT_PREFERRED_FOR: Duration = Duration::from_millis(1500);
 
@@ -620,9 +624,9 @@ impl Mesh {
         self.heard_as(id, from, relayed, true)
     }
 
-    /// Like `heard`. A bare question (`proof` false: a ping, which only shows they can reach
-    /// us) doesn't move voice off a working relay: that takes an answer to our own ping, or
-    /// their voice, which show the direct way works in both directions.
+    /// Like `heard`. A ping or its answer (`proof` false) doesn't move voice off a working
+    /// relay by itself: an answer is weighed by how fast it came (`pong_heard`), and their
+    /// voice arriving directly means they made that choice already.
     pub fn heard_as(&self, id: SessionId, from: SocketAddr, relayed: bool, proof: bool) -> bool {
         let from = canonical(from);
         let now = Instant::now();
@@ -675,6 +679,35 @@ impl Mesh {
         if let Some(link) = links.get_mut(&id) {
             link.rtt_ms = Some(ms);
         }
+        links.values().filter(|l| l.path.is_some()).filter_map(|l| l.rtt_ms).max()
+    }
+
+    /// An answer to one of our pings came back from `from` after `ms`. On the path voice
+    /// takes, that's its round trip. From a direct address while voice goes through the
+    /// relay, it's a measured offer: voice moves there only if it's about as fast or faster.
+    /// Returns the slowest round trip among peers when the number shown should change.
+    pub fn pong_heard(&self, id: SessionId, from: SocketAddr, relayed: bool, ms: u32) -> Option<u32> {
+        let from = canonical(from);
+        let mut links = self.links.lock().unwrap();
+        let link = links.get_mut(&id)?;
+        let on_path = link.path == Some(from) && link.relayed == relayed;
+        if !on_path {
+            // Only the way off the relay is weighed here; other stray answers don't count.
+            if !(link.relayed && !relayed && link.path.is_some()) {
+                return None;
+            }
+            if link.rtt_ms.is_some_and(|now| ms > now + DIRECT_SLACK_MS) {
+                tracing::info!("the direct path to peer {id} is slower ({ms} ms) than the relay; staying");
+                return None;
+            }
+            tracing::info!("voice path to peer {id} via {from} (direct, {ms} ms)");
+            let now = Instant::now();
+            link.path = Some(from);
+            link.relayed = false;
+            link.last_heard = Some(now);
+            link.last_direct = Some(now);
+        }
+        link.rtt_ms = Some(ms);
         links.values().filter(|l| l.path.is_some()).filter_map(|l| l.rtt_ms).max()
     }
 }
@@ -967,9 +1000,16 @@ mod network_tests {
         // Their ping arriving directly isn't proof it works both ways: voice stays on the relay.
         assert!(mesh.heard_as(1, direct, false, false));
         assert_eq!(mesh.paths(), vec![(via_relay, true, false)]);
-        // Their answer to our direct ping is: voice moves to the direct path.
-        assert!(mesh.heard_as(1, direct, false, true));
+        // The relay's round trip is known: 100 ms.
+        assert_eq!(mesh.pong_heard(1, via_relay, true, 100), Some(100));
+        // An answer straight from them that took twice as long: the direct way works but is slower. Stay.
+        assert!(mesh.heard_as(1, direct, false, false));
+        assert_eq!(mesh.pong_heard(1, direct, false, 200), None);
+        assert_eq!(mesh.paths(), vec![(via_relay, true, false)]);
+        assert_eq!(mesh.quality(), vec![(1, Some(100), 0, true)]);
+        // One that's as fast or faster: voice moves to the direct path, and the number follows.
+        assert_eq!(mesh.pong_heard(1, direct, false, 80), Some(80));
         assert_eq!(mesh.paths(), vec![(direct, false, false)]);
-        assert_eq!(mesh.quality(), vec![(1, None, 0, false)]);
+        assert_eq!(mesh.quality(), vec![(1, Some(80), 0, false)]);
     }
 }

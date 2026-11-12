@@ -3750,3 +3750,7 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .member.offline { opacity: 0.5; }
 .member.offline:hover { opacity: 1; }
 .member-more { padding: 6px 8px 10px; color: var(--faint); font-size: 12.5px; }
+
+/* A camera is in the middle: the screen you watch waits in the row, and its stage steps aside. */
+.chat.voice-mode.screen-aside > .screen-stage { display: none; }
+.screen-back-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 14px; border-radius: 50%; background: rgb(127 127 127 / 0.18); color: var(--text); }

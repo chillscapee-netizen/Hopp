@@ -1180,7 +1180,7 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
         let packet = if relayed { &inner[..] } else { packet };
         // Peer to peer: only sealed packets from people in our channel count.
         let Some((kind, sender, payload)) = mesh::open(&mesh.cipher, packet) else { continue };
-        if !mesh.heard_as(sender, from, relayed, kind != mesh::KIND_PING) {
+        if !mesh.heard_as(sender, from, relayed, kind != mesh::KIND_PING && kind != mesh::KIND_PONG) {
             continue;
         }
         match kind {
@@ -1205,7 +1205,7 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
             }
             mesh::KIND_PONG if payload.len() >= 4 => {
                 let rtt = net.now_ms().wrapping_sub(u32::from_be_bytes(payload[..4].try_into().unwrap()));
-                if let Some(slowest) = mesh.record_rtt(sender, rtt) {
+                if let Some(slowest) = mesh.pong_heard(sender, from, relayed, rtt) {
                     let _ = events.send(EngineEvent::Latency { ms: slowest });
                 }
             }

@@ -1880,6 +1880,7 @@ listen("roster", (e) => {
     if (!overviewChanged() || $("overview-save").disabled) resetOverview();
     else renderOverview();
   }
+  if (before !== myVoice()) resetVoiceGuard();
   if (before !== null && myVoice() === null) {
     state.unreachable.clear();
     state.quality.clear();
@@ -1943,6 +1944,7 @@ listen("voice", (e) => {
     const before = connectionGrade(state.quality.get(ev.session_id));
     const wasRelayed = [...state.quality.values()].some((q) => q.relayed);
     state.quality.set(ev.session_id, { rtt: ev.rtt_ms, loss: ev.loss, relayed: !!ev.relayed });
+    guardVoice(ev.session_id, ev.rtt_ms, ev.loss);
     if (wasRelayed !== [...state.quality.values()].some((q) => q.relayed)) renderVoicePanel();
     // Only a change you'd see redraws: the bars appear, change colour, or go.
     if (connectionGrade(state.quality.get(ev.session_id)) !== before) renderSidebar();
@@ -7676,6 +7678,7 @@ async function beginCallVoice(c) {
     await call("leave_voice");
   }
   stopMicTest();
+  resetVoiceGuard();
   let me;
   try {
     me = await invoke("start_call", { callId: c.id, key: c.key, me: c.me });
@@ -8029,6 +8032,8 @@ listen("call-voice", (e) => {
     devicesChanged();
   } else if (ev.type === "need_relay") {
     useRelay();
+  } else if (ev.type === "peer_quality") {
+    guardVoice("call|" + ev.session_id, ev.rtt_ms, ev.loss);
   } else if (ev.type === "endpoint" && state.call) {
     state.call.myEndpoint = { public: ev.endpoint.public ?? null, local: ev.endpoint.local ?? [] };
     callSend(state.call, "endpoint", state.call.myEndpoint);
@@ -10586,7 +10591,62 @@ var SHARE_SIZES = [
 ];
 var SHARE_RATES = [15, 30, 60];
 /** Megabits a second, to each viewer, at most. */
-var SHARE_MBIT = { 720: { 15: 1.5, 30: 3, 60: 5 }, 1080: { 15: 3, 30: 6, 60: 9 }, 1440: { 15: 5, 30: 9, 60: 14 }, source: { 15: 5, 30: 9, 60: 14 } };
+var SHARE_MBIT = { 720: { 15: 1.5, 30: 2.5, 60: 4 }, 1080: { 15: 2.5, 30: 4.5, 60: 7 }, 1440: { 15: 4, 30: 7, 60: 10 }, source: { 15: 4, 30: 7, 60: 10 } };
+
+// ---------- voice comes first ----------
+//
+// Video and voice share the same line out of your home. When video fills it, voice is what
+// suffers: it arrives late, or not at all. So Hopp watches how voice is doing (its round trip
+// and how much is lost, every second) and, the moment it strains while you send video, makes
+// the video smaller; when voice has been fine for a while, video gets its room back.
+var voiceGuard = { budget: 1, floor: new Map(), calm: 0 };
+function sendingVideo() {
+  return !!screenShare.stream || (typeof media !== "undefined" && Object.keys(media.out).length > 0);
+}
+/** The share of its usual size video may use right now (1 = all of it). */
+function videoBudget() {
+  return voiceGuard.budget;
+}
+function guardVoice(id, rtt, loss) {
+  const g = voiceGuard;
+  // How fast voice is when nothing is in its way: the best seen, creeping up slowly so a
+  // network that simply got slower becomes the new normal within a couple of minutes.
+  if (rtt != null) {
+    const floor = g.floor.get(id);
+    g.floor.set(id, floor == null ? rtt : Math.min(rtt, floor + 0.5));
+  }
+  const before = g.budget;
+  if (!sendingVideo()) {
+    g.budget = 1;
+    g.calm = 0;
+  } else {
+    const floor = g.floor.get(id);
+    const strained = loss >= 3 || (rtt != null && floor != null && rtt > floor + 60);
+    if (strained) {
+      g.budget = Math.max(0.2, g.budget * 0.7);
+      g.calm = 0;
+    } else if (++g.calm >= 8) {
+      g.calm = 0;
+      g.budget = Math.min(1, g.budget * 1.2);
+    }
+  }
+  if (g.budget !== before) retuneVideo();
+}
+/** Every video we send follows the room voice leaves it. */
+function retuneVideo() {
+  for (const pc of screenShare.peers.values()) tuneShare(pc);
+  if (typeof media !== "undefined") for (const [kind, out] of Object.entries(media.out)) for (const pc of out.peers.values()) if (pc.getSenders) tuneSender(pc, kind);
+  if (watching?.local) screenInfo();
+}
+/** A new voice channel or call: what was normal before says nothing about this one. */
+function resetVoiceGuard() {
+  voiceGuard.floor.clear();
+  voiceGuard.calm = 0;
+  if (voiceGuard.budget !== 1) {
+    voiceGuard.budget = 1;
+    retuneVideo();
+  }
+}
 prefs.shareQuality = { size: "1080", rate: 30, ...loadJson("shareQuality", {}) };
 if (!SHARE_SIZES.some((x) => x.id === prefs.shareQuality.size)) prefs.shareQuality.size = "1080";
 if (!SHARE_RATES.includes(prefs.shareQuality.rate)) prefs.shareQuality.rate = 30;
@@ -10626,7 +10686,7 @@ function tuneShare(pc) {
     if (sender.track?.kind !== "video") continue;
     const params = sender.getParameters();
     if (!params.encodings?.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = shareBitrate();
+    params.encodings[0].maxBitrate = Math.round(shareBitrate() * videoBudget());
     params.encodings[0].maxFramerate = prefs.shareQuality.rate;
     params.degradationPreference = prefs.shareQuality.rate >= 60 ? "maintain-framerate" : "maintain-resolution";
     sender.setParameters(params).catch(() => {});
@@ -10744,7 +10804,11 @@ function tuneScreenSender(pc) {
 }
 
 function watchScreen(session, asked = false) {
-  if (asked) skippedStreams.delete(session);
+  if (asked) {
+    skippedStreams.delete(session);
+    // Asking for a screen puts it in the middle, also when a camera was there.
+    if (typeof focusTile !== "undefined") focusTile = null;
+  }
   // Like Discord: watching takes you to their voice channel, where the stream shows big.
   const where = state.roster?.users.find((u) => u.session_id === session)?.voice_channel;
   if (where != null && voiceChat() && state.view !== where) openTextChannel(where);
@@ -10811,7 +10875,10 @@ function autoWatch() {
   const mine = myVoice();
   if (mine === null || state.view !== mine) return;
   const sharers = state.roster.users.filter((u) => u.sharing && u.voice_channel === mine && u.session_id !== state.roster.me);
-  if (sharers.length === 1 && !skippedStreams.has(sharers[0].session_id)) watchScreen(sharers[0].session_id);
+  if (sharers.length === 1 && !skippedStreams.has(sharers[0].session_id)) {
+    if (typeof focusTile !== "undefined") focusTile = null;
+    watchScreen(sharers[0].session_id);
+  }
 }
 
 function stopWatching(tell = true) {
@@ -10932,7 +10999,7 @@ function screenInfo() {
   if (video.videoWidth && video.videoHeight) video.parentElement.style.setProperty("--ar", (video.videoWidth / video.videoHeight).toFixed(4));
   if (watching.local) {
     const n = [...screenShare.peers.values()].filter((pc) => pc.connectionState === "connected").length;
-    $("screen-info").textContent = shareQualityText() + (n ? " · " + n + " watching" : "");
+    $("screen-info").textContent = shareQualityText() + (n ? " · " + n + " watching" : "") + (videoBudget() < 1 ? " · making room for voice" : "");
   } else {
     $("screen-info").textContent = video.videoHeight ? Math.min(video.videoWidth, video.videoHeight) + "p" : "";
   }
@@ -11274,8 +11341,12 @@ function renderVoiceStage() {
   const here = state.roster.users.filter((u) => u.voice_channel === view).sort(byName);
   const mine = myVoice() === view;
   const camOf = (u) => mediaStream("cam", u.session_id === state.roster.me ? "me" : u.session_id);
-  const screenFocus = !!watching && here.some((u) => u.session_id === watching.from);
-  const camFocus = !screenFocus && focusTile !== null && here.some((u) => u.session_id === focusTile && camOf(u));
+  // What's in the middle is what you picked last: a camera you clicked, or else the screen you watch.
+  const watchingHere = !!watching && here.some((u) => u.session_id === watching.from);
+  const camFocus = focusTile !== null && here.some((u) => u.session_id === focusTile && camOf(u));
+  const screenFocus = watchingHere && !camFocus;
+  // A camera in the middle while a screen plays: the screen waits in the row below, a click away.
+  chat.classList.toggle("screen-aside", watchingHere && camFocus);
   // Screens being shared that you aren't watching: offered big, in the middle.
   const offers = screenFocus || camFocus ? [] : here.filter((u) => u.sharing && u.session_id !== state.roster.me);
   const focused = screenFocus || camFocus || offers.length > 0;
@@ -11309,6 +11380,20 @@ function renderVoiceStage() {
       tile.classList.add("focus");
       main.append(tile);
     } else tiles.append(tile);
+  }
+  if (watchingHere && camFocus) {
+    const back = el("button", "voice-tile screen-back");
+    back.type = "button";
+    const mark = el("span", "screen-back-icon");
+    mark.append(icon("monitor"));
+    const marks = el("span", "voice-tile-marks");
+    marks.append(el("span", "live-pill watching", "LIVE"));
+    back.append(mark, el("span", "voice-tile-name ellipsis", watching.local ? "Your screen" : (userName(watching.from) ?? "Someone") + "'s screen"), marks);
+    back.addEventListener("click", () => {
+      focusTile = null;
+      renderVoiceStage();
+    });
+    tiles.prepend(back);
   }
   if (offers.length) {
     const cards = el("div", "stream-cards");
@@ -11654,8 +11739,8 @@ function tuneSender(pc, kind) {
   for (const sender of pc.getSenders()) {
     const p = sender.getParameters();
     if (!p.encodings?.length) p.encodings = [{}];
-    p.encodings[0].maxBitrate = kind === "screen" ? 6_000_000 : 2_500_000;
-    p.degradationPreference = kind === "screen" ? "maintain-resolution" : "balanced";
+    p.encodings[0].maxBitrate = Math.round(1_800_000 * videoBudget());
+    p.degradationPreference = "balanced";
     sender.setParameters(p).catch(() => {});
   }
 }

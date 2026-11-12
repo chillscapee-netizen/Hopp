@@ -46,6 +46,21 @@
   check("watching from outside joins their voice channel and opens it", state.view === 1 && myVoice() === 1);
   check("the screen is in the middle, everyone in a row below", !!document.querySelector(".stage-main #screen-stage") && !!document.querySelector(".voice-tiles.strip"));
   check("with its own buttons only (no second full screen)", !document.querySelector(".stage-bar"));
+  // A camera can take the middle from the screen; the screen then waits in the row, a click away.
+  mediaIn.set("cam|" + jonas.session_id, { pc: null, stream: new MediaStream(), pending: [] });
+  renderVoiceStage();
+  await wait(30);
+  document.querySelector(`.voice-tile[data-user="${jonas.session_id}"]`).click();
+  await wait(50);
+  check("a camera you click takes the middle, also while a screen plays", !!document.querySelector(".stage-main .voice-tile.focus video") && !document.querySelector(".stage-main #screen-stage") && getComputedStyle($("screen-stage")).display === "none");
+  const back = document.querySelector(".voice-tiles .screen-back");
+  check("the screen waits in the row below", !!back && back.textContent.includes("Jonas's screen") && !!watching);
+  back.click();
+  await wait(50);
+  check("a click puts the screen back in the middle", !!document.querySelector(".stage-main #screen-stage") && !document.querySelector(".screen-back"));
+  mediaIn.delete("cam|" + jonas.session_id);
+  renderVoiceStage();
+  await wait(30);
   // Closed by hand: it stays closed, offered again as a card; a click brings it back.
   $("screen-close").click();
   await wait(50);
