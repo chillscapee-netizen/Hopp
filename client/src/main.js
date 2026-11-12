@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -1684,6 +1684,7 @@ async function connectTo(server, create, reconnecting) {
   // Reset per-server state before connecting: the server sends chat history
   // while `connect` is still resolving, and it must not be wiped afterwards.
   state.speaking.clear();
+  syncAttenuation();
   state.typing.clear();
   state.appliedVolumes.clear();
   state.chats.clear();
@@ -1902,6 +1903,7 @@ listen("roster", (e) => {
     state.unreachable.clear();
     state.quality.clear();
     state.speaking.clear();
+    syncAttenuation();
     state.latency = null;
   }
   if (state.pendingView !== undefined && chatChannels().some((c) => c.id === state.pendingView)) state.view = state.pendingView;
@@ -1944,6 +1946,7 @@ listen("voice", (e) => {
   }
   if (ev.type === "speaking") {
     ev.speaking ? state.speaking.add(ev.session_id) : state.speaking.delete(ev.session_id);
+    syncAttenuation();
     // Who is talking shows in the voice channel (and on your own panel); not in the member list.
     document.querySelectorAll(`.voice-user[data-user="${ev.session_id}"], .voice-tile[data-user="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
     if (state.roster && ev.session_id === state.roster.me) renderUserPanel();
@@ -4309,6 +4312,59 @@ listen("ptt-recorded", (e) => {
   if (e.payload.cancelled) renderPttKey();
   else setPttKey(e.payload.key, e.payload.label);
 });
+// ---------- lowering other apps while people talk ----------
+// While someone else talks (in voice or a call), the backend turns every other app down to
+// the chosen share of its volume, and back when they've been quiet a moment.
+
+prefs.attenuate = load("attenuate", "0") === "1";
+prefs.attenuateLevel = Number(load("attenuateLevel", "40"));
+var attenuation = { on: false, timer: 0 };
+/** Who is talking in a call right now (calls report it on their own). */
+var callSpeaking = new Set();
+
+function renderAttenuate() {
+  $("attenuate").checked = prefs.attenuate;
+  $("attenuate-level").value = prefs.attenuateLevel;
+  $("attenuate-level-value").textContent = prefs.attenuateLevel + "%";
+  $("attenuate-level-row").hidden = !prefs.attenuate;
+}
+
+/** After every change in who's talking: lower now, or put back after a short calm. */
+function syncAttenuation() {
+  const me = state.roster?.me;
+  const inCall = state.call ? [...callSpeaking].some((id) => id !== state.call.me) : false;
+  const others = prefs.attenuate && !state.deafened && (inCall || [...state.speaking].some((id) => id !== me));
+  if (others) {
+    clearTimeout(attenuation.timer);
+    attenuation.timer = 0;
+    if (!attenuation.on) {
+      attenuation.on = true;
+      invoke("set_attenuation", { on: true, level: prefs.attenuateLevel / 100 }).catch(() => {});
+    }
+  } else if (attenuation.on && !attenuation.timer) {
+    attenuation.timer = setTimeout(() => {
+      attenuation.timer = 0;
+      attenuation.on = false;
+      invoke("set_attenuation", { on: false, level: 1 }).catch(() => {});
+    }, 700);
+  }
+}
+
+$("attenuate").addEventListener("change", (e) => {
+  prefs.attenuate = e.target.checked;
+  save("attenuate", prefs.attenuate ? "1" : "0");
+  renderAttenuate();
+  syncAttenuation();
+});
+$("attenuate-level").addEventListener("input", (e) => {
+  prefs.attenuateLevel = Number(e.target.value);
+  save("attenuateLevel", String(prefs.attenuateLevel));
+  renderAttenuate();
+  // Already lowered: to the new level at once.
+  if (attenuation.on) invoke("set_attenuation", { on: false, level: 1 }).then(() => invoke("set_attenuation", { on: true, level: prefs.attenuateLevel / 100 })).catch(() => {});
+});
+renderAttenuate();
+
 // ---------- keybinds for mute and deafen, anywhere ----------
 // A key (with Ctrl, Shift or Alt if wanted) picked here works even while a game is in front;
 // Hopp only ever looks at the keys picked. Kept on this computer (keyboards differ).
@@ -5600,6 +5656,10 @@ function applySyncedSettings(remote) {
     $("hide-ip").checked = hideIp;
     prefs.shareSound = load("shareSound", "1") === "1";
     prefs.userVolumes = loadJson("userVolumes", {});
+    prefs.attenuate = load("attenuate", "0") === "1";
+    prefs.attenuateLevel = Number(load("attenuateLevel", "40"));
+    renderAttenuate();
+    syncAttenuation();
   } finally {
     applyingSettings = false;
   }
@@ -8277,6 +8337,8 @@ async function endCall(reason) {
   const c = state.call;
   if (!c) return;
   state.call = null;
+  callSpeaking.clear();
+  syncAttenuation();
   stopAllMedia();
   clearTimeout(c.timeout);
   stopRinging();
@@ -8610,6 +8672,8 @@ setInterval(() => {
 listen("call-voice", (e) => {
   const ev = e.payload;
   if (ev.type === "speaking") {
+    ev.speaking ? callSpeaking.add(ev.session_id) : callSpeaking.delete(ev.session_id);
+    syncAttenuation();
     document.querySelectorAll(`.call-person[data-session="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
   } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
     playSound("muted");

@@ -12,6 +12,7 @@ mod account;
 mod downloads;
 mod hello;
 mod preview;
+mod attenuate;
 mod ptt;
 mod shell;
 
@@ -56,6 +57,7 @@ pub struct AppState {
     /// Shared with the voice engine and the mic test; changes apply at once, in or out of voice.
     audio: Arc<AudioSettings>,
     ptt: OnceLock<Arc<ptt::Ptt>>,
+    attenuator: OnceLock<Arc<attenuate::Attenuator>>,
     /// The audio devices, looked up ahead of time so device menus open at once.
     device_list: Mutex<Option<DeviceList>>,
     mic_test: Mutex<Option<MicTest>>,
@@ -1573,6 +1575,15 @@ fn cancel_ptt_recording(state: State<'_, AppState>) {
     }
 }
 
+/// Other apps lowered to `level` (0..1) of their volume while people talk, or put back.
+#[tauri::command]
+async fn set_attenuation(state: State<'_, AppState>, on: bool, level: f32) -> CmdResult {
+    let Some(a) = state.attenuator.get().cloned() else { return Ok(()) };
+    tauri::async_runtime::spawn_blocking(move || if on { a.lower(level) } else { a.restore() })
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The keybinds for mute and deafen that work anywhere; each fires a `keybind` event.
 #[tauri::command]
 fn set_keybinds(state: State<'_, AppState>, binds: Vec<ptt::Keybind>) {
@@ -1788,6 +1799,9 @@ fn main() {
             let state = app.state::<AppState>();
             let _ = state.identity_path.set(path);
             let _ = state.ptt.set(ptt::Ptt::start(app.handle().clone(), state.audio.clone()));
+            // Puts back other apps' volumes if a Hopp before this one left them lowered.
+            let note = data_dir(app.handle()).map(|d| d.join("lowered-apps.json"));
+            let _ = state.attenuator.set(Arc::new(attenuate::Attenuator::new(note)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1887,6 +1901,7 @@ fn main() {
             set_ptt_key,
             record_ptt_key,
             set_keybinds,
+            set_attenuation,
             record_keybind,
             cancel_ptt_recording,
             set_ptt_release_delay,
@@ -1923,8 +1938,16 @@ fn main() {
             stop_mic_test,
             set_mic_monitor,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Hopp");
+        .build(tauri::generate_context!())
+        .expect("error while running Hopp")
+        .run(|app, event| {
+            // Quitting: other apps get their own volume back.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(a) = app.state::<AppState>().attenuator.get() {
+                    a.restore();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

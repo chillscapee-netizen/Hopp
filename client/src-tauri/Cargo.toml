@@ -28,6 +28,6 @@ tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security", "Win32_System_Registry", "Win32_System_SystemInformation"] }
+windows = { version = "0.62", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp"] }
 tauri-winrt-notification = "0.8"
 windows-future = "0.3"
