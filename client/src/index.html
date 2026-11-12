@@ -51,6 +51,7 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.7 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h12"/><path d="m4.6 4.3 15.1 6.8a1 1 0 0 1 0 1.8L4.6 19.7a.8.8 0 0 1-1.1-1L6 12 3.5 5.3a.8.8 0 0 1 1.1-1Z"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M2 2l20 20"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.7 17.7 0 0 1-2.9 3.9"/><path d="M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
@@ -338,6 +339,7 @@
                   <input id="attach-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
                   <textarea id="chat-input" rows="1" maxlength="2000"></textarea>
                   <button type="button" id="emoji-btn" class="composer-icon" data-tip="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
+                  <button type="button" class="composer-icon send-btn" data-tip="Send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
                 </div>
               </div>
               <div id="typing" class="typing"></div>

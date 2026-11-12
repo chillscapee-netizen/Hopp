@@ -5946,7 +5946,7 @@ function renderDmView(keepScroll) {
       if (/^image\/(png|jpeg|webp|gif)$/.test(chosen.type)) attachDmPicture(peer, chosen);
       else offerFile(peer, chosen);
     });
-    row.append(attach, file, input, emoji);
+    row.append(attach, file, input, emoji, sendButton());
     const tray = el("div", "attach-tray");
     tray.id = "dm-attach-tray";
     tray.hidden = true;
@@ -6748,8 +6748,8 @@ function reactionRow(m) {
     const face = el("span", "reaction-emoji");
     face.append(emojiNode(r.emoji));
     chip.append(face, el("span", "reaction-count", String(r.keys.length)));
-    const names = r.keys.slice(0, 6).map(nameForKey);
-    chip.dataset.tip = names.join(", ") + (r.keys.length > 6 ? ` and ${r.keys.length - 6} more` : "") + ` reacted with ${r.emoji}`;
+    chip.dataset.tip = reactedWords(r);
+    chip.reaction = r;
     chip.addEventListener("click", () => react(m, r.emoji, !mine));
     row.append(chip);
   }
@@ -6761,6 +6761,68 @@ function reactionRow(m) {
   row.append(add);
   return row;
 }
+
+/** The send arrow at the end of a message box: does what Enter does there. */
+function sendButton() {
+  const b = el("button", "composer-icon send-btn");
+  b.type = "button";
+  b.dataset.tip = "Send";
+  b.setAttribute("aria-label", "Send");
+  b.append(icon("send"));
+  return b;
+}
+document.addEventListener("mousedown", (e) => e.target.closest?.(".send-btn") && e.preventDefault());
+document.addEventListener("click", (e) => {
+  const input = e.target.closest?.(".send-btn")?.parentElement.querySelector("textarea");
+  if (!input) return;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  input.focus();
+});
+
+/** "Elin, Sam and 3 others reacted with :gg:" (a plain emoji is said as itself). */
+function reactedWords(r) {
+  const names = r.keys.slice(0, 3).map((k) => (k === state.account?.publicKey ? "You" : nameForKey(k)));
+  const more = r.keys.length - names.length;
+  const who = more > 0 ? names.join(", ") + ` and ${more} ${more === 1 ? "other" : "others"}` : names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names.at(-1) : names[0];
+  return `${who} reacted with ${emojiWords(r.emoji)}`;
+}
+
+// Hovering a reaction shows which emoji it is, big, and who reacted: the one hover card in
+// Hopp (a small custom emoji is hard to make out at chip size).
+var reactionPeek = { timer: 0, chip: null };
+function hideReactionPeek() {
+  clearTimeout(reactionPeek.timer);
+  reactionPeek.chip = null;
+  $("reaction-peek")?.remove();
+}
+document.addEventListener("mouseover", (e) => {
+  const chip = e.target.closest?.(".reaction:not(.add)");
+  if (chip === reactionPeek.chip) return;
+  hideReactionPeek();
+  if (!chip?.reaction) return;
+  reactionPeek.chip = chip;
+  reactionPeek.timer = setTimeout(() => {
+    if (!chip.isConnected) return;
+    const r = chip.reaction;
+    const card = el("div", "reaction-peek");
+    card.id = "reaction-peek";
+    const big = el("div", "reaction-peek-emoji");
+    big.append(emojiNode(r.emoji, "custom-emoji"));
+    const words = el("div", "reaction-peek-text");
+    const custom = r.emoji.match(CUSTOM_EMOJI);
+    if (custom) words.append(el("div", "reaction-peek-name", ":" + custom[1] + ":"));
+    words.append(el("div", "reaction-peek-who", reactedWords(r).replace(/ reacted with .*$/, " reacted")));
+    card.append(big, words);
+    document.body.append(card);
+    const at = chip.getBoundingClientRect();
+    const w = card.offsetWidth,
+      h = card.offsetHeight;
+    card.style.left = Math.max(8, Math.min(innerWidth - w - 8, at.left + at.width / 2 - w / 2)) + "px";
+    card.style.top = (at.top - h - 8 < 8 ? at.bottom + 8 : at.top - h - 8) + "px";
+  }, 250);
+});
+document.addEventListener("wheel", hideReactionPeek, { capture: true, passive: true });
+document.addEventListener("mousedown", hideReactionPeek, true);
 
 function react(m, emoji, on) {
   rememberEmoji(emoji);

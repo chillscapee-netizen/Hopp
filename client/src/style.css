@@ -3782,3 +3782,30 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .emoji-admin { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 10px; border-radius: 10px; background: var(--layer); }
 .emoji-admin img { width: 28px; height: 28px; object-fit: contain; flex: none; }
 .emoji-admin span { flex: 1; color: var(--text-2); }
+
+/* Hovering a reaction: which emoji it is, big, and who reacted. */
+.reaction-peek {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 260px;
+  padding: 8px 12px 8px 8px;
+  background: var(--side-2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+  animation: pop 110ms ease-out;
+}
+.reaction-peek-emoji { flex: none; font-size: 36px; line-height: 1; }
+.reaction-peek-emoji .custom-emoji { width: 44px; height: 44px; margin: 0; vertical-align: middle; }
+.reaction-peek-emoji .custom-emoji-name { font-size: 13px; }
+.reaction-peek-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.reaction-peek-who { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+
+/* The send arrow: quiet until there's something to send. */
+.send-btn { margin-left: -6px; }
+.send-btn .i { width: 20px; height: 20px; }
+.composer-box:has(textarea:not(:placeholder-shown)) .send-btn,
+.composer-box:has(.attach-tray:not([hidden])) .send-btn { color: var(--text); }

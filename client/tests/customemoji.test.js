@@ -14,6 +14,10 @@
   chatInput.value = "gg :hopp_party: and :pog: but not :nothing: or `:pog:`";
   chatInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await wait(50);
+  chatInput.value = "by the arrow";
+  document.querySelector("#composer .send-btn").click();
+  await wait(50);
+  check("the send arrow sends", sent[1] === "by the arrow" && chatInput.value === "", JSON.stringify(sent));
   check("typed names become emojis (code stays as it is)", sent[0] === "gg <:hopp_party:0> and <:pog:7> but not :nothing: or `:pog:`", sent[0]);
 
   // Shown as pictures.
@@ -41,6 +45,14 @@
   emit("reactions", { channel: 0, id: 9701, reactions: [{ emoji: "<:pog:7>", keys: [ME] }] });
   await wait(60);
   check("the reaction shows its picture", !!document.querySelector('.msg[data-id="9701"] .reaction .custom-emoji'));
+  // Hovering it shows the emoji big, its name and who reacted.
+  const chipEl = document.querySelector('.msg[data-id="9701"] .reaction:not(.add)');
+  chipEl.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await wait(350);
+  const peek = $("reaction-peek");
+  check("hovering a reaction shows which emoji it is", !!peek?.querySelector(".custom-emoji") && peek.textContent.includes(":pog:") && peek.textContent.includes("You reacted"), String(peek?.textContent) + "/ connected: " + chipEl.isConnected + " / " + !!document.querySelector('.msg[data-id="9701"] .reaction:not(.add)').reaction);
+  document.body.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  check("and it goes away again", !$("reaction-peek"));
 
   // The status picker keeps to plain emojis (a status shows where a server's don't).
   openEmojiPicker(document.body, () => {}, null, { plain: true });
