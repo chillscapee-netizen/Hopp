@@ -351,13 +351,21 @@ fn run_echo(socket: std::net::UdpSocket, dual: bool, mesh: Arc<Mesh>, me: Sessio
     };
     while !stop.load(Ordering::Relaxed) {
         // What arrived over the road: in by the time it's due (now, when nothing is pretended).
+        // Wait for the first packet (or a moment), then take whatever else is already there
+        // without waiting again: waiting between packets delayed every answer by several ms.
+        let mut first = true;
         while let Ok((len, from)) = socket.recv_from(&mut buf) {
+            if first {
+                first = false;
+                let _ = socket.set_nonblocking(true);
+            }
             let road = road();
             match arrival(road, Instant::now(), &mut lane_in) {
                 Some(at) => on_road(&mut inbound, at, from, buf[..len].to_vec()),
                 None => continue,
             }
         }
+        let _ = socket.set_nonblocking(false);
         let now = Instant::now();
         let mut arrived = Vec::new();
         while inbound.front().is_some_and(|(at, _, _)| *at <= now) {
