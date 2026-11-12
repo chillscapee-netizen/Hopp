@@ -53,6 +53,9 @@ const STUN_REFRESH: Duration = Duration::from_secs(30);
 /// How often the encoder looks at the loss reports and adjusts.
 const ADAPT_EVERY: Duration = Duration::from_secs(1);
 
+/// Lighter voice settings wait for loss to stay low this long (heavier ones come at once).
+const POLICY_CALM: Duration = Duration::from_secs(10);
+
 /// How to send voice when this much of it (percent) gets lost on the way: Opus's own error
 /// correction tuned to the loss, a lower bitrate when the network struggles (loss is usually
 /// congestion), and the last frames repeated in each packet once it's bad, so even a burst
@@ -1025,6 +1028,10 @@ impl Encoder {
         let mut relay_asked: Option<Instant> = None;
         let mut roaming = Roaming::new(self.net.dual);
         let mut policy = voice_policy(0);
+        // Since when loss has been low enough for a lighter setting: more protection comes at
+        // once, less only after a calm while, so voice doesn't switch back and forth every
+        // few seconds on a network that loses the odd packet.
+        let mut calmer_since: Option<Instant> = None;
         let mut adapted = Instant::now();
         // How each connection is doing goes in the log every so often (round trip, loss and
         // which way), so a bad call can be looked into afterwards ("Copy debug info").
@@ -1055,8 +1062,18 @@ impl Encoder {
                         let _ = self.events.send(EngineEvent::PeerQuality { session_id, rtt_ms, loss, relayed });
                     }
                     let loss = m.worst_loss();
-                    let next = voice_policy(loss);
+                    let mut next = voice_policy(loss);
+                    let lighter = next.0 > policy.0 || next.2 < policy.2;
+                    if lighter {
+                        let since = *calmer_since.get_or_insert_with(Instant::now);
+                        if since.elapsed() < POLICY_CALM {
+                            next = policy;
+                        }
+                    } else {
+                        calmer_since = None;
+                    }
                     if next != policy {
+                        calmer_since = None;
                         tracing::info!("{loss}% of our voice is lost on the way; sending at {} kbit/s, error correction for {}%, {} frame(s) repeated", next.0 / 1000, next.1, next.2);
                         policy = next;
                         encoder.set_bitrate(opus::Bitrate::Bits(policy.0))?;
