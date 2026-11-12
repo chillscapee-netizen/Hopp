@@ -1,3 +1,18 @@
+; A modern look: Windows' own font of today instead of the old default, the logo on the right
+; of the header, and room for the sharper artwork (drawn at twice the size, so it stays crisp
+; on high-resolution screens).
+SetFont "Segoe UI" 9
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_BGCOLOR "FFFFFF"
+
+; The terms: read, and accepted with a tick (Next stays off until then).
+!define MUI_LICENSEPAGE_CHECKBOX
+!define MUI_LICENSEPAGE_CHECKBOX_TEXT "I accept the terms of use"
+!define MUI_LICENSEPAGE_TEXT_TOP "They're short. Scroll to read them all."
+
+; Where Hopp goes: yours to choose.
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Hopp will be installed in the folder below. To pick another one, click Browse. Hopp installs just for you, so no administrator rights are needed."
+
 ; Hopp's own words on the installer's first and last pages.
 !define MUI_WELCOMEPAGE_TITLE "Welcome to Hopp"
 !define MUI_WELCOMEPAGE_TEXT "Hopp is voice and chat for you and your friends: clear voice, servers with text and voice channels, and private messages only you and your friends can read.$\r$\n$\r$\nThis installs Hopp just for you, in a few seconds, with no administrator rights needed. Hopp keeps itself up to date.$\r$\n$\r$\nAfterwards you create your Hopp ID: just a username and a password. No email or phone number.$\r$\n$\r$\nClick Next to continue."
