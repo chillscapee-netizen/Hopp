@@ -3887,3 +3887,28 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .voice-msg-bar { position: relative; flex: 1; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 16%, transparent); cursor: pointer; }
 .voice-msg-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: var(--text); }
 .voice-msg-time { flex: none; min-width: 34px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ---------- thin lines where panels meet ---------- */
+/* One hairline between the conversation and the panel beside it (Around, members), and
+   between the update arrow and the window buttons. */
+.active-now, .members { border-left: 1px solid color-mix(in srgb, var(--text) 8%, transparent) !important; }
+.update-btn { right: 158px; }
+.update-btn:not([hidden])::after { content: ""; position: absolute; right: -11px; top: 50%; width: 1px; height: 16px; transform: translateY(-50%); background: color-mix(in srgb, var(--text) 16%, transparent); pointer-events: none; }
+
+/* Around: who's online, those in voice first. */
+.active-now { gap: 2px; padding: 20px 14px; }
+.around-head { display: flex; align-items: center; gap: 8px; margin: 0 6px 10px; }
+.around-head h3 { margin: 0; font-size: 16px; font-weight: 700; }
+.around-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--muted); font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; box-sizing: border-box; }
+.around-label { margin: 12px 6px 4px; color: var(--faint); font-size: 12px; font-weight: 600; }
+.around-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px; border-radius: 10px; cursor: pointer; }
+.around-row:hover, .around-row:focus-visible { background: var(--hover); outline: none; }
+.around-text { display: grid; flex: 1; min-width: 0; gap: 1px; }
+.around-text strong { font-size: 14px; font-weight: 600; color: var(--text); }
+.around-sub { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--faint); font-size: 12.5px; }
+.around-row.talking .around-sub { color: var(--green); }
+.around-sub .i { flex: none; width: 12px; height: 12px; }
+.around-join { flex: none; padding: 4px 12px; }
+.around-here { flex: none; color: var(--green); font-size: 12px; font-weight: 600; }
+.around-empty { margin: 4px 6px; }
+.around-empty p { margin: 0 0 8px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }

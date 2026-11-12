@@ -9337,62 +9337,61 @@ function gettingStarted() {
 
 /** Who is around: friends in voice first, then everyone online. */
 function activeNowPanel() {
+  // Who's around: friends in voice first (where, and a way in), then everyone else online.
+  // Rows, not cards, so a long list stays calm.
   const aside = el("aside", "active-now");
-  aside.append(el("h3", "", "Active now"));
   const online = [...(state.friends?.values() ?? [])].filter((f) => f.state === "friend" && f.status !== "offline");
   const busy = online.filter((f) => f.activity);
-  const rest = online.filter((f) => !f.activity);
+  const rest = online.filter((f) => !f.activity).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const head = el("div", "around-head");
+  head.append(el("h3", "", "Around"));
+  if (online.length) head.append(el("span", "around-count", String(online.length)));
+  aside.append(head);
   if (!online.length) {
-    const empty = el("div", "active-empty");
-    empty.append(el("strong", "", "It's quiet for now…"), el("p", "", "When friends are online or hop into voice, you'll see them here."));
+    const empty = el("div", "around-empty");
+    empty.append(el("p", "", "Nobody's around right now. Friends who come online show up here, and where they're talking."));
     aside.append(empty);
     return aside;
   }
-  for (const f of busy) {
-    // The whole card opens your conversation with them, like their row anywhere else.
-    const card = el("div", "active-card");
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
-    card.addEventListener("click", () => openDm(f.key));
-    card.addEventListener("keydown", (e) => e.key === "Enter" && openDm(f.key));
-    const top = el("div", "active-top");
-    const text = el("div", "active-text");
+  const row = (f, sub) => {
+    const r = el("div", "around-row");
+    r.tabIndex = 0;
+    r.setAttribute("role", "button");
+    r.addEventListener("click", () => openDm(f.key));
+    r.addEventListener("keydown", (e) => e.key === "Enter" && openDm(f.key));
+    const text = el("div", "around-text");
     text.append(el("strong", "ellipsis", f.display_name));
-    const what = el("span", "active-what ellipsis");
-    what.append(icon("headphones", "xs"), el("span", "ellipsis", f.activity));
-    text.append(what);
-    top.append(personAvatar(f, "s40", true), text);
-    card.append(top);
-    const where = friendVoice(f);
-    if (where?.server) {
-      // Where they are, in a server you're in too: there, and one click to join them.
-      const place = el("div", "active-place");
-      place.append(serverIcon("active-server server-tint", where.server.label, where.server.icon), el("span", "ellipsis", (where.channelName ? where.channelName + " · " : "") + where.server.label));
-      const here = activeServer()?.id === where.server.id && myVoice() === where.channel;
-      if (here) place.append(el("span", "active-here", "You're here"));
-      else {
-        const join = el("button", "btn sm primary", "Join");
-        join.type = "button";
-        join.addEventListener("click", (e) => {
-          e.stopPropagation();
-          joinFriendVoice(where);
-        });
-        place.append(join);
+    if (sub) text.append(sub);
+    r.append(personAvatar(f, "s32", true), text);
+    return r;
+  };
+  if (busy.length) {
+    aside.append(el("div", "around-label", "In voice"));
+    for (const f of busy) {
+      const where = friendVoice(f);
+      const sub = el("span", "around-sub ellipsis");
+      sub.append(icon("volume", "xs"), el("span", "ellipsis", where?.server ? (where.channelName ? where.channelName + " · " : "") + where.server.label : f.activity));
+      const r = row(f, sub);
+      r.classList.add("talking");
+      if (where?.server) {
+        const here = activeServer()?.id === where.server.id && myVoice() === where.channel;
+        if (here) r.append(el("span", "around-here", "With you"));
+        else {
+          const join = el("button", "btn sm around-join", "Join");
+          join.type = "button";
+          join.addEventListener("click", (e) => {
+            e.stopPropagation();
+            joinFriendVoice(where);
+          });
+          r.append(join);
+        }
       }
-      card.append(place);
+      aside.append(r);
     }
-    aside.append(card);
   }
   if (rest.length) {
-    aside.append(el("div", "active-label", `Online — ${rest.length}`));
-    for (const f of rest.sort((a, b) => a.display_name.localeCompare(b.display_name))) {
-      const row = el("button", "active-row");
-      row.type = "button";
-      row.append(personAvatar(f, "s24", true), el("span", "ellipsis", f.display_name));
-      if (f.status === "idle" || f.status === "dnd") row.append(el("span", "active-status", STATUS_LABEL[f.status]));
-      row.addEventListener("click", () => openDm(f.key));
-      aside.append(row);
-    }
+    aside.append(el("div", "around-label", "Online"));
+    for (const f of rest) aside.append(row(f, f.status === "idle" || f.status === "dnd" ? el("span", "around-sub ellipsis", STATUS_LABEL[f.status]) : null));
   }
   return aside;
 }
