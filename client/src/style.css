@@ -3960,3 +3960,7 @@ ul.msg-list { list-style: disc; }
 .name-font.active { background: color-mix(in srgb, var(--link) 22%, transparent); }
 .name-font-sample { max-width: 130px; overflow: hidden; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .name-font-label { color: var(--faint); font-size: 11px; }
+
+/* Tight spots (your panel, small rows): the big fonts a little smaller so the name fits. */
+.me-name[data-name-font="graffiti"], .me-name[data-name-font="hand"] { font-size: 1.25em; }
+.me-name[data-name-font="block"] { font-size: 0.8em; }

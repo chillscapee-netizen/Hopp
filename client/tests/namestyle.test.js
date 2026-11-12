@@ -16,7 +16,7 @@
   const author = document.querySelector('.msg[data-id="9995"] .msg-author');
   check("her font shows in chat", author.style.fontFamily.includes("Sedgwick") && author.dataset.nameFont === "graffiti");
   check("and her fade", author.classList.contains("name-fade") && author.style.backgroundImage.includes("linear-gradient"));
-  check("pickedNameColor still gives the first colour", pickedNameColor(KEYS.elin) === "#8ab4f8");
+  check("the first colour is kept apart", parseNameStyle(rawNameStyle(KEYS.elin)).c1 === "#8ab4f8");
 
   // Your own, in Profile.
   const sent = [];

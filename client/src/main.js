@@ -2121,7 +2121,7 @@ function offlineRows(onlineKeys) {
     row.dataset.key = m.public_key;
     row.append(avatar(m.name, "", "offline", pictureFor(m.public_key)));
     const line = el("span", "name-line");
-    line.append(el("span", "member-name ellipsis", m.name));
+    line.append(styleName(el("span", "member-name ellipsis", m.name), m.public_key, m.name, false));
     row.append(line);
     // Their profile opens like anyone's; they just aren't here to be moved or muted.
     const person = { session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: true };
@@ -2535,9 +2535,7 @@ function userRow(u, className, size, sub) {
   // The member list is just who is here: avatar with a status dot, name, crown.
   row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
-  const nameEl = el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name);
-  const tint = roleColor(u);
-  if (tint) nameEl.style.color = tint;
+  const nameEl = styleName(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name), keyOf(u), u.name, false);
   nameLine.append(nameEl);
   const role = roleOf(u);
   if (role) {
@@ -2654,6 +2652,7 @@ function renderUserPanel() {
   const live = away ? !!state.awaySpeaking : on && state.speaking.has(state.roster.me);
   card.classList.toggle("speaking", live);
   $("me-name").textContent = name;
+  styleName($("me-name"), state.me?.key ?? state.account?.publicKey, name, false);
 
   const status = $("me-status");
   const sending = live && !state.muted && !state.deafened;
@@ -4874,6 +4873,7 @@ function openUserCard(user, anchor) {
   }
   $("user-card-avatar-slot").replaceChildren(avatar(user.name, "s80", undefined, pictureFor(keyOf(user))));
   $("user-card-name").textContent = user.name;
+  styleName($("user-card-name"), keyOf(user), user.name, false);
   const sub = $("user-card-sub");
   if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
   else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
@@ -5362,7 +5362,7 @@ function friendRow(f) {
   const li = el("li", "friend-row");
   const text = el("div", "friend-text");
   const top = el("div", "friend-top");
-  top.append(el("strong", "ellipsis", f.display_name));
+  top.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
   if (f.username) top.append(el("span", "friend-username ellipsis", `@${f.username}`));
   const sub =
     f.state === "incoming" ? "Wants to be friends"
@@ -6117,7 +6117,7 @@ function dmSidebarRows() {
       b.classList.toggle("unread", conv.last_at > conv.last_read && !muted);
       b.classList.toggle("muted", muted);
       const text = el("span", "row-text");
-      text.append(el("span", "row-title ellipsis", p.display_name));
+      text.append(p.group ? el("span", "row-title ellipsis", p.display_name) : styleName(el("span", "row-title ellipsis", p.display_name), p.key, p.display_name, false));
       if (p.group) text.append(el("span", "row-sub ellipsis", `${state.groups.get(peer).members.length} members`));
       else if (p.status !== "offline" && customStatusOf(p.key)) text.append(el("span", "row-sub ellipsis", statusLine(customStatusOf(p.key))));
       else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", whereText(p)));
@@ -8551,7 +8551,7 @@ function renderCallStage(c) {
     tile.dataset.key = "cam|" + p.id;
     if (cam) tile.append(videoEl("cam|" + p.id, cam, p.id === "me"));
     else tile.append(avatar(p.name ?? "?", "s64", undefined, p.avatar));
-    tile.append(el("span", "voice-tile-name ellipsis", p.id === "me" ? p.name + " (you)" : p.name));
+    tile.append(styleName(el("span", "voice-tile-name ellipsis", p.id === "me" ? p.name + " (you)" : p.name), p.id === "me" ? state.me?.key : p.id, p.name, false));
     if (cam) tile.addEventListener("click", () => setCallFocus("cam|" + p.id));
     tiles.push(tile);
     const screen = mediaStream("screen", p.id);
@@ -9566,7 +9566,7 @@ function activeNowPanel() {
     r.addEventListener("click", () => openDm(f.key));
     r.addEventListener("keydown", (e) => e.key === "Enter" && openDm(f.key));
     const text = el("div", "around-text");
-    text.append(el("strong", "ellipsis", f.display_name));
+    text.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
     if (sub) text.append(sub);
     r.append(personAvatar(f, "s32", true), text);
     return r;
@@ -10172,7 +10172,7 @@ function renderInviteFriends() {
       const li = el("li", "invite-friend");
       const who = el("span", "invite-friend-who");
       const names = el("span", "invite-friend-names");
-      names.append(el("strong", "ellipsis", f.display_name));
+      names.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
       if (f.username) names.append(el("span", "ellipsis", f.username));
       who.append(personAvatar(f, "s40", true), names);
       const btn = el("button", "btn sm");
@@ -12656,7 +12656,7 @@ function renderVoiceStage() {
     if (u.muted || u.server_muted) marks.append(icon("mic-off", "xs"));
     if (u.deafened || u.server_deafened) marks.append(icon("headphones-off", "xs"));
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
-    tile.append(el("span", "voice-tile-name ellipsis", u.name), marks);
+    tile.append(styleName(el("span", "voice-tile-name ellipsis", u.name), keyOf(u), u.name, false), marks);
     tile.addEventListener("click", (e) => {
       if (e.target.closest(".live-pill")) return watchScreen(u.session_id, true);
       // A camera: in the middle, big (click it again for everyone).
@@ -13452,10 +13452,6 @@ function rawNameStyle(key) {
   if (friend) return friend.state === "blocked" ? null : friend.name_color ?? null;
   return profiles.get(key)?.name_color ?? null;
 }
-/** The (first) colour someone picked for their name, if any. */
-function pickedNameColor(key) {
-  return parseNameStyle(rawNameStyle(key)).c1;
-}
 /**
  * Writes a name the way its owner styled it: their font, and their colour or fade (a server's
  * role colour still comes first in that server). `fallback` false: no made-up colour.
@@ -13463,7 +13459,7 @@ function pickedNameColor(key) {
 function styleName(node, key, name, fallback = true) {
   const s = parseNameStyle(rawNameStyle(key));
   const role = roleColorByKey(key);
-  node.style.color = fallback ? nameColor(key, name) : s.c1 ? readableColor(s.c1) : "";
+  node.style.color = role ?? (s.c1 ? readableColor(s.c1) : fallback ? "hsl(" + hue(name) + " var(--name-s) var(--name-l))" : "");
   node.style.fontFamily = s.font ? NAME_FONTS[s.font][1] + ", Inter, sans-serif" : "";
   if (s.font) node.dataset.nameFont = s.font;
   else delete node.dataset.nameFont;
@@ -13481,14 +13477,6 @@ function readableColor(hex) {
   return "hsl(" + h.toFixed(0) + " " + Math.min(sat, 90).toFixed(0) + "% " + lightness.toFixed(0) + "%)";
 }
 
-/**
- * How a name is written in chat: the server's role colour first (the server decides), then
- * the colour the person picked, then a soft one from the name.
- */
-function nameColor(key, name) {
-  const picked = pickedNameColor(key);
-  return roleColorByKey(key) ?? (picked ? readableColor(picked) : "hsl(" + hue(name) + " var(--name-s) var(--name-l))");
-}
 
 /** "Roles" in someone's menu, for admins: tick to give, untick to take. */
 function roleItems(u) {
