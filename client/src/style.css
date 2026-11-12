@@ -3933,3 +3933,17 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 
 /* Keybinds for mute and deafen: the same width, Clear or not. */
 .bind-box { width: 190px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Formatting in messages: headings, small print, lists, underline, links with their own words. */
+.msg-h { color: var(--text); font-weight: 700; line-height: 1.3; margin: 6px 0 2px; white-space: normal; }
+.msg-h1 { font-size: 1.5em; }
+.msg-h2 { font-size: 1.25em; }
+.msg-h3 { font-size: 1.08em; }
+.msg-h:first-child { margin-top: 0; }
+.msg-subtext { color: var(--faint); font-size: 0.82em; line-height: 1.35; }
+.msg-list { margin: 2px 0; padding-left: 22px; white-space: normal; }
+.msg-list li { margin: 1px 0; white-space: pre-wrap; }
+.msg-list li::marker { color: var(--faint); }
+.msg-text u { text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.msg-masked .msg-link-host { margin-left: 4px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--faint); font-size: 0.78em; vertical-align: 1px; }
+ul.msg-list { list-style: disc; }

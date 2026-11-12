@@ -2813,7 +2813,14 @@ function messageText(text) {
   return out;
 }
 
-/** Lines starting with "> " become a quote; the rest is inline text. */
+/**
+ * Whole lines with a meaning of their own: "# ", "## ", "### " headings, "-# " small print,
+ * "- " or "* " bullet lists, "1. " numbered lists and "> " quotes. The rest is inline text.
+ */
+var HEADING = /^(#{1,3}) (\S.*)$/;
+var SUBTEXT = /^-# (\S.*)$/;
+var BULLET = /^ {0,3}[-*] (\S.*)$/;
+var NUMBERED = /^ {0,3}(\d{1,3})\. (\S.*)$/;
 function renderBlocks(text, out) {
   const lines = text.split("\n");
   let plain = [];
@@ -2821,8 +2828,41 @@ function renderBlocks(text, out) {
     if (plain.length) renderInline(plain.join("\n"), out);
     plain = [];
   };
+  const list = (re, tag, i) => {
+    const node = el(tag, "msg-list");
+    const first = lines[i].match(re);
+    if (tag === "ol" && first[1] !== "1") node.start = Number(first[1]);
+    while (i < lines.length && re.test(lines[i])) {
+      const li = el("li");
+      renderInline(lines[i].match(re).at(-1), li);
+      node.append(li);
+      i++;
+    }
+    out.append(node);
+    return i;
+  };
   for (let i = 0; i < lines.length; ) {
-    if (/^>( |$)/.test(lines[i])) {
+    const heading = lines[i].match(HEADING);
+    const sub = lines[i].match(SUBTEXT);
+    if (heading) {
+      flush();
+      const h = el("div", "msg-h msg-h" + heading[1].length);
+      renderInline(heading[2], h);
+      out.append(h);
+      i++;
+    } else if (sub) {
+      flush();
+      const small = el("div", "msg-subtext");
+      renderInline(sub[1], small);
+      out.append(small);
+      i++;
+    } else if (BULLET.test(lines[i])) {
+      flush();
+      i = list(BULLET, "ul", i);
+    } else if (NUMBERED.test(lines[i])) {
+      flush();
+      i = list(NUMBERED, "ol", i);
+    } else if (/^>( |$)/.test(lines[i])) {
       flush();
       const quote = [];
       while (i < lines.length && /^>( |$)/.test(lines[i])) quote.push(lines[i++].replace(/^> ?/, ""));
@@ -2843,10 +2883,13 @@ var INLINE_RULES = [
   ["mention", /<@([0-9a-f]{64})>/],
   ["role", /<@&(\d+)>/],
   ["crowd", /(?<![\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/u],
+  // [text](https://…): the text, with where it really goes always shown beside it.
+  ["masked", /\[([^\]\n]{1,100})\]\((https?:\/\/[^\s)]{1,500})\)/],
   ["link", LINK_ONE],
   ["spoiler", /\|\|([\s\S]+?)\|\|/],
   ["bold", /\*\*([\s\S]+?)\*\*/],
   ["strike", /~~([\s\S]+?)~~/],
+  ["underline", /__([\s\S]+?)__/],
   ["italic", /\*([^*\s](?:[^*]*[^*\s])?)\*|(?<![\p{L}\p{N}])_([^_\s](?:[^_]*[^_\s])?)_(?![\p{L}\p{N}])/u],
 ];
 
@@ -2870,8 +2913,9 @@ function renderInline(text, out) {
     else if (kind === "role") out.append(roleMentionNode(Number(inner)));
     else if (kind === "crowd") out.append(pingsOn() && !state.atHome ? el("span", "mention" + (crowdQuiet(currentServer()?.address) ? "" : " me"), m[0]) : m[0]);
     else if (kind === "link") out.append(linkNode(m[0]));
+    else if (kind === "masked") out.append(maskedLink(m[1], m[2]));
     else {
-      const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : "span", kind === "spoiler" ? "spoiler" : "");
+      const node = el(kind === "bold" ? "strong" : kind === "italic" ? "em" : kind === "strike" ? "s" : kind === "underline" ? "u" : "span", kind === "spoiler" ? "spoiler" : "");
       if (kind === "spoiler") {
         node.setAttribute("aria-label", "Spoiler: click to show");
         node.addEventListener("click", () => node.classList.add("shown"));
@@ -2881,6 +2925,26 @@ function renderInline(text, out) {
     }
     text = text.slice(m.index + m[0].length);
   }
+}
+
+/** A link with its own words, and the site it really opens beside them (so it can't pretend). */
+function maskedLink(words, href) {
+  let host = "";
+  try {
+    host = new URL(href).hostname.replace(/^www\./, "");
+  } catch {
+    return document.createTextNode(`[${words}](${href})`);
+  }
+  const wrap = el("span", "msg-masked");
+  const a = el("a", "msg-link");
+  renderInline(words, a);
+  a.href = href;
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    openExternal(href);
+  });
+  wrap.append(a, el("span", "msg-link-host", host));
+  return wrap;
 }
 
 function linkNode(href) {
@@ -6411,7 +6475,9 @@ function previewText(text) {
     .replace(/\|\|[\s\S]+?\|\|/g, "(spoiler)")
     .replace(/```[a-z0-9+#-]*\n?/gi, "")
     .replace(/^> ?/gm, "")
-    .replace(/\*\*|~~|`|\*|\b_|_\b/g, "")
+    .replace(/^(?:#{1,3}|-#) /gm, "")
+    .replace(/\[([^\]\n]{1,100})\]\((https?:\/\/[^\s)]{1,500})\)/g, "$1")
+    .replace(/\*\*|~~|__|`|\*|\b_|_\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
