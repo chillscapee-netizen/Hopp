@@ -327,6 +327,9 @@ struct Link {
     /// While voice goes through the relay: when the direct addresses were last tried again.
     last_direct_try: Option<Instant>,
     rtt_ms: Option<u32>,
+    /// The path's best round trip lately (creeping up a millisecond an answer): what another
+    /// way must beat. One quick answer on a jittery network isn't a faster way.
+    rtt_best: Option<u32>,
     /// Since when we've been without a path.
     searching_since: Instant,
     /// What we last told the app: reachable or not.
@@ -478,6 +481,7 @@ impl Mesh {
             last_ping: None,
             last_direct_try: None,
             rtt_ms: None,
+            rtt_best: None,
             searching_since: Instant::now(),
             reported: None,
             reprobe_until: None,
@@ -724,11 +728,12 @@ impl Mesh {
         let on_path = link.path == Some(from) && link.relayed == relayed;
         if !on_path && !relayed && !link.relayed && link.path.is_some() {
             // Another direct address of theirs, timed: voice moves only if it's clearly faster.
-            if !link.rtt_ms.is_some_and(|now| ms + FASTER_BY_MS < now) {
+            if !link.rtt_best.or(link.rtt_ms).is_some_and(|best| ms + FASTER_BY_MS < best) {
                 return None;
             }
             tracing::info!("voice path to peer {id} via {from} (faster: {ms} ms)");
             link.path = Some(from);
+            link.rtt_best = None;
             let now = Instant::now();
             link.last_heard = Some(now);
             link.last_direct = Some(now);
@@ -737,7 +742,7 @@ impl Mesh {
             if !(link.relayed && !relayed && link.path.is_some()) {
                 return None;
             }
-            if link.rtt_ms.is_some_and(|now| ms > now + DIRECT_SLACK_MS) {
+            if link.rtt_best.or(link.rtt_ms).is_some_and(|best| ms > best + DIRECT_SLACK_MS) {
                 tracing::info!("the direct path to peer {id} is slower ({ms} ms) than the relay; staying");
                 return None;
             }
@@ -745,10 +750,12 @@ impl Mesh {
             let now = Instant::now();
             link.path = Some(from);
             link.relayed = false;
+            link.rtt_best = None;
             link.last_heard = Some(now);
             link.last_direct = Some(now);
         }
         link.rtt_ms = Some(ms);
+        link.rtt_best = Some(link.rtt_best.map_or(ms, |best| ms.min(best + 1)));
         links.values().filter(|l| l.path.is_some()).filter_map(|l| l.rtt_ms).max()
     }
 }
@@ -900,6 +907,11 @@ pub(crate) mod tests {
         assert_eq!(mesh.paths(), vec![(v4, false, false)]);
         // Their IPv6 answers, about as fast: still no move.
         assert_eq!(mesh.pong_heard(2, v6, false, 55), None);
+        // A jittery path: one slow answer doesn't make a merely-as-fast address look faster.
+        mesh.pong_heard(2, v4, false, 95);
+        mesh.pong_heard(2, v4, false, 70);
+        assert_eq!(mesh.pong_heard(2, v6, false, 55), None, "55 isn't clearly faster than the 60 it can do");
+        assert_eq!(mesh.paths(), vec![(v4, false, false)]);
         assert_eq!(mesh.paths(), vec![(v4, false, false)]);
         // Clearly faster: voice moves there, and the number follows.
         assert_eq!(mesh.pong_heard(2, v6, false, 40), Some(40));
