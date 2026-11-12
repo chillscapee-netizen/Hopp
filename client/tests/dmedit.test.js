@@ -10,7 +10,7 @@
   await wait(300);
   const mine = () => [...document.querySelectorAll(".dm-messages .msg")].filter((li) => li.textContent.includes("see you at") || li.textContent.includes("see you at 9")).pop();
   check("own message has edit and delete", !!mine()?.querySelector(".msg-actions [data-tip='Edit']") && !!mine()?.querySelector(".msg-actions [data-tip='Delete message']"));
-  check("only your own messages have actions", document.querySelectorAll(".dm-messages .msg-actions").length === state.dmMessages.get(KEYS.elin).filter((m) => m.from_key === ME && !m.pending).length);
+  check("only your own messages can be edited or deleted", [...document.querySelectorAll(".dm-messages .msg-actions [data-tip='Delete message']")].length === state.dmMessages.get(KEYS.elin).filter((m) => m.from_key === ME && !m.pending).length);
 
   // Up in the empty box edits the last message.
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));

@@ -3008,6 +3008,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       li.append(avatar(m.sender_name, "s40", undefined, pictureFor(m.author_key)), head);
     }
     if (state.editing?.id === m.id) li.append(messageEditor(m));
+    else if (forwardParts(m.text)) li.append(forwardView(forwardParts(m.text)));
     else if (PICTURE.test(m.text)) {
       const [, id, w, h] = m.text.match(PICTURE);
       const caption = m.text.slice(m.text.match(PICTURE)[0].length).trim();
@@ -6089,6 +6090,8 @@ function renderDmView(keepScroll) {
     }
     if (state.dmEditing === m.id) {
       li.append(dmEditor(peer, m));
+    } else if (m.text !== null && forwardParts(m.text)) {
+      li.append(forwardView(forwardParts(m.text)));
     } else if (m.text !== null && FILE_OFFER.test(m.text)) {
       li.append(fileCard(peer, m));
     } else if (m.text !== null && DM_PICTURE.test(m.text)) {
@@ -6118,16 +6121,22 @@ function renderDmView(keepScroll) {
       (li.querySelector(".msg-text") ?? li).append(tag);
     }
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
-    if (m.from_key === state.me?.key && !m.pending && !m.failed && m.text !== null) {
-      li.append(dmActions(peer, m));
+    if (!m.pending && !m.failed && m.text !== null) {
+      const own = m.from_key === state.me?.key;
+      const acts = dmActions(peer, m);
+      if (acts.childElementCount) li.append(acts);
       li.msg = m;
       li.addEventListener("contextmenu", (e) => {
+        if (window.getSelection()?.toString()) return;
         e.preventDefault();
         const current = e.currentTarget.msg;
+        const copyText = () => navigator.clipboard.writeText(previewText(current.text)).then(() => toast("Text copied."), () => toast("Couldn't copy.", true));
         openMenu(
           [
-            ...(dmEditable(current) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, current) }] : []),
-            { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, current) },
+            ...(canForward(current.text) ? [{ label: "Forward", icon: "forward", action: () => forwardDm(peer, current) }] : []),
+            ...(own && dmEditable(current) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, current) }] : []),
+            { label: "Copy text", icon: "copy", action: copyText },
+            ...(own ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, current) }] : []),
           ],
           e.clientX,
           e.clientY,
@@ -6235,6 +6244,8 @@ function plainText(text) {
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
   text = emojiWords(text);
+  const forwarded = forwardParts(text);
+  if (forwarded) return "Forwarded: " + previewText(forwarded.text);
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
@@ -6637,7 +6648,8 @@ function messageActions(m) {
   actions.append(el("span", "msg-actions-gap"));
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
-  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text)) button("edit", "Edit", () => startEdit(m));
+  if (canForward(m.text)) button("forward", "Forward", () => forwardMessage(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -7749,7 +7761,8 @@ function openMessageMenu(m, e) {
   openMenu(
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
-      ...(mine && !PICTURE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(canForward(m.text) ? [{ label: "Forward", icon: "forward", action: () => forwardMessage(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -7761,6 +7774,128 @@ function openMessageMenu(m, e) {
     e.clientX,
     e.clientY,
   );
+}
+
+// ---------- forwarding ----------
+//
+// A message passed on to a channel here, a friend or a group, shown there as a quote with who
+// wrote it and where. Written as one line saying where it's from, then the message itself:
+//   hopp-forward:<base64url {"n": name, "w": where, "t": sent at}>\n<text>
+// Mentions in it become plain names, so forwarding never pings anyone. Pictures and files
+// stay where they are (they're stored by that server or that conversation).
+
+var FORWARD = /^hopp-forward:([A-Za-z0-9_-]{4,600})\n([\s\S]*)$/;
+
+/** Where a forwarded message came from, and its text; null when it isn't one. */
+function forwardParts(text) {
+  const m = typeof text === "string" && text.match(FORWARD);
+  if (!m) return null;
+  try {
+    const meta = JSON.parse(fromBase64url(m[1]));
+    return { name: String(meta.n ?? "Someone").slice(0, 64), where: String(meta.w ?? "").slice(0, 80), at: Number(meta.t) || 0, text: m[2] };
+  } catch {
+    return null;
+  }
+}
+
+function canForward(text) {
+  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text);
+}
+
+/** The text to send: the original's own source when forwarding something forwarded. */
+function forwardText(text, name, where, at) {
+  const inner = forwardParts(text);
+  const meta = inner ? { n: inner.name, w: inner.where, t: inner.at } : { n: name, w: where, t: at };
+  const body = plainText(inner ? inner.text : text).replace(/@(everyone|here)\b/g, "@​$1");
+  return ("hopp-forward:" + base64url(JSON.stringify(meta)) + "\n" + body).slice(0, 2000);
+}
+
+/** The quote shown in place of a forwarded message's text. */
+function forwardView(f) {
+  const box = el("div", "forwarded");
+  const head = el("div", "forwarded-head");
+  head.append(icon("forward", "xs"), el("span", "", "Forwarded"));
+  box.append(head);
+  if (GIF_URL.test(f.text.trim())) {
+    const img = el("img", "msg-gif");
+    img.src = f.text.trim();
+    img.alt = "GIF";
+    img.loading = "lazy";
+    box.append(img);
+  } else box.append(messageText(f.text));
+  const from = [f.name, f.where, f.at ? `${dayLabel(f.at)} at ${clock(f.at)}` : ""].filter(Boolean).join(" · ");
+  box.append(el("div", "forwarded-from ellipsis", from));
+  return box;
+}
+
+/** Opens the "Forward to" dialog for a message: `name` wrote it, `where` it was written. */
+function openForward(text, name, where, at) {
+  const out = forwardText(text, name, where, at);
+  const sent = new Set();
+  $("forward-preview").replaceChildren(forwardView(forwardParts(out)));
+  $("forward-search").value = "";
+  const render = () => {
+    const q = $("forward-search").value.trim().toLowerCase().replace(/^[#@]/, "");
+    const rows = [];
+    // This server's text channels you can write in, then your groups and friends, most recent first.
+    if (online()) {
+      for (const ch of state.roster.channels.filter((c) => c.kind === "text")) {
+        rows.push({ id: "ch|" + ch.id, title: "#" + ch.name, sub: state.roster.server_name ?? "", pic: null, send: () => sendChat(ch.id, out, null) });
+      }
+    }
+    const recent = (key) => state.conversations.get(key)?.last_at ?? 0;
+    const people = [...(state.groups?.values() ?? [])].map((g) => ({ key: g.id, group: true })).concat([...state.friends.values()].filter((f) => f.state === "friend").map((f) => ({ key: f.key })));
+    people.sort((a, b) => recent(b.key) - recent(a.key));
+    for (const p of people) {
+      const who = personFor(p.key);
+      rows.push({ id: "dm|" + p.key, title: who.display_name, sub: p.group ? "Group" : who.username ?? "", person: who, send: () => sendDm(p.key, { value: out, style: {} }) });
+    }
+    const shown = rows.filter((r) => !q || r.title.toLowerCase().replace(/^#/, "").includes(q) || r.sub.toLowerCase().includes(q));
+    if (!shown.length) return $("forward-list").replaceChildren(el("li", "invite-friend-empty", rows.length ? "Nothing by that name." : "Add friends or join a server to forward messages."));
+    $("forward-list").replaceChildren(
+      ...shown.map((r) => {
+        const li = el("li", "invite-friend");
+        const who = el("span", "invite-friend-who");
+        const names = el("span", "invite-friend-names");
+        names.append(el("strong", "ellipsis", r.title));
+        if (r.sub) names.append(el("span", "ellipsis", r.sub));
+        if (r.person) who.append(personAvatar(r.person, "s40", !r.person.group));
+        else {
+          const mark = el("span", "forward-channel-icon");
+          mark.append(icon("hash"));
+          who.append(mark);
+        }
+        who.append(names);
+        const btn = el("button", "btn sm");
+        btn.type = "button";
+        btn.textContent = sent.has(r.id) ? "Sent" : "Send";
+        btn.disabled = sent.has(r.id);
+        btn.addEventListener("click", () => {
+          sent.add(r.id);
+          btn.textContent = "Sent";
+          btn.disabled = true;
+          r.send();
+        });
+        li.append(who, btn);
+        return li;
+      }),
+    );
+  };
+  $("forward-search").oninput = render;
+  render();
+  openModal($("forward-dialog"));
+  $("forward-search").focus();
+}
+
+/** Forwards a server message. */
+function forwardMessage(m) {
+  openForward(m.text, nameHere(m.author_key) ?? m.sender_name, (state.roster?.server_name ? state.roster.server_name + " " : "") + "#" + channelName(m.channel), m.sent_at);
+}
+
+/** Forwards a message from a conversation. */
+function forwardDm(peer, m) {
+  const where = isGroup(peer) ? personFor(peer).display_name : "Direct message";
+  openForward(m.text, personFor(m.from_key).display_name, where, m.sent_at);
 }
 
 // ---------- calls with friends ----------
@@ -9610,7 +9745,7 @@ function youtubeCard(id, start, link) {
 state.dmEditing = null;
 
 function dmEditable(m) {
-  return m.text !== null && !DM_PICTURE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim());
+  return m.text !== null && !DM_PICTURE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim()) && !FORWARD.test(m.text);
 }
 
 function dmActions(peer, m) {
@@ -9623,8 +9758,10 @@ function dmActions(peer, m) {
     b.addEventListener("click", onClick);
     actions.append(b);
   };
-  if (dmEditable(m)) button("edit", "Edit", () => startDmEdit(peer, m));
-  button("trash", "Delete message", (e) => deleteDm(peer, m, e.shiftKey), "danger-hover");
+  const own = m.from_key === state.me?.key;
+  if (canForward(m.text)) button("forward", "Forward", () => forwardDm(peer, m));
+  if (own && dmEditable(m)) button("edit", "Edit", () => startDmEdit(peer, m));
+  if (own) button("trash", "Delete message", (e) => deleteDm(peer, m, e.shiftKey), "danger-hover");
   return actions;
 }
 
