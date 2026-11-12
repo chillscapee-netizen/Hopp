@@ -940,6 +940,19 @@ fn set_relay(state: State<'_, AppState>, login: strom_voice::turn::TurnLogin) ->
     Ok(())
 }
 
+/// We send video (a screen or a camera) or stopped: voice watches its way out closely meanwhile.
+#[tauri::command]
+fn set_sending_video(state: State<'_, AppState>, on: bool) {
+    with_voice(&state, |c| {
+        if let Some(engine) = &c.engine {
+            engine.set_sending_video(on);
+        }
+    });
+    if let Some(call) = state.call.lock().unwrap().as_ref() {
+        call.engine.set_sending_video(on);
+    }
+}
+
 /// A group call: stop sending to someone who left it.
 #[tauri::command]
 fn call_drop_peer(state: State<'_, AppState>, call_id: String, session_id: SessionId) {
@@ -1809,6 +1822,7 @@ fn main() {
             upload_dm_image,
             app_version,
             set_autostart,
+            set_sending_video,
             shell::window_compact,
             shell::window_full,
             shell::window_splash,

@@ -330,6 +330,9 @@ struct Link {
     /// The path's best round trip lately (creeping up a millisecond an answer): what another
     /// way must beat. One quick answer on a jittery network isn't a faster way.
     rtt_best: Option<u32>,
+    /// Round trips on the path over the last few seconds (when, ms): the quickest is the path
+    /// with nothing queued; how far the latest is above it is what's waiting in a queue.
+    rtt_recent: std::collections::VecDeque<(Instant, u32)>,
     /// Since when we've been without a path.
     searching_since: Instant,
     /// What we last told the app: reachable or not.
@@ -366,7 +369,15 @@ pub struct Mesh {
     stun: Mutex<StunAsk>,
     /// Set to have voice look at our network again right away, as if it had changed.
     pub recheck: std::sync::atomic::AtomicBool,
+    /// While we send video: paths are timed ten times a second, so a queue building up in
+    /// our upload shows within a fraction of a second (see `queue_delay`).
+    pub watch_queue: std::sync::atomic::AtomicBool,
 }
+
+/// While video is sent, the path is timed this often.
+const QUEUE_PING_INTERVAL: Duration = Duration::from_millis(100);
+/// The quickest round trip over this long is the path with nothing queued on it.
+const QUEUE_BASE_WINDOW: Duration = Duration::from_secs(10);
 
 /// After this long without a direct path, probes go through our relay too.
 const RELAY_PROBE_AFTER: Duration = Duration::from_secs(2);
@@ -397,6 +408,7 @@ impl Mesh {
             endpoint: Mutex::new(None),
             stun: Mutex::new(StunAsk::default()),
             recheck: std::sync::atomic::AtomicBool::new(false),
+            watch_queue: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -482,6 +494,7 @@ impl Mesh {
             last_direct_try: None,
             rtt_ms: None,
             rtt_best: None,
+            rtt_recent: std::collections::VecDeque::new(),
             searching_since: Instant::now(),
             reported: None,
             reprobe_until: None,
@@ -606,7 +619,12 @@ impl Mesh {
             if !reprobing {
                 link.reprobe_until = None;
             }
-            let interval = if link.path.is_some() && !reprobing { KEEPALIVE_INTERVAL } else { PROBE_INTERVAL };
+            let watching = self.watch_queue.load(std::sync::atomic::Ordering::Relaxed);
+            let interval = if link.path.is_some() && !reprobing {
+                if watching { QUEUE_PING_INTERVAL } else { KEEPALIVE_INTERVAL }
+            } else {
+                PROBE_INTERVAL
+            };
             if link.last_ping.is_some_and(|t| now - t < interval) {
                 continue;
             }
@@ -708,6 +726,24 @@ impl Mesh {
         out
     }
 
+    /// How long our voice waits in a queue on its way out right now (ms): the latest round
+    /// trip over the quickest of the last ten seconds, smoothed over the last three answers,
+    /// the worst across peers. It rises the moment something (usually our own video) fills
+    /// the line, long before voice turns bad: the signal to make room.
+    pub fn queue_delay(&self) -> Option<u32> {
+        let links = self.links.lock().unwrap();
+        links
+            .values()
+            .filter(|l| l.path.is_some() && l.rtt_recent.len() >= 5)
+            .map(|l| {
+                let base = l.rtt_recent.iter().map(|&(_, ms)| ms).min().unwrap_or(0);
+                let mut last: Vec<u32> = l.rtt_recent.iter().rev().take(3).map(|&(_, ms)| ms).collect();
+                last.sort_unstable();
+                last[last.len() / 2].saturating_sub(base)
+            })
+            .max()
+    }
+
     /// Records a ping round trip; returns the slowest round trip among peers, for the UI.
     pub fn record_rtt(&self, id: SessionId, ms: u32) -> Option<u32> {
         let mut links = self.links.lock().unwrap();
@@ -756,6 +792,15 @@ impl Mesh {
         }
         link.rtt_ms = Some(ms);
         link.rtt_best = Some(link.rtt_best.map_or(ms, |best| ms.min(best + 1)));
+        let now = Instant::now();
+        if !on_path {
+            // A new path: what was measured on the old one says nothing about this one.
+            link.rtt_recent.clear();
+        }
+        link.rtt_recent.push_back((now, ms));
+        while link.rtt_recent.front().is_some_and(|&(at, _)| now - at > QUEUE_BASE_WINDOW) {
+            link.rtt_recent.pop_front();
+        }
         links.values().filter(|l| l.path.is_some()).filter_map(|l| l.rtt_ms).max()
     }
 }
@@ -920,6 +965,32 @@ pub(crate) mod tests {
         mesh.links.lock().unwrap().get_mut(&2).unwrap().last_ping = None;
         let due = mesh.due_pings();
         assert!(due.contains(&(v6, false)) && due.contains(&(v4, false)), "{due:?}");
+    }
+
+    #[test]
+    fn a_queue_building_up_shows_at_once() {
+        let mesh = Mesh::new(1, &[1; 32]);
+        let v4: SocketAddr = "203.0.113.5:5000".parse().unwrap();
+        mesh.set_peer(&PeerEndpoint { session_id: 2, public: Some(v4.to_string()), local: vec![] });
+        assert!(mesh.heard(2, v4, false));
+        assert_eq!(mesh.queue_delay(), None, "not measured yet");
+        for ms in [60, 62, 61, 60, 63, 61] {
+            mesh.pong_heard(2, v4, false, ms);
+        }
+        assert!(mesh.queue_delay().unwrap() <= 3, "nothing queued: {:?}", mesh.queue_delay());
+        // The upload fills: the round trips climb, and the queue shows (one odd answer doesn't).
+        mesh.pong_heard(2, v4, false, 140);
+        assert!(mesh.queue_delay().unwrap() <= 3, "one odd answer is ignored");
+        for ms in [95, 110] {
+            mesh.pong_heard(2, v4, false, ms);
+        }
+        assert!(mesh.queue_delay().unwrap() >= 45, "{:?}", mesh.queue_delay());
+        // Timed often only while we send video.
+        mesh.links.lock().unwrap().get_mut(&2).unwrap().last_ping = Some(Instant::now() - Duration::from_millis(150));
+        assert!(mesh.due_pings().is_empty());
+        mesh.watch_queue.store(true, std::sync::atomic::Ordering::Relaxed);
+        mesh.links.lock().unwrap().get_mut(&2).unwrap().last_ping = Some(Instant::now() - Duration::from_millis(150));
+        assert_eq!(mesh.due_pings(), vec![(v4, false)]);
     }
 
     #[test]

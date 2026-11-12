@@ -78,6 +78,9 @@ pub enum EngineEvent {
     Speaking { session_id: SessionId, speaking: bool },
     /// Round trip to the server over the voice path, once per second.
     Latency { ms: u32 },
+    /// While we send video: how long our voice waits in a queue on the way out (ms), five
+    /// times a second. The app makes the video smaller the moment it rises.
+    QueueDelay { ms: u32 },
     /// Microphone level after processing, about 33 times per second, and
     /// whether voice activity would send it right now.
     InputLevel { db: f32, voice: bool },
@@ -273,6 +276,13 @@ impl VoiceEngine {
     }
 
     /// Peer-to-peer voice only: stops sending to everyone `keep` rejects.
+    /// We're sending video (or stopped): the queue on our way out is watched closely meanwhile.
+    pub fn set_sending_video(&self, on: bool) {
+        if let Route::Mesh(m) = &self.route {
+            m.watch_queue.store(on, Ordering::Relaxed);
+        }
+    }
+
     pub fn retain_peers(&self, keep: impl Fn(SessionId) -> bool) {
         if let Route::Mesh(m) = &self.route {
             m.retain_peers(keep);
@@ -1019,7 +1029,16 @@ impl Encoder {
         // How each connection is doing goes in the log every so often (round trip, loss and
         // which way), so a bad call can be looked into afterwards ("Copy debug info").
         let mut logged = Instant::now();
+        let mut queue_told = Instant::now();
         while !stop.load(Ordering::Relaxed) {
+            if let Route::Mesh(m) = &self.net.route {
+                if m.watch_queue.load(Ordering::Relaxed) && queue_told.elapsed() >= Duration::from_millis(200) {
+                    queue_told = Instant::now();
+                    if let Some(ms) = m.queue_delay() {
+                        let _ = self.events.send(EngineEvent::QueueDelay { ms });
+                    }
+                }
+            }
             if let Route::Mesh(m) = &self.net.route {
                 if adapted.elapsed() >= ADAPT_EVERY {
                     adapted = Instant::now();
@@ -1231,6 +1250,19 @@ struct Peer {
     jitter: JitterBuffer,
     speaking: bool,
     last_heard: Instant,
+    /// Whether the last frame played was quiet (a gap between sounds): the jitter buffer only
+    /// grows or shrinks there, where nobody hears it.
+    quiet: bool,
+    /// How loud this person usually is when talking (for telling their quiet frames apart).
+    loudness: f32,
+}
+
+/// A frame's loudness (root mean square).
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
 /// The first 5 ms of every talk spurt fade in, so a sentence never starts with a click.
@@ -1275,7 +1307,7 @@ impl Mixer {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
                 let Ok(decoder) = opus::Decoder::new(SAMPLE_RATE, opus::Channels::Mono) else { return };
-                e.insert(Peer { decoder, jitter: JitterBuffer::default(), speaking: false, last_heard: Instant::now() })
+                e.insert(Peer { decoder, jitter: JitterBuffer::default(), speaking: false, last_heard: Instant::now(), quiet: true, loudness: 0.05 })
             }
         };
         peer.last_heard = Instant::now();
@@ -1312,13 +1344,35 @@ impl Mixer {
         let volumes = self.settings.user_volumes.lock().unwrap().clone();
         let mut changed = Vec::new();
         self.peers.retain(|&id, peer| {
-            let decoded = match peer.jitter.pop() {
-                Playout::Packet(p) => peer.decoder.decode_float(&p, &mut voice, false),
-                Playout::Fec(p) => peer.decoder.decode_float(&p, &mut voice, true),
-                Playout::Conceal => peer.decoder.decode_float(&[], &mut voice, false),
-                Playout::Idle => Ok(0),
+            let quiet_below = (peer.loudness * 0.15).max(0.003);
+            let mut playout = peer.jitter.pop(peer.quiet);
+            let decoded = loop {
+                break match playout {
+                    Playout::Packet(p) => peer.decoder.decode_float(&p, &mut voice, false),
+                    Playout::Shorten(p) => {
+                        // More is waiting than needed: a quiet frame is left out (it was decoded,
+                        // so the decoder carries on smoothly), and the next one plays in its place.
+                        let decoded = peer.decoder.decode_float(&p, &mut voice, false);
+                        if matches!(decoded, Ok(n) if n > 0 && rms(&voice[..n]) < quiet_below) {
+                            playout = peer.jitter.after_shortened();
+                            continue;
+                        }
+                        decoded
+                    }
+                    Playout::Fec(p) => peer.decoder.decode_float(&p, &mut voice, true),
+                    // A lost frame, or a quiet moment held a frame longer: the decoder continues the sound.
+                    Playout::Conceal | Playout::Lengthen => peer.decoder.decode_float(&[], &mut voice, false),
+                    Playout::Idle => Ok(0),
+                };
             };
             let active = matches!(decoded, Ok(n) if n > 0);
+            if let Ok(n) = decoded {
+                let level = rms(&voice[..n.min(FRAME_SAMPLES)]);
+                peer.quiet = n == 0 || level < quiet_below;
+                if level > 0.01 {
+                    peer.loudness = peer.loudness * 0.95 + level * 0.05;
+                }
+            }
             if active {
                 let gain = volumes.get(&id).copied().unwrap_or(1.0);
                 let starting = !peer.speaking;

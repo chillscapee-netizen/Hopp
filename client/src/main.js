@@ -1931,6 +1931,8 @@ listen("voice", (e) => {
   } else if (ev.type === "latency") {
     state.latency = ev.ms;
     renderVoicePanel();
+  } else if (ev.type === "queue_delay") {
+    queueSeen(ev.ms);
   } else if (ev.type === "input_level") {
     updateMeter(ev.db, ev.voice);
   } else if (ev.type === "devices_changed") {
@@ -8034,6 +8036,8 @@ listen("call-voice", (e) => {
     useRelay();
   } else if (ev.type === "peer_quality") {
     guardVoice("call|" + ev.session_id, ev.rtt_ms, ev.loss);
+  } else if (ev.type === "queue_delay") {
+    queueSeen(ev.ms);
   } else if (ev.type === "endpoint" && state.call) {
     state.call.myEndpoint = { public: ev.endpoint.public ?? null, local: ev.endpoint.local ?? [] };
     callSend(state.call, "endpoint", state.call.myEndpoint);
@@ -10599,7 +10603,7 @@ var SHARE_MBIT = { 720: { 15: 1.5, 30: 2.5, 60: 4 }, 1080: { 15: 2.5, 30: 4.5, 6
 // suffers: it arrives late, or not at all. So Hopp watches how voice is doing (its round trip
 // and how much is lost, every second) and, the moment it strains while you send video, makes
 // the video smaller; when voice has been fine for a while, video gets its room back.
-var voiceGuard = { budget: 1, floor: new Map(), calm: 0, strained: 0 };
+var voiceGuard = { budget: 1, floor: new Map(), calm: 0, strained: 0, queued: 0, held: 0, told: null };
 /** Video never shrinks below this share of what you chose: a smaller picture, never a broken one. */
 var VIDEO_BUDGET_MIN = 0.45;
 function sendingVideo() {
@@ -10611,6 +10615,7 @@ function videoBudget() {
 }
 function guardVoice(id, rtt, loss) {
   const g = voiceGuard;
+  tellSendingVideo();
   // How fast voice is when nothing is in its way: the best seen, creeping up slowly so a
   // network that simply got slower becomes the new normal within a couple of minutes.
   if (rtt != null) {
@@ -10626,7 +10631,9 @@ function guardVoice(id, rtt, loss) {
     // Some networks always lose a little and wobble a little: only a clear, lasting change
     // counts (two readings in a row), not one bad second.
     const floor = g.floor.get(id);
-    const strained = loss >= 8 || (rtt != null && floor != null && rtt > floor + 80);
+    // Delay is watched closely by queueSeen; here a big jump still counts (an older peer
+    // that doesn't answer often enough to time), and so does heavy loss.
+    const strained = loss >= 10 || (rtt != null && floor != null && rtt > floor + 120);
     if (strained) {
       g.calm = 0;
       if (++g.strained >= 2) {
@@ -10643,8 +10650,42 @@ function guardVoice(id, rtt, loss) {
   }
   if (g.budget !== before) retuneVideo();
 }
+/**
+ * Five times a second while we send video: how long voice waits in the queue on its way out.
+ * Like the best real-time apps (Google's congestion control), video gives way as soon as a
+ * queue starts building, not once voice already sounds bad: above 30 ms twice in a row, the
+ * video steps down to 85% and waits a moment for the queue to drain; below 12 ms it creeps
+ * back up, a few percent at a time. Between the two it holds.
+ */
+function queueSeen(ms) {
+  const g = voiceGuard;
+  if (!sendingVideo()) return;
+  const before = g.budget;
+  if (ms > 30) {
+    if (++g.queued >= 2 && Date.now() > g.held) {
+      g.queued = 0;
+      g.budget = Math.max(VIDEO_BUDGET_MIN, g.budget * 0.85);
+      // The cut needs a moment to show in the queue; don't cut again before it can.
+      g.held = Date.now() + 700;
+    }
+  } else {
+    g.queued = 0;
+    if (ms < 12 && Date.now() > g.held) g.budget = Math.min(1, g.budget * 1.02);
+  }
+  if (Math.abs(g.budget - before) > 0.001) retuneVideo();
+}
+
+/** Tells voice whether we send video, so it watches the way out closely only then. */
+function tellSendingVideo() {
+  const on = sendingVideo();
+  if (voiceGuard.told === on) return;
+  voiceGuard.told = on;
+  invoke("set_sending_video", { on }).catch(() => {});
+}
+
 /** Every video we send follows the room voice leaves it. */
 function retuneVideo() {
+  tellSendingVideo();
   for (const pc of screenShare.peers.values()) tuneShare(pc);
   if (typeof media !== "undefined") for (const [kind, out] of Object.entries(media.out)) for (const pc of out.peers.values()) if (pc.getSenders) tuneSender(pc, kind);
   if (watching?.local) screenInfo();
@@ -10795,6 +10836,7 @@ async function startShare() {
   // Windows' own "Stop sharing" ends it too.
   track.addEventListener("ended", () => stopShare());
   screenShare.stream = stream;
+  tellSendingVideo();
   call("set_sharing", { on: true });
   renderVoicePanel();
   // See what the others see.
@@ -10811,6 +10853,7 @@ function stopShare(quiet = false) {
   if (watching?.local) stopWatching(false);
   screenShare.stream.getTracks().forEach((t) => t.stop());
   screenShare.stream = null;
+  tellSendingVideo();
   if (!quiet && connected()) call("set_sharing", { on: false });
   renderVoicePanel();
 }
@@ -11719,6 +11762,7 @@ async function startCallScreen() {
 
 function startOut(kind, stream, room) {
   media.out[kind] = { stream, room, peers: new Map() };
+  queueMicrotask(tellSendingVideo);
   stream.getVideoTracks()[0]?.addEventListener("ended", () => stopOut(kind));
   for (const peer of room.peers()) offerMedia(kind, peer);
   renderMediaViews();
@@ -11728,6 +11772,7 @@ function stopOut(kind, quiet = false) {
   const out = media.out[kind];
   if (!out) return;
   delete media.out[kind];
+  queueMicrotask(tellSendingVideo);
   for (const [peer, pc] of out.peers) {
     if (!quiet) out.room.send(peer, { v: "m", t: kind, d: "r", k: "stop" });
     pc.close();

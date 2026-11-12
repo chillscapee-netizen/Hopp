@@ -14,6 +14,8 @@
     g.fillStyle = `hsl(${frame++ % 360} 60% 40%)`;
     g.fillRect(0, 0, 640, 360);
   }, 33);
+  const sentVideo = [];
+  commands.set_sending_video = ({ on }) => sentVideo.push(on);
   let asked = 0;
   navigator.mediaDevices.getDisplayMedia = async () => {
     asked++;
@@ -85,6 +87,28 @@
   for (let i = 0; i < 40; i++) emit("voice", { type: "peer_quality", session_id: viewer.session_id, rtt_ms: 42, loss: 0, relayed: false });
   await wait(60);
   check("voice fine again: the video gets its room back by itself", videoBudget() === 1 && rate() === 4_500_000, videoBudget() + " " + rate());
+
+  // The queue on our way out, watched closely while we send video: video gives way at once.
+  check("voice is told we send video", sentVideo.at(-1) === true, JSON.stringify(sentVideo));
+  setShareQuality({ rate: 30 });
+  for (let i = 0; i < 4; i++) emit("voice", { type: "queue_delay", ms: 5 });
+  await wait(20);
+  check("an empty queue changes nothing", videoBudget() === 1);
+  emit("voice", { type: "queue_delay", ms: 45 });
+  await wait(20);
+  check("one reading over isn't enough", videoBudget() === 1);
+  emit("voice", { type: "queue_delay", ms: 50 });
+  await wait(30);
+  check("a queue building up steps the video down at once", Math.abs(videoBudget() - 0.85) < 0.001 && rate() === Math.round(4_500_000 * 0.85), videoBudget() + " " + rate());
+  emit("voice", { type: "queue_delay", ms: 50 });
+  emit("voice", { type: "queue_delay", ms: 50 });
+  await wait(20);
+  check("then waits for the cut to show before cutting again", Math.abs(videoBudget() - 0.85) < 0.001);
+  voiceGuard.held = 0;
+  for (let i = 0; i < 20; i++) emit("voice", { type: "queue_delay", ms: 4 });
+  await wait(30);
+  check("an empty queue lets it creep back up", videoBudget() > 0.85, String(videoBudget()));
+  setShareQuality({ rate: 30 });
 
   // The quality menu: one size and one rate, each picked like a round button.
   openShareQuality(400, 400);
