@@ -1573,6 +1573,22 @@ fn cancel_ptt_recording(state: State<'_, AppState>) {
     }
 }
 
+/// The keybinds for mute and deafen that work anywhere; each fires a `keybind` event.
+#[tauri::command]
+fn set_keybinds(state: State<'_, AppState>, binds: Vec<ptt::Keybind>) {
+    if let Some(p) = state.ptt.get() {
+        p.set_binds(binds);
+    }
+}
+
+/// The next key pressed anywhere, with its modifiers, arrives as a `keybind-recorded` event.
+#[tauri::command]
+fn record_keybind(state: State<'_, AppState>) {
+    if let Some(p) = state.ptt.get() {
+        p.record_bind();
+    }
+}
+
 #[tauri::command]
 fn set_ptt_release_delay(state: State<'_, AppState>, ms: u32) {
     state.audio.set_push_to_talk_release_delay(ms);
@@ -1870,6 +1886,8 @@ fn main() {
             set_push_to_talk,
             set_ptt_key,
             record_ptt_key,
+            set_keybinds,
+            record_keybind,
             cancel_ptt_recording,
             set_ptt_release_delay,
             take_pending_link,

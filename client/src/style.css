@@ -3930,3 +3930,6 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 .streamer-pill { position: absolute; right: 196px; top: 50%; transform: translateY(-50%); height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .streamer-pill:hover { background: color-mix(in srgb, var(--text) 18%, transparent); }
 .streamer-pill[hidden] { display: none; }
+
+/* Keybinds for mute and deafen: the same width, Clear or not. */
+.bind-box { width: 190px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

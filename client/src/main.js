@@ -4309,6 +4309,74 @@ listen("ptt-recorded", (e) => {
   if (e.payload.cancelled) renderPttKey();
   else setPttKey(e.payload.key, e.payload.label);
 });
+// ---------- keybinds for mute and deafen, anywhere ----------
+// A key (with Ctrl, Shift or Alt if wanted) picked here works even while a game is in front;
+// Hopp only ever looks at the keys picked. Kept on this computer (keyboards differ).
+
+prefs.keybinds = loadJson("keybinds", {});
+var recordingBind = null;
+
+function renderKeybinds() {
+  for (const id of ["mute", "deafen"]) {
+    const box = $("bind-" + id);
+    const bind = prefs.keybinds[id];
+    box.classList.toggle("recording", recordingBind === id);
+    box.textContent = recordingBind === id ? "Press a key… (Esc cancels)" : bind?.label || "Pick a key";
+    box.classList.toggle("empty", !bind && recordingBind !== id);
+    $("bind-" + id + "-clear").hidden = !bind || recordingBind === id;
+  }
+}
+
+function applyKeybinds() {
+  const binds = Object.entries(prefs.keybinds).filter(([, b]) => b?.key).map(([id, b]) => ({ id, key: b.key, mods: b.mods ?? 0 }));
+  invoke("set_keybinds", { binds }).catch(() => {});
+}
+
+function saveKeybind(id, bind) {
+  if (bind) {
+    // One key does one thing: taken from the other action if it had it.
+    for (const [other, b] of Object.entries(prefs.keybinds)) if (other !== id && b?.key === bind.key && (b.mods ?? 0) === (bind.mods ?? 0)) delete prefs.keybinds[other];
+    prefs.keybinds[id] = bind;
+  } else delete prefs.keybinds[id];
+  save("keybinds", JSON.stringify(prefs.keybinds));
+  applyKeybinds();
+  renderKeybinds();
+}
+
+for (const id of ["mute", "deafen"]) {
+  $("bind-" + id).addEventListener("click", (e) => {
+    if (e.detail === 0) return;
+    if (recordingBind === id) {
+      recordingBind = null;
+      invoke("cancel_ptt_recording");
+    } else {
+      if (recordingPtt) stopRecordingPtt();
+      recordingBind = id;
+      invoke("record_keybind");
+    }
+    renderKeybinds();
+  });
+  $("bind-" + id + "-clear").addEventListener("click", () => saveKeybind(id, null));
+}
+// While recording, the key belongs to the recorder, not to the page.
+window.addEventListener("keydown", (e) => {
+  if (!recordingBind) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+listen("keybind-recorded", (e) => {
+  const id = recordingBind;
+  recordingBind = null;
+  if (!id || e.payload.cancelled) return renderKeybinds();
+  saveKeybind(id, { key: e.payload.key, mods: e.payload.mods ?? 0, label: e.payload.label });
+});
+listen("keybind", (e) => {
+  if (e.payload === "mute") $("mute-btn").click();
+  else if (e.payload === "deafen") setDeafened(!state.deafened);
+});
+renderKeybinds();
+applyKeybinds();
+
 listen("ptt-blocked", () => {
   toast("Push to talk can't see your key while the app in front runs as administrator. Run Hopp as administrator too, or the game without it.", true);
 });

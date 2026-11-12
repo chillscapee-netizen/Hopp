@@ -8,6 +8,9 @@
 //!
 //! Keys are stored as Windows virtual-key codes; names are looked up in the
 //! current keyboard layout when shown.
+//!
+//! The same thread watches the keybinds picked for mute and deafen (a key, with Ctrl,
+//! Shift or Alt if wanted), the same way: only those keys are looked at.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -22,6 +25,20 @@ const VK_ESCAPE: u32 = 0x1B;
 /// How often to check whether the app in front runs as administrator.
 const ELEVATION_CHECK: Duration = Duration::from_secs(2);
 
+/// Modifier bits of a keybind.
+pub const MOD_CTRL: u8 = 1;
+pub const MOD_SHIFT: u8 = 2;
+pub const MOD_ALT: u8 = 4;
+
+/// A keybind that works anywhere: `id` is what it does ("mute", "deafen").
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Keybind {
+    pub id: String,
+    pub key: u32,
+    #[serde(default)]
+    pub mods: u8,
+}
+
 #[derive(Default)]
 pub struct Ptt {
     /// The bound virtual-key code; 0 = none.
@@ -29,6 +46,10 @@ pub struct Ptt {
     /// Listening only in push-to-talk mode.
     enabled: AtomicBool,
     recording: AtomicBool,
+    /// Keybinds for mute and deafen, watched whatever the voice mode.
+    binds: std::sync::Mutex<Vec<Keybind>>,
+    /// The next key pressed (with its modifiers) becomes a keybind.
+    recording_bind: AtomicBool,
 }
 
 impl Ptt {
@@ -57,6 +78,16 @@ impl Ptt {
 
     pub fn cancel_recording(&self) {
         self.recording.store(false, Ordering::Relaxed);
+        self.recording_bind.store(false, Ordering::Relaxed);
+    }
+
+    pub fn set_binds(&self, binds: Vec<Keybind>) {
+        *self.binds.lock().unwrap() = binds.into_iter().filter(|b| b.key != 0 && bindable(b.key)).collect();
+    }
+
+    /// The next key pressed, with Ctrl, Shift or Alt held, is reported as `keybind-recorded`; Esc cancels.
+    pub fn record_bind(&self) {
+        self.recording_bind.store(true, Ordering::Relaxed);
     }
 
     fn run(&self, app: &AppHandle, audio: &AudioSettings) {
@@ -66,7 +97,28 @@ impl Ptt {
         let mut warned_about: Option<u32> = None;
         // The app in front last time we looked: it's only examined when it changes.
         let mut seen_front: Option<u32> = None;
+        let mut binds_down: Vec<bool> = Vec::new();
         loop {
+            if self.recording_bind.load(Ordering::Relaxed) {
+                let now = pressed_keys();
+                let before = held_before.get_or_insert_with(|| now.clone());
+                if let Some(vk) = (1..256).find(|&vk| now[vk] && !before[vk] && bindable(vk as u32)) {
+                    self.recording_bind.store(false, Ordering::Relaxed);
+                    held_before = None;
+                    let vk = vk as u32;
+                    let payload = if vk == VK_ESCAPE {
+                        serde_json::json!({ "cancelled": true })
+                    } else {
+                        let mods = held_mods();
+                        serde_json::json!({ "key": vk, "mods": mods, "label": bind_label(vk, mods) })
+                    };
+                    let _ = app.emit("keybind-recorded", payload);
+                } else {
+                    *before = now;
+                }
+                std::thread::sleep(POLL);
+                continue;
+            }
             if self.recording.load(Ordering::Relaxed) {
                 // Keys already held when recording started don't count.
                 let now = pressed_keys();
@@ -111,7 +163,20 @@ impl Ptt {
                 audio.set_push_to_talk(pressed);
                 let _ = app.emit("ptt", pressed);
             }
-            std::thread::sleep(if active { POLL } else { IDLE });
+            // Keybinds fire once when pressed (exactly those modifiers held), not while held.
+            let binds = self.binds.lock().unwrap().clone();
+            binds_down.resize(binds.len(), false);
+            if !binds.is_empty() {
+                let mods = held_mods();
+                for (i, b) in binds.iter().enumerate() {
+                    let now = is_down(b.key) && mods == b.mods;
+                    if now && !binds_down[i] {
+                        let _ = app.emit("keybind", b.id.clone());
+                    }
+                    binds_down[i] = now;
+                }
+            }
+            std::thread::sleep(if active || !binds.is_empty() { POLL } else { IDLE });
         }
     }
 }
@@ -199,6 +264,32 @@ fn runs_elevated(_pid: u32) -> bool {
     false
 }
 
+/// Keys a keybind can be made of: anything but plain clicks and the modifiers themselves.
+fn bindable(vk: u32) -> bool {
+    !matches!(vk, 0x01 | 0x02 | 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
+/// Ctrl, Shift and Alt held right now.
+fn held_mods() -> u8 {
+    (if is_down(0x11) { MOD_CTRL } else { 0 }) | (if is_down(0x10) { MOD_SHIFT } else { 0 }) | (if is_down(0x12) { MOD_ALT } else { 0 })
+}
+
+/// "Ctrl + Shift + M".
+pub fn bind_label(vk: u32, mods: u8) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if mods & MOD_CTRL != 0 {
+        parts.push("Ctrl".into());
+    }
+    if mods & MOD_SHIFT != 0 {
+        parts.push("Shift".into());
+    }
+    if mods & MOD_ALT != 0 {
+        parts.push("Alt".into());
+    }
+    parts.push(key_label(vk));
+    parts.join(" + ")
+}
+
 fn pressed_keys() -> Vec<bool> {
     (0..256).map(|vk| vk > 0 && is_down(vk as u32)).collect()
 }
@@ -235,6 +326,14 @@ pub fn key_label(vk: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keybinds_are_a_key_with_modifiers() {
+        assert!(bindable(0x4D) && bindable(0x05), "letters and mouse buttons");
+        assert!(!bindable(0x11) && !bindable(0xA2) && !bindable(0x01), "not modifiers alone or a plain click");
+        assert!(bind_label(0x05, MOD_CTRL | MOD_SHIFT).starts_with("Ctrl + Shift + "));
+        assert_eq!(bind_label(0x05, 0), "Mouse 4");
+    }
 
     #[test]
     fn keys_get_readable_names() {
