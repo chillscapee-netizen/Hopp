@@ -6459,6 +6459,8 @@ function messageActions(m) {
     b.addEventListener("click", () => react(m, emoji, !mine));
     actions.append(b);
   }
+  // Quick reactions on the left, what you can do with the message on the right.
+  actions.append(el("span", "msg-actions-gap"));
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text)) button("edit", "Edit", () => startEdit(m));

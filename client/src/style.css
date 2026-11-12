@@ -3754,3 +3754,14 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 /* A camera is in the middle: the screen you watch waits in the row, and its stage steps aside. */
 .chat.voice-mode.screen-aside > .screen-stage { display: none; }
 .screen-back-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 14px; border-radius: 50%; background: rgb(127 127 127 / 0.18); color: var(--text); }
+
+/* The bar on a message you point at: one soft piece of the app, like its menus (no outline,
+   no shadow), quick reactions and tools side by side with a little room between. */
+.msg-actions { top: -18px; right: 14px; gap: 2px; padding: 3px; border: none; border-radius: 10px; background: var(--elev); box-shadow: none; }
+.msg-actions .icon-btn.sm { width: 30px; height: 30px; border-radius: 7px; color: var(--muted); }
+.msg-actions .icon-btn.sm:hover { background: var(--hover); color: var(--text); }
+.msg-actions .quick-react { width: 30px; font-size: 17px; transition: transform 90ms ease-out; }
+.msg-actions .quick-react:hover { transform: scale(1.12); }
+.msg-actions .quick-react.on { background: color-mix(in srgb, var(--link) 20%, transparent); }
+.msg-actions-gap { width: 1px; margin: 6px 3px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+.msg-actions .icon-btn.danger-hover:hover { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
