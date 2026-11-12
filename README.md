@@ -48,3 +48,7 @@ Headless test client: `cargo run -p strom-voice --example cli -- localhost name 
 ```sh
 cargo test --workspace
 ```
+
+## Licence
+
+Hopp is free software under the [GNU General Public License v3.0](LICENSE): you may use, study, change and share it, and anything you hand out that is built from it stays open under the same licence.
