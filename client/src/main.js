@@ -10599,7 +10599,9 @@ var SHARE_MBIT = { 720: { 15: 1.5, 30: 2.5, 60: 4 }, 1080: { 15: 2.5, 30: 4.5, 6
 // suffers: it arrives late, or not at all. So Hopp watches how voice is doing (its round trip
 // and how much is lost, every second) and, the moment it strains while you send video, makes
 // the video smaller; when voice has been fine for a while, video gets its room back.
-var voiceGuard = { budget: 1, floor: new Map(), calm: 0 };
+var voiceGuard = { budget: 1, floor: new Map(), calm: 0, strained: 0 };
+/** Video never shrinks below this share of what you chose: a smaller picture, never a broken one. */
+var VIDEO_BUDGET_MIN = 0.45;
 function sendingVideo() {
   return !!screenShare.stream || (typeof media !== "undefined" && Object.keys(media.out).length > 0);
 }
@@ -10619,15 +10621,24 @@ function guardVoice(id, rtt, loss) {
   if (!sendingVideo()) {
     g.budget = 1;
     g.calm = 0;
+    g.strained = 0;
   } else {
+    // Some networks always lose a little and wobble a little: only a clear, lasting change
+    // counts (two readings in a row), not one bad second.
     const floor = g.floor.get(id);
-    const strained = loss >= 3 || (rtt != null && floor != null && rtt > floor + 60);
+    const strained = loss >= 8 || (rtt != null && floor != null && rtt > floor + 80);
     if (strained) {
-      g.budget = Math.max(0.2, g.budget * 0.7);
       g.calm = 0;
-    } else if (++g.calm >= 8) {
-      g.calm = 0;
-      g.budget = Math.min(1, g.budget * 1.2);
+      if (++g.strained >= 2) {
+        g.strained = 0;
+        g.budget = Math.max(VIDEO_BUDGET_MIN, g.budget * 0.8);
+      }
+    } else {
+      g.strained = 0;
+      if (++g.calm >= 4) {
+        g.calm = 0;
+        g.budget = Math.min(1, g.budget * 1.25);
+      }
     }
   }
   if (g.budget !== before) retuneVideo();
@@ -10684,17 +10695,46 @@ function preferSmoothCodec(pc) {
 function tuneShare(pc) {
   for (const sender of pc.getSenders?.() ?? []) {
     if (sender.track?.kind !== "video") continue;
-    const params = sender.getParameters();
-    if (!params.encodings?.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = Math.round(shareBitrate() * videoBudget());
-    params.encodings[0].maxFramerate = prefs.shareQuality.rate;
-    params.degradationPreference = prefs.shareQuality.rate >= 60 ? "maintain-framerate" : "maintain-resolution";
-    sender.setParameters(params).catch(() => {});
+    setSenderParams(sender, (params) => {
+      params.encodings[0].maxBitrate = Math.round(shareBitrate() * videoBudget());
+      params.encodings[0].maxFramerate = prefs.shareQuality.rate;
+      params.degradationPreference = prefs.shareQuality.rate >= 60 ? "maintain-framerate" : "maintain-resolution";
+    });
   }
+}
+
+/**
+ * Changes how a video is sent, one change at a time per sender: a change made while the last
+ * one is still being applied would be refused (and quietly lost), so the last wish always lands.
+ */
+function setSenderParams(sender, change) {
+  sender.hoppWish = change;
+  if (sender.hoppBusy) return;
+  sender.hoppBusy = true;
+  const next = async () => {
+    while (sender.hoppWish) {
+      const wish = sender.hoppWish;
+      sender.hoppWish = null;
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings?.length) params.encodings = [{}];
+        wish(params);
+        await sender.setParameters(params);
+      } catch {
+        // Closed meanwhile, or not ready yet: the next change tries again.
+      }
+    }
+    sender.hoppBusy = false;
+  };
+  next();
 }
 /** A new choice, also in the middle of sharing: the screen and everyone watching follow at once. */
 function setShareQuality(change) {
   Object.assign(prefs.shareQuality, change);
+  // What you just picked is what's sent: the room made for voice starts over from there.
+  voiceGuard.budget = 1;
+  voiceGuard.calm = 0;
+  voiceGuard.strained = 0;
   save("shareQuality", JSON.stringify(prefs.shareQuality));
   const streams = [screenShare.stream, typeof media !== "undefined" ? media.out.screen?.stream : null].filter(Boolean);
   for (const stream of streams) {
@@ -10716,10 +10756,10 @@ function openShareQuality(x, y, above) {
   const q = prefs.shareQuality;
   openMenu([
     { heading: "Resolution" },
-    ...SHARE_SIZES.map((z) => ({ label: z.label, check: q.size === z.id, action: () => setShareQuality({ size: z.id }) })),
+    ...SHARE_SIZES.map((z) => ({ label: z.label, checked: q.size === z.id, action: () => setShareQuality({ size: z.id }) })),
     "sep",
     { heading: "Frame rate" },
-    ...SHARE_RATES.map((r) => ({ label: r + " fps" + (r === 60 ? " (games, video)" : r === 30 ? " (sharpest text)" : " (light on your network)"), check: q.rate === r, action: () => setShareQuality({ rate: r }) })),
+    ...SHARE_RATES.map((r) => ({ label: r + " fps" + (r === 60 ? " (games, video)" : r === 30 ? " (sharpest text)" : " (light on your network)"), checked: q.rate === r, action: () => setShareQuality({ rate: r }) })),
     "sep",
     { heading: "Up to " + SHARE_MBIT[q.size][q.rate] + " Mbit/s to each viewer" },
   ], x, y, above);
@@ -11737,11 +11777,10 @@ async function offerMedia(kind, peer) {
 function tuneSender(pc, kind) {
   if (kind === "screen") return tuneShare(pc);
   for (const sender of pc.getSenders()) {
-    const p = sender.getParameters();
-    if (!p.encodings?.length) p.encodings = [{}];
-    p.encodings[0].maxBitrate = Math.round(1_800_000 * videoBudget());
-    p.degradationPreference = "balanced";
-    sender.setParameters(p).catch(() => {});
+    setSenderParams(sender, (p) => {
+      p.encodings[0].maxBitrate = Math.round(1_800_000 * videoBudget());
+      p.degradationPreference = "balanced";
+    });
   }
 }
 
