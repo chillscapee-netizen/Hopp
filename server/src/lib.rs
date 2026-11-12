@@ -419,6 +419,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 pictures_off: false,
                 features: vec!["search".into(), "screen".into(), "voice-chat".into(), "voice-mod".into(), "voice-settings".into(), "resync".into()],
                 roles: vec![],
+                emojis: vec![],
                 session_id,
                 udp_token: token,
                 udp_port,
@@ -761,6 +762,8 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 | ClientMsg::CreateRole { .. }
                 | ClientMsg::UpdateRole { .. }
                 | ClientMsg::DeleteRole { .. }
+                | ClientMsg::CreateEmoji { .. }
+                | ClientMsg::DeleteEmoji { .. }
                 | ClientMsg::ReorderRoles { .. }
                 | ClientMsg::AssignRole { .. }
                 | ClientMsg::SetNickname { .. } => error("This server doesn't have that yet."),

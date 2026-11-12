@@ -1151,6 +1151,17 @@ fn delete_role(state: State<'_, AppState>, id: u32) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::DeleteRole { id }))
 }
 
+/// Admins: a new emoji for the server, from a picture already uploaded to it.
+#[tauri::command]
+fn create_emoji(state: State<'_, AppState>, name: String, image: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::CreateEmoji { name, image }))
+}
+
+#[tauri::command]
+fn delete_emoji(state: State<'_, AppState>, id: u32) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::DeleteEmoji { id }))
+}
+
 #[tauri::command]
 fn reorder_roles(state: State<'_, AppState>, order: Vec<u32>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::ReorderRoles { order }))
@@ -1846,6 +1857,8 @@ fn main() {
             set_sending_video,
             set_stream_audio,
             set_private_route,
+            create_emoji,
+            delete_emoji,
             shell::window_compact,
             shell::window_full,
             shell::window_splash,

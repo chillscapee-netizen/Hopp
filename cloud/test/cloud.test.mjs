@@ -873,3 +873,49 @@ test("floods are held back: reactions and anything else sent far too fast", asyn
   assert.ok(answers >= 20 && answers < 120, `answers ${answers}`);
   owner.close();
 });
+
+test("emojis: admins add a server's own from an uploaded picture, everyone uses them, and they go again", async () => {
+  const { id, owner, invite } = await newServer();
+  const bob = await join(id, "bob", { invite });
+  assert.ok(owner.welcome.features.includes("emojis"));
+  assert.deepEqual(owner.welcome.emojis, []);
+  const HTTP = BASE.replace(/^ws/, "http");
+  const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8 "), crypto.randomBytes(200)]);
+  const upload = async (who) => {
+    const time = Date.now();
+    const digest = crypto.createHash("sha256").update(webp).digest("hex");
+    const signature = crypto.sign(null, Buffer.from(`hopp-image-v1\0${id}\0${digest}\0${time}`), who.key.privateKey).toString("hex");
+    const res = await fetch(`${HTTP}/servers/${id}/images`, { method: "POST", headers: { "content-type": "image/webp", "X-Hopp-Key": who.key.pub, "X-Hopp-Time": String(time), "X-Hopp-Signature": signature }, body: webp });
+    return (await res.json()).id;
+  };
+  // A member who isn't an admin can't.
+  bob.send({ type: "create_emoji", name: "pog", image: await upload(bob) });
+  assert.match(await errorOf(bob), /admins/);
+  // Names follow the rules.
+  const picture = await upload(owner);
+  owner.send({ type: "create_emoji", name: "No Spaces!", image: picture });
+  assert.match(await errorOf(owner), /lowercase/);
+  owner.send({ type: "create_emoji", name: "pog", image: picture });
+  const added = await bob.waitFor((m) => m.type === "emojis_updated");
+  assert.deepEqual(added.emojis.map((e) => e.name), ["pog"]);
+  const emoji = added.emojis[0];
+  owner.send({ type: "create_emoji", name: "pog", image: await upload(owner) });
+  assert.match(await errorOf(owner), /already/);
+  // Someone joining later gets them.
+  const carol = await join(id, "carol", { invite });
+  assert.deepEqual(carol.welcome.emojis.map((e) => e.name), ["pog"]);
+  // A reaction with it.
+  const general = channelId(owner, "general");
+  bob.send({ type: "send_chat", channel: general, text: `gg <:pog:${emoji.id}>` });
+  const posted = await bob.waitFor((m) => m.type === "chat");
+  bob.send({ type: "react", channel: general, id: posted.message.id, emoji: `<:pog:${emoji.id}>`, on: true });
+  const r = await owner.waitFor((m) => m.type === "reactions");
+  assert.equal(r.reactions[0].emoji, `<:pog:${emoji.id}>`);
+  // Removed: gone from the list, and its picture with it.
+  owner.send({ type: "delete_emoji", id: emoji.id });
+  assert.deepEqual((await bob.waitFor((m) => m.type === "emojis_updated" && m.emojis.length === 0)).emojis, []);
+  assert.equal((await fetch(`${HTTP}/servers/${id}/images/${emoji.image}`)).status, 404);
+  owner.close();
+  bob.close();
+  carol.close();
+});

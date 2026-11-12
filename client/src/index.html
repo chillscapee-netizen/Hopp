@@ -828,6 +828,7 @@
         <div class="settings-nav-label">Server</div>
         <button type="button" class="settings-tab active" data-stab="overview"><svg class="i"><use href="#i-settings"/></svg><span>Overview</span></button>
         <button type="button" class="settings-tab" data-stab="roles"><svg class="i"><use href="#i-shield"/></svg><span>Roles</span></button>
+        <button type="button" class="settings-tab" data-stab="emojis"><svg class="i"><use href="#i-smile"/></svg><span>Emoji</span></button>
         <div class="settings-nav-label">People</div>
         <button type="button" class="settings-tab" data-stab="members"><svg class="i"><use href="#i-users"/></svg><span>Members</span></button>
         <button type="button" class="settings-tab" data-stab="invites"><svg class="i"><use href="#i-link"/></svg><span>Invites</span></button>
@@ -885,6 +886,18 @@
           <div class="page-head"><h2>Invites</h2><button id="invites-create" type="button" class="btn primary sm">Create invite</button></div>
           <p class="hint">Active invite links. Revoke one and it stops working immediately; people who already joined stay members.</p>
           <ul id="invite-list" class="admin-list"></ul>
+        </section>
+        <section data-spanel="emojis" hidden>
+          <div class="page-head"><h2>Emoji</h2><button id="emoji-upload" type="button" class="btn primary sm">Upload emoji</button></div>
+          <p class="hint">The server's own emojis, for everyone here: in messages and reactions, written <code>:name:</code>. Upload a picture (square works best, it's made 128 × 128) and give it a name.</p>
+          <input id="emoji-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          <div id="emoji-new" class="emoji-new" hidden>
+            <img id="emoji-new-img" alt="">
+            <span class="emoji-new-name"><span>:</span><input id="emoji-new-name" maxlength="32" spellcheck="false" autocomplete="off"><span>:</span></span>
+            <button id="emoji-new-save" type="button" class="btn primary sm">Add</button>
+            <button id="emoji-new-cancel" type="button" class="btn sm">Cancel</button>
+          </div>
+          <ul id="emoji-list" class="emoji-admin-list"></ul>
         </section>
         <section data-spanel="bans" hidden>
           <h2>Bans</h2>
@@ -1604,6 +1617,7 @@
   <div id="tooltip" class="tooltip" hidden></div>
   <div id="toast" class="toast" hidden></div>
 
+  <script src="hopp-emoji.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

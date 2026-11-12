@@ -96,6 +96,15 @@ pub struct User {
     pub roles: Vec<u32>,
 }
 
+/// A server's own emoji: written `<:name:id>` in messages and reactions; its picture is one of
+/// the server's images.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmojiInfo {
+    pub id: u32,
+    pub name: String,
+    pub image: String,
+}
+
 /// A role a server made: a name and colour for its people, a place of its own in the member
 /// list if `hoist`, and what it lets them do (`level`: "mod", "admin" or none).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -371,6 +380,9 @@ pub enum ClientMsg {
         mentionable: bool,
     },
     DeleteRole { id: u32 },
+    /// Admins, on servers whose welcome lists "emojis": a new emoji from an uploaded picture.
+    CreateEmoji { name: String, image: String },
+    DeleteEmoji { id: u32 },
     /// Every role id, highest first.
     ReorderRoles { order: Vec<u32> },
     /// Gives someone a role, or takes it away.
@@ -482,6 +494,9 @@ pub enum ServerMsg {
         /// The server's own roles, highest first.
         #[serde(default)]
         roles: Vec<RoleInfo>,
+        /// The server's own emojis.
+        #[serde(default)]
+        emojis: Vec<EmojiInfo>,
     },
     /// The owner renamed the server or changed its picture.
     ServerUpdated {
@@ -527,6 +542,8 @@ pub enum ServerMsg {
     AuditLog { entries: Vec<AuditEntry> },
     /// The server's roles changed (highest first).
     RolesUpdated { roles: Vec<RoleInfo> },
+    /// The server's emojis changed.
+    EmojisUpdated { emojis: Vec<EmojiInfo> },
     Members { members: Vec<Member> },
     Error { message: String },
     Pong,

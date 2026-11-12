@@ -61,7 +61,13 @@ const REPLY_PREVIEW_LEN = 120;
 const OLDER_PAGE = 50;
 
 /** An emoji (or short emoji sequence): no spaces, no plain letters or digits. */
+/** A server's own emoji in text: <:name:id> (id 0: one of Hopp's own, built into the app). */
+const CUSTOM_EMOJI = /^<:[a-z0-9_]{2,32}:\d{1,9}>$/;
+const EMOJI_NAME = /^[a-z0-9_]{2,32}$/;
+const MAX_EMOJIS = 100;
+
 function validEmoji(emoji: string): boolean {
+  if (CUSTOM_EMOJI.test(emoji)) return true;
   return emoji.length > 0 && new TextEncoder().encode(emoji).length <= 32 && [...emoji].every((c) => c.codePointAt(0)! > 127 && !/\s/u.test(c));
 }
 
@@ -252,6 +258,7 @@ export class StromServer extends DurableObject<Env> {
         sender_name TEXT NOT NULL, author_key TEXT NOT NULL, text TEXT NOT NULL, sent_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
       CREATE TABLE IF NOT EXISTS notified (key TEXT NOT NULL, channel INTEGER NOT NULL, PRIMARY KEY (key, channel));
+      CREATE TABLE IF NOT EXISTS emojis (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, image TEXT NOT NULL, creator TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS images (
         id TEXT PRIMARY KEY, uploader TEXT NOT NULL, type TEXT NOT NULL, data BLOB NOT NULL,
@@ -360,7 +367,7 @@ export class StromServer extends DurableObject<Env> {
     // Over the server's share of storage: the oldest pictures make room.
     let total = Number(this.sql.exec("SELECT coalesce(sum(size), 0) AS n FROM images").one().n);
     while (total > MAX_IMAGE_STORE) {
-      const oldest = this.sql.exec("SELECT id, size FROM images ORDER BY created_at LIMIT 1").toArray()[0];
+      const oldest = this.sql.exec("SELECT id, size FROM images WHERE id NOT IN (SELECT image FROM emojis) ORDER BY created_at LIMIT 1").toArray()[0];
       if (!oldest) break;
       this.sql.exec("DELETE FROM images WHERE id = ?", oldest.id);
       total -= Number(oldest.size);
@@ -812,12 +819,19 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis"],
       roles: this.customRoles(),
+      emojis: this.emojis(),
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
     }
+  }
+
+  // ---------- the server's own emojis ----------
+
+  private emojis(): { id: number; name: string; image: string }[] {
+    return this.sql.exec("SELECT id, name, image FROM emojis ORDER BY name").toArray().map((r) => ({ id: Number(r.id), name: String(r.name), image: String(r.image) }));
   }
 
   // ---------- roles and private channels ----------
@@ -958,6 +972,31 @@ export class StromServer extends DurableObject<Env> {
         changed();
         // Its level decides what its people may do.
         this.rolesChanged();
+        return true;
+      }
+      case "create_emoji": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can add emojis.");
+        const name = String(msg.name ?? "").trim().toLowerCase();
+        const image = String(msg.image ?? "");
+        if (!EMOJI_NAME.test(name)) return fail("Emoji names are 2–32 characters: lowercase letters, numbers and _.");
+        if (this.sql.exec("SELECT 1 FROM emojis WHERE name = ?", name).toArray().length) return fail(`There's already an emoji called :${name}:.`);
+        if (Number(this.sql.exec("SELECT count(*) AS n FROM emojis").one().n) >= MAX_EMOJIS) return fail(`A server can have up to ${MAX_EMOJIS} emojis.`);
+        const owned = this.sql.exec("SELECT 1 FROM images WHERE id = ? AND uploader = ?", image, s.key!).toArray().length > 0;
+        if (!owned) return fail("That picture didn't upload. Try again.");
+        this.sql.exec("UPDATE images SET used = 1 WHERE id = ?", image);
+        this.sql.exec("INSERT INTO emojis (name, image, creator, created_at) VALUES (?, ?, ?, ?)", name, image, s.key!, Date.now());
+        this.audit(user.name, "create_emoji", ":" + name + ":", null);
+        this.broadcast({ type: "emojis_updated", emojis: this.emojis() });
+        return true;
+      }
+      case "delete_emoji": {
+        if (myRank < RANK.admin) return fail("Only admins and the owner can remove emojis.");
+        const row = this.sql.exec("SELECT name, image FROM emojis WHERE id = ?", Number(msg.id)).toArray()[0];
+        if (!row) return true;
+        this.sql.exec("DELETE FROM emojis WHERE id = ?", Number(msg.id));
+        this.sql.exec("DELETE FROM images WHERE id = ?", String(row.image));
+        this.audit(user.name, "delete_emoji", ":" + String(row.name) + ":", null);
+        this.broadcast({ type: "emojis_updated", emojis: this.emojis() });
         return true;
       }
       case "delete_role": {

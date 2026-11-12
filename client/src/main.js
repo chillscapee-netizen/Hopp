@@ -1912,6 +1912,7 @@ listen("roster", (e) => {
     state.pendingWatch = null;
     if (Date.now() - pw.at < 30_000) setTimeout(() => watchScreen(pw.session), 300);
   }
+  if ($("server-settings").open && !document.querySelector('[data-spanel="emojis"]').hidden) renderEmojiTab();
   // The Roles tab follows changes as they come.
   if ($("server-settings").open && !document.querySelector('[data-spanel="roles"]').hidden) renderRolesTab();
 });
@@ -2776,7 +2777,7 @@ async function followInvite(link) {
  * links are clickable. Everything is built as DOM nodes, never as HTML.
  */
 function messageText(text) {
-  const out = el("div", "msg-text");
+  const out = el("div", "msg-text" + (ONLY_EMOJI.test(text) ? " jumbo" : ""));
   const parts = text.split(/```(?:[a-z0-9+#-]*\n)?([\s\S]*?)```/i);
   parts.forEach((part, i) => {
     if (i % 2) {
@@ -2819,6 +2820,7 @@ function renderBlocks(text, out) {
 var LINK_ONE = new RegExp(LINK_PATTERN.source, "i");
 var INLINE_RULES = [
   ["code", /`([^`\n]+)`/],
+  ["emoji", /<:([a-z0-9_]{2,32}):(\d{1,9})>/],
   ["mention", /<@([0-9a-f]{64})>/],
   ["role", /<@&(\d+)>/],
   ["crowd", /(?<![\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/u],
@@ -2844,6 +2846,7 @@ function renderInline(text, out) {
     out.append(text.slice(0, m.index));
     const inner = m[1] ?? m[2] ?? "";
     if (kind === "code") out.append(el("code", "inline-code", inner));
+    else if (kind === "emoji") out.append(emojiNode(m[0]));
     else if (kind === "mention") out.append(el("span", "mention" + (inner === state.account?.publicKey ? " me" : ""), `@${nameForKey(inner)}`));
     else if (kind === "role") out.append(roleMentionNode(Number(inner)));
     else if (kind === "crowd") out.append(pingsOn() && !state.atHome ? el("span", "mention" + (crowdQuiet(currentServer()?.address) ? "" : " me"), m[0]) : m[0]);
@@ -3531,12 +3534,14 @@ function openServerSettings() {
   document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
   document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
   document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
+  document.querySelector('[data-stab="emojis"]').hidden = !state.roster?.features?.includes("emojis") || !can("manage");
   $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden;
   openModal($("server-settings"));
   call("get_server_settings");
 }
 function showServerTab(tab) {
   if (tab === "roles") renderRolesTab();
+  if (tab === "emojis") renderEmojiTab();
   if (tab === "audit") {
     $("audit-list").replaceChildren(el("li", "admin-empty", "Loading…"));
     call("get_audit_log");
@@ -3545,6 +3550,96 @@ function showServerTab(tab) {
   document.querySelectorAll("[data-spanel]").forEach((p) => (p.hidden = p.dataset.spanel !== tab));
 }
 document.querySelectorAll("[data-stab]").forEach((t) => t.addEventListener("click", () => showServerTab(t.dataset.stab)));
+
+// Emoji: admins add pictures with a name; everyone in the server can use them.
+var emojiDraft = null; // { bytes, url }
+
+function renderEmojiTab() {
+  const list = $("emoji-list");
+  const emojis = serverEmojis();
+  if (!emojis.length) {
+    list.replaceChildren(el("li", "admin-empty", "No emojis yet. Upload one: a picture, a name, done."));
+  } else {
+    list.replaceChildren(...emojis.map((e) => {
+      const li = el("li", "emoji-admin");
+      const img = el("img");
+      img.src = pictureUrl(e.image);
+      img.alt = "";
+      const remove = el("button", "icon-btn sm danger-hover");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove :" + e.name + ":");
+      remove.append(icon("trash", "sm"));
+      remove.addEventListener("click", async () => {
+        const ok = await confirmDialog({ title: "Remove :" + e.name + ":", text: "It disappears from every message and reaction that uses it.", ok: "Remove" });
+        if (ok) call("delete_emoji", { id: e.id });
+      });
+      li.append(img, el("span", "ellipsis", ":" + e.name + ":"), remove);
+      return li;
+    }));
+  }
+  $("emoji-upload").disabled = emojis.length >= 100;
+}
+
+/** A picture made into a 128 × 128 emoji (kept whole, centred, transparent around it). */
+async function emojiPicture(file) {
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const scale = Math.min(128 / bitmap.width, 128 / bitmap.height);
+  const w = bitmap.width * scale;
+  const h = bitmap.height * scale;
+  canvas.getContext("2d").drawImage(bitmap, (128 - w) / 2, (128 - h) / 2, w, h);
+  const blob = await new Promise((done) => canvas.toBlob(done, "image/webp", 0.92));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+$("emoji-upload").addEventListener("click", () => $("emoji-file").click());
+$("emoji-file").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const bytes = await emojiPicture(file);
+    if (emojiDraft?.url) URL.revokeObjectURL(emojiDraft.url);
+    emojiDraft = { bytes, url: URL.createObjectURL(new Blob([bytes], { type: "image/webp" })) };
+    $("emoji-new-img").src = emojiDraft.url;
+    // A name from the file's, as emoji names go: lowercase, numbers and _.
+    $("emoji-new-name").value = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 32) || "emoji";
+    $("emoji-new").hidden = false;
+    $("emoji-new-name").focus();
+    $("emoji-new-name").select();
+  } catch {
+    toast("That picture couldn't be read. Try a PNG, JPEG, WebP or GIF.", true);
+  }
+});
+$("emoji-new-name").addEventListener("input", (e) => (e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "")));
+$("emoji-new-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("emoji-new-save").click();
+  }
+});
+$("emoji-new-cancel").addEventListener("click", () => {
+  $("emoji-new").hidden = true;
+  emojiDraft = null;
+});
+$("emoji-new-save").addEventListener("click", async () => {
+  const name = $("emoji-new-name").value;
+  if (!emojiDraft) return;
+  if (!/^[a-z0-9_]{2,32}$/.test(name)) return toast("Emoji names are 2–32 characters: lowercase letters, numbers and _.", true);
+  if (serverEmojis().some((x) => x.name === name)) return toast("There's already an emoji called :" + name + ":.", true);
+  $("emoji-new-save").disabled = true;
+  try {
+    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(emojiDraft.bytes), kind: "image/webp" });
+    await invoke("create_emoji", { name, image: id });
+    $("emoji-new").hidden = true;
+    emojiDraft = null;
+  } catch (err) {
+    toast(friendlyError(err), true);
+  } finally {
+    $("emoji-new-save").disabled = false;
+  }
+});
 
 // Overview: the owner edits the server's name and picture; saved together.
 const overview = { icon: null };
@@ -5825,7 +5920,7 @@ function renderDmView(keepScroll) {
       if (!$("emoji-picker").hidden) return closePopovers();
       openEmojiPicker(
         emoji,
-        (e) => {
+        (picked, e) => {
           const at = input.selectionStart ?? input.value.length;
           input.value = input.value.slice(0, at) + e + input.value.slice(input.selectionEnd ?? at);
           input.focus();
@@ -5987,7 +6082,8 @@ function loadOlderDms(peer) {
 }
 
 async function sendDm(peer, input) {
-  const text = input.value.trim();
+  // Hopp's own emojis work here; a server's wouldn't show for someone who isn't in it.
+  const text = encodeEmojis(input.value.trim(), false);
   if (!text) return;
   if (await phraseBlocked(text)) return;
   input.value = "";
@@ -6062,6 +6158,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  text = emojiWords(text);
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
@@ -6453,7 +6550,8 @@ function messageActions(m) {
   };
   for (const emoji of quickReactions()) {
     const mine = m.reactions?.find((r) => r.emoji === emoji)?.keys.includes(state.account?.publicKey);
-    const b = el("button", "icon-btn sm quick-react" + (mine ? " on" : ""), emoji);
+    const b = el("button", "icon-btn sm quick-react" + (mine ? " on" : ""));
+    b.append(emojiNode(emoji));
     b.type = "button";
     b.dataset.tip = mine ? `Remove ${emoji}` : `React ${emoji}`;
     b.addEventListener("click", () => react(m, emoji, !mine));
@@ -6586,6 +6684,60 @@ function messageEditor(m) {
   return wrap;
 }
 
+// ---------- custom emojis ----------
+//
+// Written <:name:id> in messages and reactions. Id 0: one of Hopp's own (built into the app,
+// so they work everywhere, DMs too); any other id: one of this server's, uploaded by its admins.
+// In the message box they're typed :name: and turned into the token on sending.
+
+var CUSTOM_EMOJI = /<:([a-z0-9_]{2,32}):(\d{1,9})>/;
+var CUSTOM_EMOJI_ALL = /<:([a-z0-9_]{2,32}):(\d{1,9})>/g;
+/** A message of only emojis (custom ones) shows them big. */
+var ONLY_EMOJI = /^\s*(?:<:[a-z0-9_]{2,32}:\d{1,9}>\s*){1,27}$/;
+
+/** This server's emojis, when it has any. */
+function serverEmojis() {
+  return online() && state.roster?.features?.includes("emojis") ? state.roster.emojis ?? [] : [];
+}
+
+/** The picture for a token's emoji, or null when it isn't known here (another server's). */
+function emojiUrl(name, id) {
+  if (Number(id) === 0) return window.HOPP_EMOJI?.[name] ?? null;
+  const e = serverEmojis().find((x) => x.id === Number(id));
+  return e ? pictureUrl(e.image) : null;
+}
+
+/** An emoji to show: a picture for a custom one (its name when unknown here), or the character. */
+function emojiNode(emoji, cls = "custom-emoji") {
+  const m = typeof emoji === "string" && emoji.match(CUSTOM_EMOJI);
+  if (!m || m[0] !== emoji) return document.createTextNode(emoji);
+  const url = emojiUrl(m[1], m[2]);
+  if (!url) return el("span", "custom-emoji-name", ":" + m[1] + ":");
+  const img = el("img", cls);
+  img.src = url;
+  img.alt = ":" + m[1] + ":";
+  img.draggable = false;
+  return img;
+}
+
+/** How an emoji reads in words (notifications, previews): ":name:" for custom ones. */
+function emojiWords(text) {
+  return String(text).replace(CUSTOM_EMOJI_ALL, (_, name) => ":" + name + ":");
+}
+
+/** ":name:" typed in a message becomes the emoji, if there is one by that name (Hopp's own, or
+ *  this server's when `withServer`). Code is left alone. */
+function encodeEmojis(text, withServer = true) {
+  const mine = withServer ? serverEmojis() : [];
+  return text.replace(/(```[\s\S]*?```|`[^`\n]*`)|(?<![<\w]):([a-z0-9_]{2,32}):(?!\d)/g, (all, code, name) => {
+    if (code) return code;
+    const own = mine.find((e) => e.name === name);
+    if (own) return "<:" + name + ":" + own.id + ">";
+    if (window.HOPP_EMOJI?.[name]) return "<:" + name + ":0>";
+    return all;
+  });
+}
+
 function reactionRow(m) {
   const row = el("div", "reactions");
   const me = state.account?.publicKey;
@@ -6593,7 +6745,9 @@ function reactionRow(m) {
     const mine = r.keys.includes(me);
     const chip = el("button", "reaction" + (mine ? " mine" : ""));
     chip.type = "button";
-    chip.append(el("span", "reaction-emoji", r.emoji), el("span", "reaction-count", String(r.keys.length)));
+    const face = el("span", "reaction-emoji");
+    face.append(emojiNode(r.emoji));
+    chip.append(face, el("span", "reaction-count", String(r.keys.length)));
     const names = r.keys.slice(0, 6).map(nameForKey);
     chip.dataset.tip = names.join(", ") + (r.keys.length > 6 ? ` and ${r.keys.length - 6} more` : "") + ` reacted with ${r.emoji}`;
     chip.addEventListener("click", () => react(m, r.emoji, !mine));
@@ -6646,9 +6800,11 @@ var picker = { tab: "emoji", onEmoji: null, onGif: null, gifTimer: 0, gifQuery: 
  * Opens the picker. From the composer it sits right above the box with a GIF tab;
  * for reactions it opens beside the button and only has emoji.
  */
-function openEmojiPicker(anchor, onEmoji, onGif) {
+function openEmojiPicker(anchor, onEmoji, onGif, { plain = false } = {}) {
   const pop = $("emoji-picker");
   picker.onEmoji = onEmoji;
+  // A status shows everywhere, even where a server's emojis don't: plain emojis only there.
+  picker.plain = plain;
   picker.onGif = onGif ?? null;
   if (!onGif) picker.tab = "emoji";
   const search = el("input", "picker-search");
@@ -6706,12 +6862,15 @@ function renderPickerBody(body, q) {
   const pick = (emoji) => {
     rememberEmoji(emoji);
     closePopovers();
-    picker.onEmoji(emoji);
+    // In a message box a custom one is typed as its name; elsewhere (reactions) it's the emoji.
+    const custom = emoji.match(CUSTOM_EMOJI);
+    picker.onEmoji(emoji, custom ? ":" + custom[1] + ": " : emoji);
   };
   const grid = (list) => {
     const g = el("div", "emoji-grid");
     for (const [emoji, words] of list) {
-      const b = el("button", "emoji-option", emoji);
+      const b = el("button", "emoji-option");
+      b.append(emojiNode(emoji, "custom-emoji option"));
       b.type = "button";
       b.setAttribute("aria-label", words ? `:${words.split(" ")[0]}:` : "");
       b.addEventListener("click", () => pick(emoji));
@@ -6720,12 +6879,17 @@ function renderPickerBody(body, q) {
     return g;
   };
   const all = EMOJI_GROUPS.map(([name, list]) => [name, list.split("|").map((x) => [x.split(" ")[0], x.split(" ").slice(1).join(" ")])]);
+  // Custom ones first: this server's (by its name), then Hopp's own.
+  const own = serverEmojis().map((e) => ["<:" + e.name + ":" + e.id + ">", e.name.replace(/_/g, " ") + " " + e.name]);
+  const hopp = Object.keys(window.HOPP_EMOJI ?? {}).map((n) => ["<:" + n + ":0>", n.replace(/_/g, " ") + " " + n]);
+  if (hopp.length && !picker.plain) all.unshift(["Hopp", hopp]);
+  if (own.length && !picker.plain) all.unshift([state.roster?.server_name || "This server", own]);
   const parts = [];
   if (q) {
     const found = all.flatMap(([, l]) => l).filter(([, words]) => words.split(" ").some((w) => w.startsWith(q)));
     parts.push(found.length ? grid(found) : el("div", "picker-empty", "No emoji found."));
   } else {
-    const recent = recentEmoji();
+    const recent = recentEmoji().filter((e) => !CUSTOM_EMOJI.test(e) || (!picker.plain && emojiUrl(...e.match(CUSTOM_EMOJI).slice(1))));
     if (recent.length) parts.push(el("div", "emoji-head", "Recently used"), grid(recent.map((e) => [e, ""])));
     for (const [name, list] of all) parts.push(el("div", "emoji-head", name), grid(list));
   }
@@ -6778,7 +6942,7 @@ $("emoji-btn").addEventListener("click", (e) => {
   if (!$("emoji-picker").hidden) return closePopovers();
   openEmojiPicker(
     e.currentTarget,
-    (emoji) => {
+    (picked, emoji) => {
       const at = chatInput.selectionStart ?? chatInput.value.length;
       chatInput.value = chatInput.value.slice(0, at) + emoji + chatInput.value.slice(chatInput.selectionEnd ?? at);
       chatInput.focus();
@@ -6832,6 +6996,7 @@ $("scroller").addEventListener("scroll", () => {
 
 function sendChat(channel, text, replyTo) {
   state.unreadHold = null;
+  text = encodeEmojis(text);
   const answered = replyTo ? state.chats.get(channel)?.find((m) => m.id === replyTo) : null;
   const o = {
     nonce: crypto.randomUUID(), channel, text, replyTo, at: Date.now(), failed: false, why: "",
@@ -9981,7 +10146,7 @@ document.addEventListener("keydown", (e) => {
 
 /** The three reactions you use most, offered on hover. */
 function quickReactions() {
-  const recent = recentEmoji();
+  const recent = recentEmoji().filter((e) => !CUSTOM_EMOJI.test(e) || emojiUrl(...e.match(CUSTOM_EMOJI).slice(1)));
   return [...recent, "👍", "😂", "❤️"].filter((e, i, all) => all.indexOf(e) === i).slice(0, 3);
 }
 
@@ -12788,11 +12953,16 @@ async function setCustomStatus(status) {
 }
 
 $("status-emoji").addEventListener("click", (e) =>
-  openEmojiPicker(e.currentTarget, (emoji) => {
-    statusEmoji = emoji;
-    $("status-emoji").textContent = emoji;
-    $("status-emoji").classList.remove("empty");
-  }),
+  openEmojiPicker(
+    e.currentTarget,
+    (emoji) => {
+      statusEmoji = emoji;
+      $("status-emoji").textContent = emoji;
+      $("status-emoji").classList.remove("empty");
+    },
+    null,
+    { plain: true },
+  ),
 );
 $("status-clear-text").addEventListener("click", () => {
   $("status-text").value = "";
