@@ -1525,6 +1525,7 @@ function menuItems(items, inSub = false) {
         const r = b.getBoundingClientRect();
         clearTimeout(submenuTimer);
         const sub = $("server-submenu");
+        popoverHost(sub);
         sub.replaceChildren(...menuItems(item.submenu, true));
         sub.hidden = false;
         const left = r.right + 4 + 220 > window.innerWidth ? r.left - 224 : r.right + 4;
@@ -4904,8 +4905,20 @@ function closePopovers() {
   $("sidebar-head").classList.remove("open");
 }
 
+/**
+ * An open modal (settings, say) sits in the browser's top layer, above everything in the page;
+ * a menu opened from inside it has to live in it too, or it opens unseen behind it.
+ */
+function popoverHost(pop) {
+  const modal = [...document.querySelectorAll("dialog[open]")].filter((d) => d.matches(":modal")).pop();
+  const host = modal ?? document.body;
+  if (pop.parentElement !== host) host.append(pop);
+}
+
 function placePopover(pop, x, y) {
   closePopovers();
+  popoverHost(pop);
+  if (pop.id === "server-menu") popoverHost($("server-submenu"));
   pop.style.width = "";
   pop.hidden = false;
   pop.style.left = `${Math.max(8, Math.min(x, window.innerWidth - pop.offsetWidth - 8))}px`;
@@ -9822,7 +9835,7 @@ function memberRolesButton(m) {
   if (!can("manage") || above || !givable.length) return el("span", "role-label member-roles", label);
   const b = el("button", "row-select member-roles", "");
   b.type = "button";
-  b.append(el("span", "ellipsis", label), icon("chevron", "xs member-roles-chev"));
+  b.append(el("span", "ellipsis", label));
   b.setAttribute("aria-label", "Roles for " + m.name);
   b.addEventListener("click", () => {
     const r = b.getBoundingClientRect();

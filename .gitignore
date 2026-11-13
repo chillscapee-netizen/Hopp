@@ -7,3 +7,6 @@ cloud/public/download/
 cloud/public/update/
 target-release/
 cloud/public/whats-new.json
+
+# Pictures of the app stay off GitHub (the website gets them from this folder when deployed).
+cloud/public/site/app*.png

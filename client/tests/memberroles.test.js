@@ -23,6 +23,10 @@
   check("no roles says so", row("Jonas")?.querySelector(".member-roles")?.textContent.includes("No roles"));
   row("Jonas").querySelector("button.member-roles").click();
   await wait(30);
+  const menuEl = document.getElementById("server-menu");
+  const box = menuEl.getBoundingClientRect();
+  const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  check("the menu shows on top of the settings, where you can click it", !menuEl.hidden && menuEl.contains(top), top?.outerHTML?.slice(0, 80));
   const items = [...document.querySelectorAll("#server-menu .menu-item")].map((b) => b.textContent.trim());
   check("the new role is in the list", items.includes("Brand new"), items.join(", "));
   [...document.querySelectorAll("#server-menu .menu-item")].find((b) => b.textContent.trim() === "Brand new").click();
