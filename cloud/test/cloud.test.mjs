@@ -786,6 +786,46 @@ test("voice messages: WebM audio uploads, is sent as hopp-voice and served back;
   owner.close();
 });
 
+test("threads: started from a message, one per message, private with their channel, removable by whoever started them", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("threads"));
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  owner.send({ type: "send_chat", channel: general, text: "Raid on Saturday?" });
+  const start = (await owner.waitFor((m) => m.type === "chat" && m.message.text === "Raid on Saturday?")).message;
+  bob.send({ type: "create_thread", channel: general, message: start.id, name: "" });
+  const made = await bob.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.parent === general));
+  const thread = made.channels.find((c) => c.parent === general);
+  assert.equal(thread.starter, start.id);
+  assert.equal(thread.name, "Raid on Saturday?", "named after the message when no name is given");
+  // Talking in it works like any channel, and it shows when it was last busy.
+  bob.send({ type: "send_chat", channel: thread.id, text: "I'm in" });
+  await owner.waitFor((m) => m.type === "chat" && m.message.channel === thread.id && m.message.text === "I'm in");
+  // Asking again for the same message makes no second thread.
+  owner.send({ type: "create_thread", channel: general, message: start.id, name: "Another" });
+  const again = await owner.waitFor((m) => m.type === "channels_updated");
+  assert.equal(again.channels.filter((c) => c.parent === general).length, 1);
+  assert.ok(again.channels.find((c) => c.id === thread.id).last_at > 0);
+  // Not inside a thread, and not in a voice channel.
+  owner.send({ type: "create_thread", channel: thread.id, message: null, name: "Nested" });
+  assert.match(await errorOf(owner), /text channel/);
+  owner.send({ type: "create_thread", channel: channelId(owner, "Lobby"), message: null, name: "Voice" });
+  assert.match(await errorOf(owner), /text channel/);
+  // Whoever started it may remove it; so may moderators.
+  bob.send({ type: "delete_channel", channel: thread.id });
+  await owner.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === thread.id));
+  // A thread goes when its channel goes.
+  owner.send({ type: "create_channel", name: "plans", kind: "text" });
+  const plans = (await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "plans"))).channels.find((c) => c.name === "plans").id;
+  owner.send({ type: "create_thread", channel: plans, message: null, name: "Saturday" });
+  await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.parent === plans));
+  owner.send({ type: "delete_channel", channel: plans });
+  const gone = await owner.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === plans));
+  assert.ok(!gone.channels.some((c) => c.parent === plans), "its threads went with it");
+  owner.close();
+  bob.close();
+});
+
 test("screen sharing: a flag for the voice channel, handshakes passed on within it only", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("screen"));

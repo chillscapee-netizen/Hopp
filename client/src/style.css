@@ -3968,3 +3968,18 @@ ul.msg-list { list-style: disc; }
 .inbox-item .pin-head > strong { flex: 0 1 auto; max-width: 45%; }
 .inbox-item .search-where { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-item .pin-date { flex: none; }
+
+/* Threads: under their channel in the sidebar, and a chip under the message they came from. */
+.channel-row.thread-row { padding-left: 30px; font-size: 13.5px; }
+.channel-row.thread-row .i { width: 14px; height: 14px; }
+.thread-chip { display: flex; align-items: center; gap: 8px; max-width: 420px; margin: 6px 0 2px; padding: 7px 12px; border: none; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+.thread-chip:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.thread-chip strong { min-width: 0; color: var(--text); font-size: 14px; }
+.thread-chip-sub { flex: none; color: var(--faint); font-size: 12.5px; }
+.thread-modal { width: min(460px, 94vw); }
+.thread-modal .modal-body { display: grid; gap: 8px; }
+.thread-modal input[type="text"] { width: 100%; box-sizing: border-box; }
+.thread-parent { padding: 0; color: var(--muted); font: inherit; font-size: inherit; }
+.thread-parent:hover { color: var(--text); text-decoration: underline; }
+.thread-origin { display: block; max-width: 520px; margin-top: 10px; padding: 10px 14px; border: none; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+.thread-origin:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }

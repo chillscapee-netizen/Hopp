@@ -14,6 +14,8 @@ const MAX_SERVER_NAME_LEN = 40;
 const MAX_ICON_LEN = 200_000;
 const MAX_CHAT_LEN = 2000;
 const MAX_CHANNELS = 50;
+/** Threads a server keeps; past this, starting one lets the quietest old one go. */
+const MAX_THREADS = 300;
 const MAX_MEMBERS_ONLINE = 500;
 /** A screen-sharing handshake message is never bigger than this. */
 const MAX_SCREEN_SIGNAL = 65_536;
@@ -121,7 +123,7 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[] }
+interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[]; parent?: number; starter?: number; last_at?: number; creator?: string }
 interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number; mentionable: boolean }
 /** @everyone and @here as words of their own. */
 const CROWD = /(^|[^\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/gu;
@@ -310,6 +312,10 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
     if (!channelColumns.has("slowmode")) this.sql.exec("ALTER TABLE channels ADD COLUMN slowmode INTEGER");
     if (!channelColumns.has("private_roles")) this.sql.exec("ALTER TABLE channels ADD COLUMN private_roles TEXT");
+    // Threads: text channels started in another text channel, often from one of its messages.
+    if (!channelColumns.has("parent")) this.sql.exec("ALTER TABLE channels ADD COLUMN parent INTEGER");
+    if (!channelColumns.has("starter")) this.sql.exec("ALTER TABLE channels ADD COLUMN starter INTEGER");
+    if (!channelColumns.has("creator")) this.sql.exec("ALTER TABLE channels ADD COLUMN creator TEXT");
     const roleColumns = new Set(this.sql.exec("PRAGMA table_info(roles)").toArray().map((c) => String(c.name)));
     if (!roleColumns.has("mentionable")) this.sql.exec("ALTER TABLE roles ADD COLUMN mentionable INTEGER");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
@@ -431,7 +437,11 @@ export class StromServer extends DurableObject<Env> {
 
   private channels(): Channel[] {
     return this.sql
-      .exec("SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles FROM channels ORDER BY coalesce(position, id + 100000), id")
+      .exec(
+        `SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles, parent, starter, creator,
+           CASE WHEN parent IS NULL THEN NULL ELSE (SELECT max(sent_at) FROM messages m WHERE m.channel = channels.id) END AS last_at
+         FROM channels ORDER BY coalesce(position, id + 100000), id`,
+      )
       .toArray()
       .map((r) => {
         const c: Channel = { id: Number(r.id), name: String(r.name), kind: r.kind as ChannelKind };
@@ -442,8 +452,16 @@ export class StromServer extends DurableObject<Env> {
         if (r.afk_after) c.afk_after = Number(r.afk_after);
         if (r.slowmode) c.slowmode = Number(r.slowmode);
         if (r.private_roles) c.private_roles = JSON.parse(String(r.private_roles));
+        if (r.parent !== null && r.parent !== undefined) {
+          c.parent = Number(r.parent);
+          if (r.starter !== null && r.starter !== undefined) c.starter = Number(r.starter);
+          if (r.last_at) c.last_at = Number(r.last_at);
+          if (r.creator) c.creator = String(r.creator);
+        }
         return c;
-      });
+      })
+      // A thread's people are its channel's: it takes the channel's privacy along.
+      .map((c, _, all) => (c.parent === undefined ? c : { ...c, private_roles: all.find((p) => p.id === c.parent)?.private_roles })) as Channel[];
   }
 
   private channel(id: number): Channel | undefined {
@@ -855,7 +873,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1419,9 +1437,29 @@ export class StromServer extends DurableObject<Env> {
         const kind: ChannelKind = msg.kind === "voice" ? "voice" : "text";
         const name = normalizeChannelName(msg.name, kind);
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
-        if (this.channels().length >= MAX_CHANNELS) return this.error(ws, `A server can have at most ${MAX_CHANNELS} channels.`);
+        if (this.channels().filter((c) => c.parent === undefined).length >= MAX_CHANNELS) return this.error(ws, `A server can have at most ${MAX_CHANNELS} channels.`);
         this.sql.exec("INSERT INTO channels (name, kind) VALUES (?, ?)", name, kind);
         this.audit(user.name, "create_channel", name, null);
+        return this.channelsChanged();
+      }
+      case "create_thread": {
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't start a thread right now.");
+        const parent = this.channel(Number(msg.channel));
+        if (!parent || parent.kind !== "text" || parent.parent !== undefined || !this.canSee(s.key, parent)) return this.error(ws, "Threads start in a text channel.");
+        const fromId = msg.message === null || msg.message === undefined ? null : Number(msg.message);
+        const from = fromId === null ? null : this.message(parent.id, fromId);
+        if (fromId !== null && !from) return this.error(ws, "That message no longer exists.");
+        // One thread per message: asking again just leads to it.
+        if (from && this.channels().some((c) => c.parent === parent.id && c.starter === from.id)) return this.channelsChanged();
+        const name = String(msg.name ?? "").replace(/\s+/g, " ").trim().slice(0, 100) || (from ? plainText(from.text).replace(/\s+/g, " ").trim().slice(0, 40) : "");
+        if (!name) return this.error(ws, "Give the thread a name.");
+        const threads = this.channels().filter((c) => c.parent !== undefined);
+        if (threads.length >= MAX_THREADS) {
+          const quietest = threads.sort((a, b) => (a.last_at ?? 0) - (b.last_at ?? 0))[0];
+          this.sql.exec("DELETE FROM channels WHERE id = ?", quietest.id);
+          this.sql.exec("DELETE FROM messages WHERE channel = ?", quietest.id);
+        }
+        this.sql.exec("INSERT INTO channels (name, kind, parent, starter, creator) VALUES (?, 'text', ?, ?, ?)", name, parent.id, from?.id ?? null, s.key!);
         return this.channelsChanged();
       }
       case "update_channel": {
@@ -1474,9 +1512,16 @@ export class StromServer extends DurableObject<Env> {
         return this.channelsChanged();
       }
       case "delete_channel": {
-        if (!allowed("admin")) return;
         const id = Number(msg.channel);
-        if (!this.channel(id)) return this.error(ws, "That channel doesn't exist.");
+        const target = this.channel(id);
+        // A thread: moderators, or whoever started it; a channel: admins.
+        if (!(target?.parent !== undefined && (myRank >= RANK.mod || target.creator === s.key)) && !allowed("admin")) return;
+        if (!target) return this.error(ws, "That channel doesn't exist.");
+        // Its threads go with it.
+        for (const t of this.channels().filter((c) => c.parent === id)) {
+          this.sql.exec("DELETE FROM channels WHERE id = ?", t.id);
+          this.sql.exec("DELETE FROM messages WHERE channel = ?", t.id);
+        }
         this.audit(user.name, "delete_channel", this.channel(id)!.name, null);
         this.sql.exec("DELETE FROM channels WHERE id = ?", id);
         this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND text LIKE 'hopp-image:%')", id);

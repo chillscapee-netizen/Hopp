@@ -1113,6 +1113,11 @@ fn update_server(state: State<'_, AppState>, name: String, icon: Option<String>,
 }
 
 #[tauri::command]
+fn create_thread(state: State<'_, AppState>, channel: ChannelId, message: Option<u64>, name: String) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::CreateThread { channel, message, name }))
+}
+
+#[tauri::command]
 fn create_channel(state: State<'_, AppState>, name: String, kind: ChannelKind) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::CreateChannel { name, kind }))
 }
@@ -1906,6 +1911,7 @@ fn main() {
             set_ptt_key,
             record_ptt_key,
             set_keybinds,
+            create_thread,
             set_attenuation,
             record_keybind,
             cancel_ptt_recording,

@@ -656,6 +656,22 @@
       </div>
     </form>
   </dialog>
+  <dialog id="thread-dialog" class="modal thread-modal">
+    <form method="dialog" id="thread-form">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2 class="forward-title">Start a thread</h2>
+        <div id="thread-from" class="forward-preview"></div>
+        <label class="field-label" for="thread-name">Name</label>
+        <input id="thread-name" type="text" maxlength="100" autocomplete="off">
+        <p id="thread-error" class="error" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" class="btn primary">Start thread</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="forward-dialog" class="modal invite-modal forward-modal">
     <div class="modal-body">
       <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>

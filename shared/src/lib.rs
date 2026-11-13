@@ -54,6 +54,15 @@ pub struct Channel {
     /// A private channel: only people with one of these roles (and admins) see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_roles: Option<Vec<u32>>,
+    /// Cloud servers: a thread, started in this text channel (its people are the channel's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ChannelId>,
+    /// A thread: the message it was started from, in its parent channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starter: Option<u64>,
+    /// A thread: when something was last said in it (ms), for showing the lively ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_at: Option<u64>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -319,6 +328,9 @@ pub enum ClientMsg {
     React { channel: ChannelId, id: u64, emoji: String, on: bool },
     /// Owner only: pin a message to its channel, or unpin it.
     Pin { channel: ChannelId, id: u64, on: bool },
+    /// Cloud servers whose welcome lists "threads": a thread from a message in a text channel
+    /// (or without one), with a name.
+    CreateThread { channel: ChannelId, message: Option<u64>, name: String },
     /// Answered with `Pins`: a channel's pinned messages.
     GetPins { channel: ChannelId },
     /// Answered with `OlderHistory`: up to [`OLDER_PAGE`] messages before `before`.

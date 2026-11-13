@@ -37,7 +37,7 @@ impl ServerConfig {
         let channels: Vec<Channel> = channels
             .iter()
             .enumerate()
-            .map(|(i, (name, kind))| Channel { id: i as ChannelId, name: name.to_string(), kind: *kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None, private_roles: None })
+            .map(|(i, (name, kind))| Channel { id: i as ChannelId, name: name.to_string(), kind: *kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None, private_roles: None, parent: None, starter: None, last_at: None })
             .collect();
         ServerConfig { name: name.into(), next_channel_id: channels.len() as ChannelId, channels, owner: None, icon: None }
     }

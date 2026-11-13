@@ -1725,7 +1725,7 @@ async function connectTo(server, create, reconnecting) {
     // We're a member now; the invite has done its job.
     delete server.invite;
     saveServers();
-    if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
+    if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels().find((c) => c.parent == null)?.id ?? null;
     renderedChannel = undefined;
     applyUserVolumes();
     return true;
@@ -1867,6 +1867,14 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
+  if (state.pendingThread) {
+    const p = state.pendingThread;
+    const made = state.roster.channels.find((c) => c.parent === p.channel && (p.starter == null ? c.name === p.name : c.starter === p.starter));
+    if (made) {
+      state.pendingThread = null;
+      setTimeout(() => openTextChannel(made.id), 0);
+    }
+  }
   // A channel made just now has no history coming: it starts empty, with its welcome.
   if (knownChannels.size) {
     for (const c of state.roster.channels) {
@@ -1908,7 +1916,7 @@ listen("roster", (e) => {
   }
   if (state.pendingView !== undefined && chatChannels().some((c) => c.id === state.pendingView)) state.view = state.pendingView;
   state.pendingView = undefined;
-  if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels()[0]?.id ?? null;
+  if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels().find((c) => c.parent == null)?.id ?? null;
   forgetDeletedChannels();
   const pending = state.pendingCategory;
   const made = pending && state.roster.channels.find((c) => !pending.known.has(c.id));
@@ -2377,6 +2385,18 @@ function renderSidebar() {
     if (owner) draggableChannel(row, ch);
     return row;
   };
+  const withThreads = (ch) => [textRow(ch), ...threadsOf(ch.id, true).map(threadRow)];
+  const threadRow = (t) => {
+    const row = el("button", "channel-row thread-row");
+    row.classList.toggle("current", t.id === state.view);
+    row.classList.toggle("unread", t.id !== state.view && channelUnread(address, t.id));
+    row.append(icon("message", "sm"), el("span", "ellipsis", t.name));
+    const mentions = channelMentions(address, t.id);
+    if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
+    row.addEventListener("click", () => openTextChannel(t.id));
+    row.addEventListener("contextmenu", (e) => openChannelMenu(t, e));
+    return row;
+  };
   const mine = myVoice();
   const voiceRow = (ch) => {
     const wrap = el("div");
@@ -2404,12 +2424,12 @@ function renderSidebar() {
   };
 
   // Channels without a category first, as text and voice lists; then each category.
-  const plainText = textChannels().filter((c) => !c.category);
+  const plainText = textChannels().filter((c) => !c.category && c.parent == null);
   const plainVoice = voiceChannels().filter((c) => !c.category);
   const categories = [...new Set(r.channels.map((c) => c.category).filter(Boolean))];
   if (plainText.length || !categories.length) {
     items.push(category("Text channels", owner ? () => openChannelDialog("text") : null));
-    items.push(...plainText.map(textRow));
+    items.push(...plainText.flatMap(withThreads));
     if (!plainText.length) items.push(el("div", "empty-channels", "No text channels"));
   }
   if (plainVoice.length || !categories.length) {
@@ -2431,11 +2451,11 @@ function renderSidebar() {
       renderSidebar();
     });
     items.push(head);
-    const inside = r.channels.filter((c) => c.category === name);
+    const inside = r.channels.filter((c) => c.category === name && c.parent == null);
     for (const ch of inside) {
       // A closed category still shows where you are and what's waiting.
       const show = !closed || ch.id === state.view || ch.id === mine || channelUnread(address, ch.id);
-      if (show) items.push(ch.kind === "text" ? textRow(ch) : voiceRow(ch));
+      if (show) items.push(...(ch.kind === "text" ? (closed ? [textRow(ch)] : withThreads(ch)) : [voiceRow(ch)]));
     }
   }
 
@@ -2484,7 +2504,10 @@ function openChannelMenu(ch, e) {
         ? [{ label: "Mark as read", icon: "check", action: () => markChannelRead(address, ch.id) }]
         : []),
       ...(ch.kind === "text" ? [{ label: muted ? "Unmute channel" : "Mute channel", icon: "bell", action: () => setChannelMuted(address, ch.id, !muted) }] : []),
-      ...(can("manage")
+      ...(ch.parent != null && (can("moderate") || ch.creator === state.account?.publicKey)
+        ? ["sep", { label: "Delete thread", icon: "trash", danger: true, action: () => deleteChannel(ch) }]
+        : []),
+      ...(can("manage") && ch.parent == null
         ? [
             ...(ch.kind === "text" ? ["sep"] : []),
             { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
@@ -2499,8 +2522,9 @@ function openChannelMenu(ch, e) {
 }
 
 async function deleteChannel(ch) {
-  const what = ch.kind === "text" ? `#${ch.name} and all of its messages` : ch.name;
-  const ok = await confirmDialog({ title: "Delete channel", text: `Delete ${what}? This can't be undone.`, ok: "Delete channel" });
+  const thread = ch.parent != null;
+  const what = thread ? `the thread "${ch.name}" and all of its messages` : ch.kind === "text" ? `#${ch.name} and all of its messages, threads too` : ch.name;
+  const ok = await confirmDialog({ title: thread ? "Delete thread" : "Delete channel", text: `Delete ${what}? This can't be undone.`, ok: thread ? "Delete thread" : "Delete channel" });
   if (ok) call("delete_channel", { channel: ch.id });
 }
 
@@ -2689,10 +2713,18 @@ function renderChannelView() {
   // A voice channel says who is in it; the server count belongs to text channels.
   const inVoice = view !== null && isVoiceChannel(view) ? r.users.filter((u) => u.voice_channel === view).length : null;
   $("chat-topic").textContent = topic || (inVoice === null ? `${r.users.length} online` : inVoice ? `${inVoice} in voice` : "Nobody in voice yet");
+  // A thread says which channel it belongs to, a click away.
+  const parentId = view === null ? null : channel(view)?.parent ?? null;
+  if (parentId != null) {
+    const back = el("button", "link thread-parent", "in #" + channelName(parentId));
+    back.type = "button";
+    back.addEventListener("click", () => openTextChannel(parentId));
+    $("chat-topic").replaceChildren(back);
+  }
   $("composer").hidden = view === null;
   $("chat-input").placeholder = composerHint(view);
   $("chat-input").disabled = !!timedOutUntil(meUser());
-  $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : '<use href="#i-hash"/>';
+  $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : channel(view)?.parent != null ? '<use href="#i-message"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
   $("voice-msg-btn").hidden = !voiceMessagesHere();
@@ -3019,12 +3051,35 @@ function renderMessages(keepScrollUnlessAtBottom) {
   const welcome = el("li", "welcome");
   const badge = el("div", "welcome-icon");
   const inVoiceChannel = isVoiceChannel(state.view);
-  badge.append(icon(inVoiceChannel ? "volume" : "hash"));
-  welcome.append(
-    badge,
-    el("h1", "", inVoiceChannel ? `${name}` : `Welcome to #${name}!`),
-    el("p", "", channel(state.view)?.topic || (inVoiceChannel ? "The chat for this voice channel: links, clips and anything you'd rather type." : `This is the start of the #${name} channel.`)),
-  );
+  const here = channel(state.view);
+  if (here?.parent != null) {
+    // A thread: where it was started, and from what.
+    badge.append(icon("message"));
+    const from = here.starter != null ? (state.chats.get(here.parent) ?? []).find((x) => x.id === here.starter) : null;
+    const sub = el("p", "");
+    const back = el("button", "link", "#" + channelName(here.parent));
+    back.type = "button";
+    back.addEventListener("click", () => openTextChannel(here.parent));
+    sub.append("A thread in ", back, from ? ", started from " + (nameHere(from.author_key) ?? from.sender_name) + "'s message:" : ".");
+    welcome.append(badge, el("h1", "", name), sub);
+    if (from) {
+      const quote = el("button", "thread-origin");
+      quote.type = "button";
+      quote.append(el("div", "pin-text", previewText(from.text) || "A message"));
+      quote.addEventListener("click", () => {
+        openTextChannel(here.parent);
+        jumpToMessage(from.id);
+      });
+      welcome.append(quote);
+    }
+  } else {
+    badge.append(icon(inVoiceChannel ? "volume" : "hash"));
+    welcome.append(
+      badge,
+      el("h1", "", inVoiceChannel ? `${name}` : `Welcome to #${name}!`),
+      el("p", "", here?.topic || (inVoiceChannel ? "The chat for this voice channel: links, clips and anything you'd rather type." : `This is the start of the #${name} channel.`)),
+    );
+  }
   if (msgs.length === 0 && can("manage")) {
     const actions = el("div", "welcome-actions");
     const invite = el("button", "btn primary sm", "Invite people");
@@ -3115,12 +3170,14 @@ function renderMessages(keepScrollUnlessAtBottom) {
     }
     li.append(...youtubeEmbeds(m.text), ...linkPreviews(m.text));
     if (m.reactions?.some((r) => !r.emoji.startsWith("poll:"))) li.append(reactionRow(m));
+    const thread = threadFrom(m);
+    if (thread) li.append(threadChip(thread));
     li.append(messageActions(m));
     li.msg = m;
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
     li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), rawNameStyle(m.author_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), rawNameStyle(m.author_key), threadFrom(m)?.name ?? null, threadFrom(m)?.last_at ?? null]);
     items.push(li);
     prev = m;
   }
@@ -7986,6 +8043,9 @@ function openMessageMenu(m, e) {
     [
       { label: "Reply", icon: "reply", action: () => setReply(m) },
       ...(canForward(m.text) ? [{ label: "Forward", icon: "forward", action: () => forwardMessage(m) }] : []),
+      ...(threadsHere() && channel(m.channel)?.parent == null && channel(m.channel)?.kind === "text"
+        ? [threadFrom(m) ? { label: "Open thread", icon: "message", action: () => openTextChannel(threadFrom(m).id) } : { label: "Start a thread", icon: "message", action: () => openThreadDialog(m) }]
+        : []),
       ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
@@ -7999,6 +8059,66 @@ function openMessageMenu(m, e) {
     e.clientY,
   );
 }
+
+// ---------- threads ----------
+//
+// A thread is a text channel started in another one (often from one of its messages): its own
+// messages, unread, search and pins, the same people as its channel. In the sidebar the lively
+// ones sit under their channel; the message it came from shows its name, a click away.
+
+function threadsHere() {
+  return online() && !!state.roster?.features?.includes("threads");
+}
+
+/** A channel's threads; `lively`: those talked in during the last three days, or new, or open. */
+function threadsOf(channelId, lively = false) {
+  const address = activeServer()?.address;
+  const since = Date.now() - 3 * 86_400_000;
+  return (state.roster?.channels ?? [])
+    .filter((c) => c.parent === channelId && (!lively || c.id === state.view || !c.last_at || c.last_at > since || channelUnread(address, c.id)))
+    .sort((a, b) => (b.last_at ?? Infinity) - (a.last_at ?? Infinity))
+    .slice(0, lively ? 5 : undefined);
+}
+
+/** The thread started from a message, if any. */
+function threadFrom(m) {
+  return (state.roster?.channels ?? []).find((c) => c.parent === m.channel && c.starter === m.id) ?? null;
+}
+
+function threadChip(t) {
+  const chip = el("button", "thread-chip");
+  chip.type = "button";
+  const count = (state.chats.get(t.id) ?? []).length;
+  chip.append(icon("message", "sm"), el("strong", "ellipsis", t.name), el("span", "thread-chip-sub", count ? (count === 1 ? "1 message" : count + " messages") + (t.last_at ? " · " + dayLabel(t.last_at).toLowerCase() : "") : "No messages yet"));
+  chip.addEventListener("click", () => openTextChannel(t.id));
+  return chip;
+}
+
+var threadFromMessage = null;
+function openThreadDialog(m) {
+  threadFromMessage = m;
+  $("thread-from").replaceChildren(el("div", "pin-text", previewText(m.text) || "A message"));
+  $("thread-name").value = previewText(m.text).slice(0, 40);
+  $("thread-error").hidden = true;
+  openModal($("thread-dialog"));
+  $("thread-name").focus();
+  $("thread-name").select();
+}
+
+$("thread-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const m = threadFromMessage;
+  const name = $("thread-name").value.trim();
+  if (!name) {
+    $("thread-error").textContent = "Give the thread a name.";
+    $("thread-error").hidden = false;
+    return;
+  }
+  if (!m) return;
+  state.pendingThread = { channel: m.channel, starter: m.id, name };
+  call("create_thread", { channel: m.channel, message: m.id, name });
+  $("thread-dialog").close();
+});
 
 // ---------- forwarding ----------
 //
@@ -13345,7 +13465,7 @@ function timeoutItems(u) {
 function composerHint(view) {
   const until = timedOutUntil(meUser());
   if (until) return "You're timed out until " + clock(until);
-  const where = isVoiceChannel(view) ? "Message " + channelName(view) : "Message #" + channelName(view);
+  const where = isVoiceChannel(view) || channel(view)?.parent != null ? "Message " + channelName(view) : "Message #" + channelName(view);
   const slow = channel(view)?.slowmode;
   return slow && !can("moderate") ? where + " · slowmode " + slowText(slow) : where;
 }

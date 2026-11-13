@@ -652,7 +652,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                     } else {
                         let id = st.config.next_channel_id;
                         st.config.next_channel_id += 1;
-                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None, private_roles: None });
+                        st.config.channels.push(Channel { id, name, kind, topic: None, category: None, no_pictures: false, user_limit: None, afk_after: None, slowmode: None, private_roles: None, parent: None, starter: None, last_at: None });
                         st.channels_changed();
                     }
                 }
@@ -762,6 +762,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 | ClientMsg::CreateRole { .. }
                 | ClientMsg::UpdateRole { .. }
                 | ClientMsg::DeleteRole { .. }
+                | ClientMsg::CreateThread { .. }
                 | ClientMsg::CreateEmoji { .. }
                 | ClientMsg::DeleteEmoji { .. }
                 | ClientMsg::ReorderRoles { .. }

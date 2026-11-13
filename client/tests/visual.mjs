@@ -65,6 +65,7 @@ const scenes = {
   forward: `forwardMessage(state.chats.get(0).at(-1)); await wait(250);`,
   keybinds: `prefs.keybinds = { mute: { key: 5, mods: 7, label: "Ctrl + Shift + Alt + Mouse 4" } }; renderKeybinds(); openSettings("keys"); await wait(200);`,
   streamer: `$("streamer-mode").checked = true; $("streamer-mode").dispatchEvent(new Event("change")); $("update-btn").hidden = false; openSettings("privacy"); await wait(200);`,
+  threads: `const r3 = structuredClone(state.roster); r3.features = [...(r3.features ?? []), "threads"]; r3.channels.push({ id: 77, name: "A thread with a really quite long name about the raid on Saturday", kind: "text", parent: 0, starter: 9601, creator: ME, last_at: Date.now() }); emit("roster", r3); await wait(60); emit("chat", { id: 9601, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "Raid on Saturday? Who is in, and who brings what, and when do we start", sent_at: Date.now() }); await wait(80); openTextChannel(77); await wait(200);`,
   calloffer: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; callRoom.send = () => {}; await handleMedia(KEYS.elin, { v: "m", t: "screen", d: "r", k: "live" }, callRoom); await wait(250);`,
 };
 const themes = ["dusk", "light", "mid"];
