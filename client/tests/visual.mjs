@@ -58,6 +58,14 @@ const scenes = {
   status: `$("me-card").click(); await wait(200);`,
   call: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; renderCall(); await wait(200);`,
   callscreen: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; const c = document.createElement("canvas"); c.width = 640; c.height = 360; c.getContext("2d").fillRect(0, 0, 640, 360); mediaIn.set("screen|" + KEYS.elin, { stream: c.captureStream(5) }); renderCall(); await wait(300);`,
+  // What came later: the inbox, a poll, a voice message, formatting, name styles, forwarding,
+  // keybinds, streamer mode, and a screen offered in a call.
+  inbox: `emit("account", { type: "inbox", items: [{ server: "cloud:crew0001", channel: 2, id: 77, at: Date.now() - 60000, server_name: "The Crew With A Very Long Server Name", channel_name: "a-really-quite-long-channel-name-here", author_key: KEYS.elin, author_name: "Elinorabella Strandberg-Lindqvist", preview: "@Marcus you in for the raid tonight? It's going to be a long one so bring snacks and water", crowd: false }] }); await wait(50); $("inbox-btn").click(); await wait(200);`,
+  posts: `const r2 = structuredClone(state.roster); r2.features = [...(r2.features ?? []), "polls", "voice-messages"]; emit("roster", r2); await wait(80); state.friends.get(KEYS.elin).name_color = "#8ab4f8 #f28b9b f:graffiti"; emit("chat", { id: 9981, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "hopp-poll:" + base64url(JSON.stringify({ q: "What do we play tonight, after the raid, if everyone is still awake?", a: ["Raid", "Arena with a really long answer that goes on", "Sleep"], end: Date.now() + 3600000 })), sent_at: Date.now(), reactions: [{ emoji: "poll:0", keys: [ME] }] }); emit("chat", { id: 9982, channel: 0, sender: 3, sender_name: "Jonas", author_key: KEYS.jonas, text: "hopp-voice:" + "cd".repeat(16) + " 42000", sent_at: Date.now() }); emit("chat", { id: 9983, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "# Raid night\\n-# small print [Sign up](https://example.com/raid)\\n- one\\n1. two", sent_at: Date.now() }); await wait(250);`,
+  forward: `forwardMessage(state.chats.get(0).at(-1)); await wait(250);`,
+  keybinds: `prefs.keybinds = { mute: { key: 5, mods: 7, label: "Ctrl + Shift + Alt + Mouse 4" } }; renderKeybinds(); openSettings("keys"); await wait(200);`,
+  streamer: `$("streamer-mode").checked = true; $("streamer-mode").dispatchEvent(new Event("change")); $("update-btn").hidden = false; openSettings("privacy"); await wait(200);`,
+  calloffer: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; callRoom.send = () => {}; await handleMedia(KEYS.elin, { v: "m", t: "screen", d: "r", k: "live" }, callRoom); await wait(250);`,
 };
 const themes = ["dusk", "light", "mid"];
 const sizes = [[1366, 768], [940, 560]];
@@ -141,7 +149,7 @@ const probeFile = join(work, "probe.html");
 writeFileSync(probeFile, "<html><body>probe-ok</body></html>");
 let dumpWorks = false;
 try {
-  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
+  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
 } catch (e) {
   dumpWorks = String(e.stdout ?? "").includes("probe-ok");
 }
@@ -157,7 +165,7 @@ function cleanUp() {
 async function runLive(file, w, h) {
   cleanUp();
   const port = 9300 + Math.floor(Math.random() * 500);
-  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live")}`, `--window-size=${w},${h}`, `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live")}`, `--window-size=${w},${h}`, `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     let target = null;
@@ -206,7 +214,7 @@ for (const [w, h] of sizes) {
       let dom = "";
       if (dumpWorks) {
         try {
-          dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${w},${h}`, "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(html).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+          dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile")}`, `--window-size=${w},${h}`, "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(html).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
         } catch (e) {
           dom = String(e.stdout ?? "");
         }

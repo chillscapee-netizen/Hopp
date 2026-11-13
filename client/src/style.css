@@ -3964,3 +3964,7 @@ ul.msg-list { list-style: disc; }
 /* Tight spots (your panel, small rows): the big fonts a little smaller so the name fits. */
 .me-name[data-name-font="graffiti"], .me-name[data-name-font="hand"] { font-size: 1.25em; }
 .me-name[data-name-font="block"] { font-size: 0.8em; }
+/* In the inbox the name and the time always show; a long channel and server shrink instead. */
+.inbox-item .pin-head > strong { flex: 0 1 auto; max-width: 45%; }
+.inbox-item .search-where { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-item .pin-date { flex: none; }

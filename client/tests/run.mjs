@@ -64,7 +64,7 @@ const probeFile = join(work, "probe.html");
 writeFileSync(probeFile, "<html><body>probe-ok</body></html>");
 let dumpWorks = false;
 try {
-  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
+  dumpWorks = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", `--user-data-dir=${join(work, "profile-probe")}`, "--dump-dom", pathToFileURL(probeFile).href], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30000 }).includes("probe-ok");
 } catch (e) {
   dumpWorks = String(e.stdout ?? "").includes("probe-ok");
 }
@@ -87,7 +87,7 @@ for (const test of tests) {
   if (real || !dumpWorks) dom = await runLive(file, test, Number(real ?? budget) + (real ? 0 : 15000));
   else {
     try {
-      dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
     } catch (e) {
       // Edge sometimes exits with an error after printing the page; use what it printed.
       dom = String(e.stdout ?? "");
@@ -118,7 +118,7 @@ function cleanUp() {
 async function runLive(file, test, timeoutMs) {
   cleanUp();
   const port = 9300 + Math.floor(Math.random() * 500);
-  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", "--autoplay-policy=no-user-gesture-required", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", "--autoplay-policy=no-user-gesture-required", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     let target = null;

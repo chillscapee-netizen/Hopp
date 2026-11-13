@@ -33,7 +33,7 @@ const cleanUp = () => {
 };
 cleanUp();
 const port = 9300 + Math.floor(Math.random() * 500);
-const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--allow-file-access-from-files", "--autoplay-policy=no-user-gesture-required", `--user-data-dir=${join(work, "profile")}`, `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", "--autoplay-policy=no-user-gesture-required", `--user-data-dir=${join(work, "profile")}`, `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   let target = null;

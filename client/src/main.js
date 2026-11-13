@@ -2652,7 +2652,7 @@ function renderUserPanel() {
   const live = away ? !!state.awaySpeaking : on && state.speaking.has(state.roster.me);
   card.classList.toggle("speaking", live);
   $("me-name").textContent = name;
-  styleName($("me-name"), state.me?.key ?? state.account?.publicKey, name, false);
+  styleName($("me-name"), state.me?.key ?? state.account?.publicKey, name, false, "personal");
 
   const status = $("me-status");
   const sending = live && !state.muted && !state.deafened;
@@ -4030,7 +4030,7 @@ function renderProfilePreview() {
   if (typeof renderAccountSettings === "function" && state.me !== undefined) renderAccountSettings();
   $("profile-name").textContent = name;
   // Your name as others see it in chat.
-  styleName($("profile-name"), state.me?.key ?? state.account?.publicKey, name, false);
+  styleName($("profile-name"), state.me?.key ?? state.account?.publicKey, name, false, "personal");
   $("profile-display").textContent = name;
   $("profile-handle").textContent = state.me?.username ? `@${state.me.username}` : "";
   const bio = state.me?.bio ?? "";
@@ -5362,7 +5362,7 @@ function friendRow(f) {
   const li = el("li", "friend-row");
   const text = el("div", "friend-text");
   const top = el("div", "friend-top");
-  top.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
+  top.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false, "personal"));
   if (f.username) top.append(el("span", "friend-username ellipsis", `@${f.username}`));
   const sub =
     f.state === "incoming" ? "Wants to be friends"
@@ -6117,7 +6117,7 @@ function dmSidebarRows() {
       b.classList.toggle("unread", conv.last_at > conv.last_read && !muted);
       b.classList.toggle("muted", muted);
       const text = el("span", "row-text");
-      text.append(p.group ? el("span", "row-title ellipsis", p.display_name) : styleName(el("span", "row-title ellipsis", p.display_name), p.key, p.display_name, false));
+      text.append(p.group ? el("span", "row-title ellipsis", p.display_name) : styleName(el("span", "row-title ellipsis", p.display_name), p.key, p.display_name, false, "personal"));
       if (p.group) text.append(el("span", "row-sub ellipsis", `${state.groups.get(peer).members.length} members`));
       else if (p.status !== "offline" && customStatusOf(p.key)) text.append(el("span", "row-sub ellipsis", statusLine(customStatusOf(p.key))));
       else if (p.activity && p.status !== "offline") text.append(el("span", "row-sub ellipsis", whereText(p)));
@@ -6303,7 +6303,7 @@ function renderDmView(keepScroll) {
       const author = personFor(m.from_key);
       const headLine = el("div", "msg-head");
       const name = el("span", "msg-author", author.display_name);
-      styleName(name, m.from_key, author.display_name, false);
+      styleName(name, m.from_key, author.display_name, false, "personal");
       headLine.append(el("span", "msg-clock", clock(m.sent_at)), name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
     }
@@ -8551,7 +8551,7 @@ function renderCallStage(c) {
     tile.dataset.key = "cam|" + p.id;
     if (cam) tile.append(videoEl("cam|" + p.id, cam, p.id === "me"));
     else tile.append(avatar(p.name ?? "?", "s64", undefined, p.avatar));
-    tile.append(styleName(el("span", "voice-tile-name ellipsis", p.id === "me" ? p.name + " (you)" : p.name), p.id === "me" ? state.me?.key : p.id, p.name, false));
+    tile.append(styleName(el("span", "voice-tile-name ellipsis", p.id === "me" ? p.name + " (you)" : p.name), p.id === "me" ? state.me?.key : p.id, p.name, false, "tile"));
     if (cam) tile.addEventListener("click", () => setCallFocus("cam|" + p.id));
     tiles.push(tile);
     const screen = mediaStream("screen", p.id);
@@ -9566,7 +9566,7 @@ function activeNowPanel() {
     r.addEventListener("click", () => openDm(f.key));
     r.addEventListener("keydown", (e) => e.key === "Enter" && openDm(f.key));
     const text = el("div", "around-text");
-    text.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
+    text.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false, "personal"));
     if (sub) text.append(sub);
     r.append(personAvatar(f, "s32", true), text);
     return r;
@@ -10172,7 +10172,7 @@ function renderInviteFriends() {
       const li = el("li", "invite-friend");
       const who = el("span", "invite-friend-who");
       const names = el("span", "invite-friend-names");
-      names.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false));
+      names.append(styleName(el("strong", "ellipsis", f.display_name), f.key, f.display_name, false, "personal"));
       if (f.username) names.append(el("span", "ellipsis", f.username));
       who.append(personAvatar(f, "s40", true), names);
       const btn = el("button", "btn sm");
@@ -12656,7 +12656,7 @@ function renderVoiceStage() {
     if (u.muted || u.server_muted) marks.append(icon("mic-off", "xs"));
     if (u.deafened || u.server_deafened) marks.append(icon("headphones-off", "xs"));
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
-    tile.append(styleName(el("span", "voice-tile-name ellipsis", u.name), keyOf(u), u.name, false), marks);
+    tile.append(styleName(el("span", "voice-tile-name ellipsis", u.name), keyOf(u), u.name, false, "tile"), marks);
     tile.addEventListener("click", (e) => {
       if (e.target.closest(".live-pill")) return watchScreen(u.session_id, true);
       // A camera: in the middle, big (click it again for everyone).
@@ -13453,12 +13453,20 @@ function rawNameStyle(key) {
   return profiles.get(key)?.name_color ?? null;
 }
 /**
- * Writes a name the way its owner styled it: their font, and their colour or fade (a server's
- * role colour still comes first in that server). `fallback` false: no made-up colour.
+ * Writes a name the way its owner styled it: their font, and their colour or fade.
+ * `where`: "server" (a role colour there comes first), "personal" (friends, DMs: no server's
+ * roles), "tile" (on a picture or video: just the font, the colour stays what reads there).
+ * `fallback` false: no made-up colour when they picked none.
  */
-function styleName(node, key, name, fallback = true) {
+function styleName(node, key, name, fallback = true, where = "server") {
   const s = parseNameStyle(rawNameStyle(key));
-  const role = roleColorByKey(key);
+  const role = where === "server" ? roleColorByKey(key) : null;
+  if (where === "tile") {
+    node.style.fontFamily = s.font ? NAME_FONTS[s.font][1] + ", Inter, sans-serif" : "";
+    if (s.font) node.dataset.nameFont = s.font;
+    else delete node.dataset.nameFont;
+    return node;
+  }
   node.style.color = role ?? (s.c1 ? readableColor(s.c1) : fallback ? "hsl(" + hue(name) + " var(--name-s) var(--name-l))" : "");
   node.style.fontFamily = s.font ? NAME_FONTS[s.font][1] + ", Inter, sans-serif" : "";
   if (s.font) node.dataset.nameFont = s.font;
