@@ -92,3 +92,35 @@ if (!calm && msgs && typing) {
     }, 1500);
   }, 5200);
 }
+
+// ---------- the pictures on the home page: flip through them ----------
+(() => {
+  const shot = document.querySelector(".shot");
+  if (!shot) return;
+  const slides = [...shot.querySelectorAll(".shot-slides img")];
+  const dots = [...shot.querySelectorAll(".shot-dots button")];
+  const captions = ["Your friends, and who's around", "A server's chat, with reactions and a thread", "Add a friend by their username"];
+  let at = 0;
+  const show = (i) => {
+    at = (i + slides.length) % slides.length;
+    slides.forEach((s, j) => s.classList.toggle("on", j === at));
+    dots.forEach((d, j) => d.classList.toggle("on", j === at));
+    shot.querySelector(".shot-caption").textContent = captions[at];
+  };
+  shot.querySelectorAll(".shot-arrow").forEach((b) => b.addEventListener("click", () => show(at + Number(b.dataset.step))));
+  dots.forEach((d, j) => d.addEventListener("click", () => show(j)));
+  // Arrow keys while the pictures are in focus, and a swipe on a phone.
+  shot.tabIndex = 0;
+  shot.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") show(at - 1);
+    else if (e.key === "ArrowRight") show(at + 1);
+  });
+  let startX = null;
+  shot.addEventListener("touchstart", (e) => (startX = e.touches[0].clientX), { passive: true });
+  shot.addEventListener("touchend", (e) => {
+    if (startX === null) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 40) show(at + (dx < 0 ? 1 : -1));
+    startX = null;
+  });
+})();
