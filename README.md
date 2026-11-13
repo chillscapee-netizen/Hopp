@@ -51,7 +51,7 @@ cargo test --workspace
 
 ## Code signing
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org) (applied for; until it is approved the installer is not signed yet). The Windows installer is built by [GitHub Actions](.github/workflows/release.yml) from this repository, and only that build is signed. Committer, reviewer and approver: [Marcus](https://github.com/chillscapee-netizen). Full policy, including what Hopp connects to: [Code signing policy](https://hopp-cloud.hoppchat.workers.dev/code-signing.html).
+Hopp isn't code-signed yet: signing costs money, and free signing for open-source projects asks for a project that more people already know. The Windows installer is built by [GitHub Actions](.github/workflows/release.yml) from this repository, ready to be signed when that changes. Committer, reviewer and approver: [Marcus](https://github.com/chillscapee-netizen). What Hopp connects to: [Code signing policy](https://hopp-cloud.hoppchat.workers.dev/code-signing.html).
 
 ## Licence
 

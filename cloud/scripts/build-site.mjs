@@ -39,7 +39,6 @@ ${body}
   <div class="foot-brand"><a class="brand" href="index.html"><img src="site/logo.svg" alt=""><span>Hopp</span></a><p>Voice, video and chat for you and your friends. Free, with no ads and no tracking.</p></div>
   <div><h4>Hopp</h4><a href="features.html">Features</a><a href="whats-new.html">What's new</a><a href="${DL}">Download for Windows</a></div>
   <div><h4>Learn more</h4><a href="about.html">About Hopp</a><a href="limits.html">Limits</a><a href="hopp-id.html">Your Hopp ID</a><a href="privacy.html">Privacy &amp; safety</a><a href="help.html">Help</a><a href="code-signing.html">Code signing</a></div>
-  <p class="foot-signing">Free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>. <a href="code-signing.html">Code signing policy</a></p>
 </footer>
 <script src="site/site.js"></script>
 </body>
@@ -410,10 +409,12 @@ const hoppId = head("Your Hopp ID", "How your account works", "Hopp doesn't ask 
 
 // ---------- code signing ----------
 // SignPath Foundation's open-source programme asks for this page (linked from every page).
-const SIGNING_PENDING = true; // set false once SignPath has approved Hopp
+// SignPath Foundation (free signing for open source) wants a project to be better known first:
+// applied 2026-11-12, not yet. Once Hopp is signed, say so here and in the footer.
+const SIGNED = false;
 const codeSigning = head("Code signing", "Code signing policy", "How Hopp's installer is built and signed, and who decides what gets signed.") + `
 <section class="prose">
-  <p><strong>Free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>.</strong>${SIGNING_PENDING ? " Hopp has applied; until the application is approved, the installer isn't signed yet and Windows may warn about an unknown publisher." : ""}</p>
+  <p>${SIGNED ? "<strong>Free code signing provided by <a href=\"https://signpath.io\">SignPath.io</a>, certificate by <a href=\"https://signpath.org\">SignPath Foundation</a>.</strong>" : "<strong>Hopp isn't code-signed yet.</strong> Signing costs money, and the free route for open-source projects asks for a project that more people already know. Until then, Windows may say it doesn't recognise the publisher the first time you install. <a href=\"help.html\">How to install anyway</a>."}</p>
   <h2>What is signed</h2>
   <p>The Hopp installer for Windows. It is built automatically by GitHub Actions from the source code in <a href="https://github.com/chillscapee-netizen/Hopp">github.com/chillscapee-netizen/Hopp</a>, and only that build is sent for signing. Nothing built on someone's own computer is signed.</p>
   <h2>Who does what</h2>
