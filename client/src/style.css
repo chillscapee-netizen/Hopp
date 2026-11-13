@@ -3983,3 +3983,8 @@ ul.msg-list { list-style: disc; }
 .thread-parent:hover { color: var(--text); text-decoration: underline; }
 .thread-origin { display: block; max-width: 520px; margin-top: 10px; padding: 10px 14px; border: none; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
 .thread-origin:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+/* Members → the server's own roles: looks like the role picker, opens a tick list. */
+button.member-roles { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 160px; padding: 7px 10px 7px 12px; border: 1px solid var(--border); border-radius: 8px; height: 36px; background: var(--frame); color: var(--text); font-size: 13px; text-align: left; cursor: pointer; }
+button.member-roles:hover { border-color: var(--border-focus); }
+.member-roles-chev { flex: none; transform: rotate(90deg); color: var(--muted); }
+span.member-roles { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

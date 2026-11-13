@@ -4,7 +4,7 @@
 //!
 //! `--raw` turns noise suppression off.
 //!
-//! Logs in with a throwaway Ström-ID, joins the first voice channel with the
+//! Logs in with a throwaway Hopp ID, joins the first voice channel with the
 //! default microphone and speakers, and prints events.
 
 use std::time::{Duration, Instant};

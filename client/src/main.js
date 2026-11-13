@@ -1967,9 +1967,8 @@ listen("voice", (e) => {
     updateMeter(ev.db, ev.voice);
   } else if (ev.type === "devices_changed") {
     devicesChanged();
-  } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
-    playSound("muted");
-    toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "speaking_while_muted") {
+    mutedReminder();
   } else if (ev.type === "need_relay") {
     useRelay();
   } else if (ev.type === "peer_quality") {
@@ -4015,8 +4014,17 @@ chatInput.addEventListener("input", () => {
 
 // ---------- mute / deafen ----------
 
+/** Talking into a muted mic: say so once per mute, not again until you unmute and mute again. */
+function mutedReminder() {
+  if (!prefs.mutedWarning || state.mutedWarned) return;
+  state.mutedWarned = true;
+  playSound("muted");
+  toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+}
+
 async function setMuted(muted) {
   if (muted !== state.muted) playSound(muted ? "mute" : "unmute");
+  if (!muted) state.mutedWarned = false;
   state.muted = muted;
   await call("set_muted", { muted });
   renderUserPanel();
@@ -8863,9 +8871,8 @@ listen("call-voice", (e) => {
     ev.speaking ? callSpeaking.add(ev.session_id) : callSpeaking.delete(ev.session_id);
     syncAttenuation();
     document.querySelectorAll(`.call-person[data-session="${ev.session_id}"]`).forEach((n) => n.classList.toggle("speaking", ev.speaking));
-  } else if (ev.type === "speaking_while_muted" && prefs.mutedWarning) {
-    playSound("muted");
-    toast("You're muted. Press Ctrl+M or click the microphone to unmute.");
+  } else if (ev.type === "speaking_while_muted") {
+    mutedReminder();
   } else if (ev.type === "devices_changed") {
     // A headset unplugged mid-call: carry on with what's there.
     devicesChanged();
@@ -9804,6 +9811,38 @@ async function transferOwnership(member) {
   }
 }
 
+/** Server settings → Members, with the server's own roles: who has which, and (for admins) a tick list to change it. */
+function memberRolesButton(m) {
+  const all = state.roster?.roles ?? [];
+  const has = all.filter((r) => m.roles?.includes(r.id));
+  const label = m.role === "owner" ? "Owner" : has.length ? has.map((r) => r.name).join(", ") : "No roles";
+  const givable = all.filter((r) => r.level !== "admin" || can("own"));
+  const mine = m.public_key === state.account?.publicKey;
+  const above = !can("own") && !mine && (ROLE_RANK[m.role] ?? 0) >= rankOf(me());
+  if (!can("manage") || above || !givable.length) return el("span", "role-label member-roles", label);
+  const b = el("button", "row-select member-roles", "");
+  b.type = "button";
+  b.append(el("span", "ellipsis", label), icon("chevron", "xs member-roles-chev"));
+  b.setAttribute("aria-label", "Roles for " + m.name);
+  b.addEventListener("click", () => {
+    const r = b.getBoundingClientRect();
+    openMenu(givable.map((role) => ({
+      label: role.name,
+      check: !!m.roles?.includes(role.id),
+      action: async (on) => {
+        try {
+          await invoke("assign_role", { publicKey: m.public_key, role: role.id, on });
+          m.roles = on ? [...new Set([...(m.roles ?? []), role.id])] : (m.roles ?? []).filter((id) => id !== role.id);
+          renderMemberList();
+        } catch (err) {
+          toast(friendlyError(err), true);
+        }
+      },
+    })), r.left, r.bottom + 4);
+  });
+  return b;
+}
+
 /** Server settings → Members: everyone who belongs here, online or not. */
 function renderMemberList() {
   const list = $("server-members");
@@ -9830,7 +9869,10 @@ function renderMemberList() {
       who.append(text);
       li.append(who);
       const actions = el("span", "member-admin-actions");
-      if (rolesICanGive(target).length) {
+      if (rolesOn() && (state.roster?.roles ?? []).length) {
+        // The server's own roles decide here, the same ones the Roles tab makes.
+        actions.append(memberRolesButton(m));
+      } else if (rolesICanGive(target).length) {
         actions.append(roleSelect(target, (role) => setRole(m, role)));
       } else {
         actions.append(el("span", `role-label ${m.role ?? "member"}`, m.role ? ROLE_LABEL[m.role] : "Member"));

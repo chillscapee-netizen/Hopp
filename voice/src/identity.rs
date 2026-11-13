@@ -297,12 +297,12 @@ mod tests {
 
     #[test]
     fn unlocks_with_the_right_password_only() {
-        let (created, stored) = Identity::create("Marcus", "hemligt lösen").unwrap();
-        let unlocked = Identity::unlock(&stored, "hemligt lösen").unwrap();
+        let (created, stored) = Identity::create("Marcus", "secret password").unwrap();
+        let unlocked = Identity::unlock(&stored, "secret password").unwrap();
         assert_eq!(unlocked.public_key(), created.public_key());
         assert_eq!(unlocked.name, "Marcus");
 
-        let err = Identity::unlock(&stored, "fel lösen").err().unwrap();
+        let err = Identity::unlock(&stored, "wrong password").err().unwrap();
         assert_eq!(err.to_string(), "Wrong password.");
     }
 
@@ -438,10 +438,10 @@ mod tests {
         let (a, _) = Identity::create("a", "password1").unwrap();
         let (b, _) = Identity::create("b", "password1").unwrap();
         let (eve, _) = Identity::create("eve", "password1").unwrap();
-        let sealed = a.seal_for(&b.public_key(), b"hej").unwrap();
-        assert_eq!(b.open_from(&a.public_key(), &sealed).unwrap(), b"hej");
+        let sealed = a.seal_for(&b.public_key(), b"hello").unwrap();
+        assert_eq!(b.open_from(&a.public_key(), &sealed).unwrap(), b"hello");
         // The sender can read their own copy on any device.
-        assert_eq!(a.open_from(&b.public_key(), &sealed).unwrap(), b"hej");
+        assert_eq!(a.open_from(&b.public_key(), &sealed).unwrap(), b"hello");
         assert!(eve.open_from(&a.public_key(), &sealed).is_err());
         assert!(eve.open_from(&b.public_key(), &sealed).is_err());
     }

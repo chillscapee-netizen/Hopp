@@ -3,7 +3,7 @@
   "name": "hopp-cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
-  // Every Ström server is one Durable Object with its own SQLite database, and
+  // Every Hopp server is one Durable Object with its own SQLite database, and
   // one more object keeps the global register of short invite codes.
   // Only SQLite-backed Durable Objects are available on the Workers Free plan.
   "durable_objects": {
