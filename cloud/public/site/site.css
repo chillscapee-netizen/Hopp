@@ -205,3 +205,9 @@ i { display: block; font-style: normal; }
 @media (max-width: 640px) { .calm-hero { margin-top: 48px; } .calm-hero h1 { font-size: 32px; } }
 .calm-pic { overflow: hidden; }
 @media (max-width: 760px) { .calm-pic { display: none; } }
+
+/* The picture of the app on the home page: a real window, leaning back a little in a frame. */
+.shot { max-width: 1060px; margin: 36px auto 24px; padding: 40px 24px 70px; perspective: 2200px; overflow: hidden; }
+.shot-frame { padding: 10px; border-radius: 16px; background: linear-gradient(#26262b, #1b1b1f); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.08), 0 40px 90px -20px rgb(0 0 0 / 0.8), 0 18px 40px -18px rgb(0 0 0 / 0.6); transform: rotateX(14deg) rotateY(-12deg) rotateZ(2deg); }
+.shot-frame img { display: block; width: 100%; height: auto; border-radius: 9px; }
+@media (max-width: 760px) { .shot { padding: 0 16px 24px; perspective: none; } .shot-frame { padding: 6px; transform: none; } }

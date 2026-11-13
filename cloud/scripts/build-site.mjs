@@ -72,7 +72,7 @@ const home = `
   <p class="calm-actions"><a class="btn" href="${DL}">${ARROW}Download for Windows</a><span class="calm-meta">About 5 MB · Windows 10 and 11 · in beta</span></p>
 </section>
 
-<figure class="calm-pic">${APP}</figure>
+<figure class="shot"><div class="shot-frame"><img src="site/app.png" alt="Hopp on Windows: the Friends page, with servers on the left and who's around on the right" width="1551" height="819"></div></figure>
 
 <section class="calm-text">
   <h2>What it is</h2>
