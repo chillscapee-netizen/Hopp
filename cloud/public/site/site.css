@@ -185,3 +185,23 @@ i { display: block; font-style: normal; }
 /* The code signing line under the footer. */
 .foot-signing { grid-column: 1 / -1; margin: 18px 0 0; color: #8b8b93; font-size: 12.5px; }
 .foot-signing a { color: inherit; text-decoration: underline; }
+
+/* ---------- the calm home page: one column of plain words ---------- */
+.calm-hero { max-width: 680px; margin: 88px auto 40px; padding: 0 24px; }
+.calm-logo { width: 52px; height: 52px; border-radius: 13px; display: block; margin-bottom: 22px; }
+.calm-hero h1 { margin: 0; font-size: 40px; font-weight: 700; letter-spacing: -0.01em; }
+.calm-lead { margin: 12px 0 0; color: #c9c9d0; font-size: 19px; line-height: 1.55; }
+.calm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 28px 0 0; }
+.calm-meta { color: #8b8b93; font-size: 14px; }
+.calm-pic { max-width: 880px; margin: 24px auto 8px; padding: 0 24px; }
+.calm-pic > * { max-width: 100%; }
+.calm-text { max-width: 680px; margin: 0 auto 96px; padding: 0 24px; }
+.calm-text h2 { margin: 52px 0 10px; font-size: 21px; font-weight: 650; letter-spacing: 0; }
+.calm-text p, .calm-list { margin: 0 0 12px; color: #c9c9d0; font-size: 16.5px; line-height: 1.7; }
+.calm-text a { color: var(--text); text-underline-offset: 3px; }
+.calm-list { padding-left: 20px; }
+.calm-list li { margin: 4px 0; }
+.calm-list li::marker { color: #6b6b73; }
+@media (max-width: 640px) { .calm-hero { margin-top: 48px; } .calm-hero h1 { font-size: 32px; } }
+.calm-pic { overflow: hidden; }
+@media (max-width: 760px) { .calm-pic { display: none; } }
