@@ -47,7 +47,7 @@
   input.setSelectionRange(input.value.length, input.value.length);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   const pop = $("mention-picker");
-  check(":fir suggests 🔥", !pop.hidden && pop.textContent.includes("🔥"));
+  check(":fir suggests 🔥 first", !pop.hidden && pop.querySelector("img.emoji")?.alt === "🔥", pop.querySelector("img.emoji")?.alt);
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   check("Enter puts the emoji in", input.value === "this is 🔥" && pop.hidden);
   report();

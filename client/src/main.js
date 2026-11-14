@@ -2927,16 +2927,57 @@ var INLINE_RULES = [
 /** One emoji: a pictograph with its skin tone, variation and joined parts, or a flag. */
 var EMOJI_RUN = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F\u20E3)(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*/gu;
 
-/** Plain text, with each emoji in a span of its own so it can be drawn bigger than the words. */
+/** Twemoji's file for an emoji: its code points in hex, without FE0F unless it's a joined one. */
+function emojiFile(text) {
+  const cps = [...text].map((c) => c.codePointAt(0).toString(16));
+  return (text.includes("\u200d") ? cps : cps.filter((c) => c !== "fe0f")).join("-");
+}
+
+/**
+ * An ordinary emoji drawn as a picture (Twemoji, shipped with the app), so it looks the same on
+ * every computer and flags work on Windows. Its own character stays as the alt text (copying,
+ * screen readers); one the set doesn't have falls back to the system's.
+ */
+function emojiImg(text) {
+  const img = el("img", "emoji");
+  img.src = "emoji/" + emojiFile(text) + ".svg";
+  img.alt = text;
+  img.draggable = false;
+  img.decoding = "async";
+  img.addEventListener("error", () => img.replaceWith(el("span", "emoji-text", text)), { once: true });
+  return img;
+}
+
+/** Text, with each emoji in it drawn as a picture. */
 function appendText(out, text) {
   let at = 0;
   for (const m of text.matchAll(EMOJI_RUN)) {
     if (m.index > at) out.append(text.slice(at, m.index));
-    out.append(el("span", "emoji", m[0]));
+    out.append(emojiImg(m[0]));
     at = m.index + m[0].length;
   }
   if (at < text.length) out.append(text.slice(at));
 }
+
+/** A node for text that may hold emojis: plain text when there are none. */
+function emojiText(text, cls = "") {
+  const span = el("span", cls);
+  appendText(span, String(text ?? ""));
+  return span;
+}
+
+document.addEventListener("copy", (e) => {
+  const sel = getSelection();
+  if (!sel?.rangeCount || sel.isCollapsed) return;
+  const frag = sel.getRangeAt(0).cloneContents();
+  const pics = frag.querySelectorAll?.("img.emoji, img.custom-emoji");
+  if (!pics?.length) return;
+  pics.forEach((i) => i.replaceWith(i.alt));
+  const box = document.createElement("div");
+  box.append(frag);
+  e.clipboardData.setData("text/plain", box.innerText || box.textContent);
+  e.preventDefault();
+});
 
 function renderInline(text, out) {
   while (text) {
@@ -6846,7 +6887,7 @@ function updateMentionPicker() {
   const rows = items.map((item, i) => {
     const row = el("button", "mention-option" + (i === mentionPicker.index ? " active" : ""));
     row.type = "button";
-    if (item.emoji) row.append(el("span", "mention-emoji", item.emoji), el("span", "mention-name ellipsis", `:${item.name}:`));
+    if (item.emoji) row.append(emojiText(item.emoji, "mention-emoji"), el("span", "mention-name ellipsis", `:${item.name}:`));
     else if (item.crowd) row.append(el("span", "mention-at", "@"), el("span", "mention-name ellipsis", "@" + item.name));
     else if (item.role) {
       const dot = el("span", "mention-at role");
@@ -7115,7 +7156,12 @@ function emojiUrl(name, id) {
 /** An emoji to show: a picture for a custom one (its name when unknown here), or the character. */
 function emojiNode(emoji, cls = "custom-emoji") {
   const m = typeof emoji === "string" && emoji.match(CUSTOM_EMOJI);
-  if (!m || m[0] !== emoji) return document.createTextNode(emoji);
+  if (!m || m[0] !== emoji) {
+    if (typeof emoji !== "string" || !emoji.match(EMOJI_RUN)) return document.createTextNode(emoji ?? "");
+    const frag = document.createDocumentFragment();
+    appendText(frag, emoji);
+    return frag;
+  }
   const url = emojiUrl(m[1], m[2]);
   if (!url) return el("span", "custom-emoji-name", ":" + m[1] + ":");
   const img = el("img", cls);
@@ -7246,6 +7292,20 @@ var EMOJI_GROUPS = [
   ["Things & symbols", "🔥 fire lit hot|✨ sparkles|⭐ star|🌟 glowing star|⚡ lightning zap|💥 boom|💯 hundred perfect|✅ check yes done|❌ cross no|⚠️ warning|❓ question|❗ exclamation|💤 sleep zzz|💬 speech chat|💭 thought|🔔 bell|📌 pin|📎 paperclip|🔒 lock|🔑 key|💡 idea bulb|💻 laptop computer|🖥️ desktop pc|📱 phone|⌨️ keyboard|🖱️ mouse|🔊 loud|🔇 mute|⏰ alarm clock|⌛ hourglass|🚀 rocket|✈️ plane|🚗 car|🏠 home house|🌍 earth world|🌙 moon night|☀️ sun|🌈 rainbow|❄️ snow|☔ rain umbrella|💰 money bag|💎 gem diamond|🗑️ trash|📈 chart up|📉 chart down|🆗 ok|🆒 cool|🆕 new|🔝 top"],
 ];
 
+// The full list ships in emoji-list.js (made by tools/make-emoji.mjs); the short one above is
+// only a fallback, and where the extra search words in it came from.
+if (window.EMOJI_LIST) EMOJI_GROUPS = window.EMOJI_LIST;
+var EMOJI_SKINS = window.EMOJI_SKINS ?? {};
+var SKIN_SAMPLE = "👋";
+// The picture on each group's button in the picker's top row.
+var GROUP_ICONS = { Smileys: "😀", People: "👋", Nature: "🐻", Food: "🍔", Travel: "✈️", Activities: "⚽", Objects: "💡", Symbols: "❤️", Flags: "🏁" };
+
+/** An emoji in the skin tone you picked (0 = the default yellow), when it comes in tones. */
+function withSkin(emoji) {
+  const tone = Number(load("skinTone", "0"));
+  return (tone && EMOJI_SKINS[emoji]?.[tone - 1]) || emoji;
+}
+
 function recentEmoji() {
   try {
     return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string").slice(0, 16);
@@ -7288,6 +7348,7 @@ function openEmojiPicker(anchor, onEmoji, onGif, { plain = false } = {}) {
         tabs.querySelectorAll(".picker-tab").forEach((t) => t.classList.toggle("active", t === b));
         search.value = "";
         search.placeholder = tab === "gif" ? "Search GIFs" : "Find the perfect emoji";
+        tone.hidden = tab !== "emoji";
         renderPickerBody(body, "");
         search.focus();
       });
@@ -7303,7 +7364,35 @@ function openEmojiPicker(anchor, onEmoji, onGif, { plain = false } = {}) {
     }
   });
   const head = el("div", "picker-head");
-  head.append(...(onGif ? [tabs] : []), search);
+  const tone = el("button", "skin-tone");
+  tone.type = "button";
+  tone.dataset.tip = "Skin tone";
+  const showTone = () => tone.replaceChildren(emojiNode(withSkin(SKIN_SAMPLE)));
+  showTone();
+  tone.addEventListener("click", () => {
+    const r = tone.getBoundingClientRect();
+    const choices = [SKIN_SAMPLE, ...(EMOJI_SKINS[SKIN_SAMPLE] ?? [])];
+    const row = el("div", "skin-choices");
+    choices.forEach((e, i) => {
+      const b = el("button", "skin-choice" + (Number(load("skinTone", "0")) === i ? " on" : ""));
+      b.type = "button";
+      b.append(emojiNode(e));
+      b.addEventListener("click", () => {
+        save("skinTone", String(i));
+        row.remove();
+        showTone();
+        if (picker.tab === "emoji") renderPickerBody(body, search.value.trim().toLowerCase());
+      });
+      row.append(b);
+    });
+    row.style.top = r.bottom - pop.getBoundingClientRect().top + 4 + "px";
+    pop.querySelector(".skin-choices")?.remove();
+    pop.append(row);
+  });
+  const line = el("div", "picker-line");
+  line.append(search, tone);
+  head.append(...(onGif ? [tabs] : []), line);
+  tone.hidden = picker.tab !== "emoji";
   pop.replaceChildren(head, body);
   pop.classList.toggle("with-gifs", !!onGif);
   renderPickerBody(body, "");
@@ -7335,11 +7424,15 @@ function renderPickerBody(body, q) {
   };
   const grid = (list) => {
     const g = el("div", "emoji-grid");
-    for (const [emoji, words] of list) {
+    for (const [plain, words] of list) {
+      const emoji = CUSTOM_EMOJI.test(plain) ? plain : withSkin(plain);
       const b = el("button", "emoji-option");
       b.append(emojiNode(emoji, "custom-emoji option"));
+      b.querySelectorAll("img.emoji").forEach((i) => (i.loading = "lazy"));
       b.type = "button";
-      b.setAttribute("aria-label", words ? `:${words.split(" ")[0]}:` : "");
+      const name = words ? words.split(" ")[0] : "";
+      b.setAttribute("aria-label", name ? name.replace(/_/g, " ") : emoji);
+      b.dataset.tip = name ? ":" + name + ":" : "";
       b.addEventListener("click", () => pick(emoji));
       g.append(b);
     }
@@ -7353,12 +7446,30 @@ function renderPickerBody(body, q) {
   if (own.length && !picker.plain) all.unshift([state.roster?.server_name || "This server", own]);
   const parts = [];
   if (q) {
-    const found = all.flatMap(([, l]) => l).filter(([, words]) => words.split(" ").some((w) => w.startsWith(q)));
+    // Every word you type has to start one of the emoji's words: "thumbs up", "flag swe".
+    const typed = q.split(/\s+/).filter(Boolean);
+    const found = all.flatMap(([, l]) => l).filter(([, words]) => {
+      const mine = words.split(" ");
+      return typed.every((t) => mine.some((w) => w.startsWith(t)));
+    });
     parts.push(found.length ? grid(found) : el("div", "picker-empty", "No emoji found."));
   } else {
     const recent = recentEmoji().filter((e) => !CUSTOM_EMOJI.test(e) || (!picker.plain && emojiUrl(...e.match(CUSTOM_EMOJI).slice(1))));
     if (recent.length) parts.push(el("div", "emoji-head", "Recently used"), grid(recent.map((e) => [e, ""])));
-    for (const [name, list] of all) parts.push(el("div", "emoji-head", name), grid(list));
+    // A row of the groups at the top: one click to jump to Food or Flags in a long list.
+    const nav = el("div", "emoji-nav");
+    for (const [name, list] of all) {
+      const head = el("div", "emoji-head", name);
+      parts.push(head, grid(list));
+      const jump = el("button", "emoji-nav-btn");
+      jump.type = "button";
+      jump.dataset.tip = name;
+      jump.setAttribute("aria-label", name);
+      jump.append(emojiNode(GROUP_ICONS[name] ?? list[0][0], "custom-emoji option"));
+      jump.addEventListener("click", () => body.scrollTo({ top: head.offsetTop - nav.offsetHeight - 4 }));
+      nav.append(jump);
+    }
+    parts.unshift(nav);
   }
   body.replaceChildren(...parts);
   body.scrollTop = 0;
@@ -11279,10 +11390,11 @@ function emojiCandidates(q) {
   }
   const query = q.toLowerCase();
   // Names that start with it first (:fir is 🔥 "fire"), then other words that do.
+  // Among those, the shortest name first: :fir is :fire: before :fire_engine:.
   const rank = (e) => (e.name.startsWith(query) ? 0 : 1);
   return emojiIndex
     .filter((e) => e.words.some((w) => w.startsWith(query)))
-    .sort((a, b) => rank(a) - rank(b))
+    .sort((a, b) => rank(a) - rank(b) || a.name.length - b.name.length)
     .slice(0, 8)
     .map((e) => ({ ...e, key: `emoji:${e.emoji}` }));
 }
@@ -13481,7 +13593,7 @@ function openSoundboard(anchor) {
   for (const [name, label, emoji] of SOUNDBOARD) {
     const b = el("button", "sound");
     b.type = "button";
-    b.append(el("span", "sound-emoji", emoji), el("span", "sound-name", label));
+    b.append(emojiText(emoji, "sound-emoji"), el("span", "sound-name", label));
     b.addEventListener("click", () => playSoundboard(name));
     grid.append(b);
   }
@@ -14225,7 +14337,7 @@ function statusLine(s) {
 
 function statusParts(s) {
   const out = [];
-  if (s.emoji) out.push(el("span", "status-emoji-mark", s.emoji));
+  if (s.emoji) out.push(emojiText(s.emoji, "status-emoji-mark"));
   if (s.text) out.push(el("span", "ellipsis", s.text));
   return out;
 }
@@ -14235,7 +14347,7 @@ function openStatusDialog() {
   closePopovers();
   const s = liveStatus(state.me?.custom_status);
   statusEmoji = s?.emoji ?? null;
-  $("status-emoji").textContent = statusEmoji ?? "🙂";
+  $("status-emoji").replaceChildren(emojiNode(statusEmoji ?? "🙂"));
   $("status-emoji").classList.toggle("empty", !statusEmoji);
   $("status-text").value = s?.text ?? "";
   $("status-until").value = s ? (s.until == null ? "" : "60") : "240";
@@ -14256,7 +14368,7 @@ $("status-emoji").addEventListener("click", (e) =>
     e.currentTarget,
     (emoji) => {
       statusEmoji = emoji;
-      $("status-emoji").textContent = emoji;
+      $("status-emoji").replaceChildren(emojiNode(emoji));
       $("status-emoji").classList.remove("empty");
     },
     null,
@@ -14266,7 +14378,7 @@ $("status-emoji").addEventListener("click", (e) =>
 $("status-clear-text").addEventListener("click", () => {
   $("status-text").value = "";
   statusEmoji = null;
-  $("status-emoji").textContent = "🙂";
+  $("status-emoji").replaceChildren(emojiNode("🙂"));
   $("status-emoji").classList.add("empty");
   $("status-text").focus();
 });

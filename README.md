@@ -56,3 +56,8 @@ Hopp isn't code-signed yet: signing costs money, and free signing for open-sourc
 ## Licence
 
 Hopp is free software under the [GNU General Public License v3.0](LICENSE): you may use, study, change and share it, and anything you hand out that is built from it stays open under the same licence.
+
+### Things Hopp uses from others
+
+- Emoji pictures: [Twemoji](https://github.com/jdecked/twemoji), © Twitter, Inc and other contributors, [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/). Names and search words: [Emojibase](https://emojibase.dev) (MIT). Rebuild them with `node tools/make-emoji.mjs`.
+- Fonts: Inter, Nunito, Caveat, Sedgwick Ave Display, Bungee, Pixelify Sans, Playfair Display, JetBrains Mono, Atkinson Hyperlegible and OpenDyslexic, all under the SIL Open Font License.

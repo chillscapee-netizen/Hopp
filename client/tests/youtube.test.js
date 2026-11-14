@@ -22,7 +22,7 @@
   await wait(150);
   check("the same player is still there, untouched", document.querySelector('.msg[data-id="960"] iframe') === player && player.isConnected);
   check("its row was never rebuilt", document.querySelector('.msg[data-id="960"]') === row);
-  check("the changes still show", document.querySelector('.msg[data-id="961"]') && document.body.textContent.includes("🔥"));
+  check("the changes still show", document.querySelector('.msg[data-id="961"]') && [...document.querySelectorAll(".reaction img.emoji")].some((i) => i.alt === "🔥"));
 
   // Reactions on the video's own message, from someone else and from me: it keeps playing.
   emit("reactions", { channel: 0, id: 960, reactions: [{ emoji: "👍", keys: [KEYS.sara] }] });

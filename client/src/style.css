@@ -3988,6 +3988,21 @@ button.member-roles { display: flex; align-items: center; justify-content: space
 button.member-roles:hover { border-color: var(--border-focus); }
 span.member-roles { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Ordinary emojis in messages: a bit bigger than the words around them (like the server's own), and big when a message is only emojis. */
-.msg-text .emoji { font-size: 1.375em; line-height: 1; vertical-align: -0.12em; }
-.msg-text.jumbo .emoji { font-size: 48px; line-height: 1.15; vertical-align: middle; }
+/* Ordinary emojis (Twemoji pictures): as big as the text they sit in, a size up in messages, big when a message is only emojis. */
+img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: contain; }
+.msg-text img.emoji { width: 1.375em; height: 1.375em; vertical-align: -0.3em; margin: 0 0.05em; }
+.msg-text.jumbo img.emoji { width: 48px; height: 48px; vertical-align: -12px; margin: 2px 1px; }
+.emoji-option img.emoji { width: 30px; height: 30px; vertical-align: middle; }
+.picker-line { display: flex; align-items: center; gap: 6px; }
+.emoji-nav { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; gap: 2px; margin: -4px -10px 4px; padding: 6px 10px; background: var(--side-2); border-bottom: 1px solid var(--border); }
+.emoji-nav-btn { display: grid; place-items: center; width: 32px; height: 30px; padding: 0; border: none; border-radius: 6px; background: none; cursor: pointer; filter: grayscale(1); opacity: 0.6; transition: opacity 120ms, filter 120ms; }
+.emoji-nav-btn:hover { filter: none; opacity: 1; background: var(--active); }
+.emoji-nav-btn img { width: 20px; height: 20px; }
+.skin-tone { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: none; border-radius: 8px; background: none; cursor: pointer; }
+.skin-tone:hover { background: var(--active); }
+.skin-tone img.emoji { width: 22px; height: 22px; }
+.skin-choices { position: absolute; right: 8px; z-index: 3; display: flex; gap: 2px; padding: 4px; border-radius: 10px; background: var(--side-2); box-shadow: 0 0 0 1px var(--border), 0 12px 30px rgb(0 0 0 / 0.4); }
+.skin-choice { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: none; border-radius: 7px; background: none; cursor: pointer; }
+.skin-choice:hover, .skin-choice.on { background: var(--active); }
+.skin-choice img.emoji { width: 22px; height: 22px; }
+.settings-credits { padding: 2px 10px 0; color: var(--faint); font-size: 11px; }
