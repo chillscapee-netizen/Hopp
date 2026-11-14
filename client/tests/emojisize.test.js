@@ -13,14 +13,14 @@
   const inLine = msg(9701);
   const words = parseFloat(getComputedStyle(inLine).fontSize);
   check("emojis in a sentence are pictures", pics(9701).map((i) => i.alt).join("") === "😂🔥", pics(9701).map((i) => i.alt).join("|"));
-  check("from the set shipped with the app", pics(9701)[0].getAttribute("src") === "emoji/1f602.svg" && pics(9701)[0].naturalWidth > 0, pics(9701)[0].getAttribute("src"));
+  check("from the set shipped with the app", pics(9701)[0].getAttribute("src") === "emoji/1f602.png" && pics(9701)[0].naturalWidth > 0, pics(9701)[0].getAttribute("src"));
   check("and bigger than the words", pics(9701)[0].getBoundingClientRect().height > words * 1.3, pics(9701)[0].getBoundingClientRect().height + " vs " + words);
   check("the text around them is unchanged", inLine.textContent.includes("that was so good") && inLine.textContent.includes("haha"));
 
   check("a message of only emojis is big", msg(9702).classList.contains("jumbo") && pics(9702)[0].getBoundingClientRect().height >= 48, msg(9702).className);
   check("skin tones and flags stay whole", pics(9702).map((i) => i.alt).join("|") === "😂|👍🏽|🇸🇪");
-  check("a flag is a picture, not two letters", pics(9702)[2].getAttribute("src") === "emoji/1f1f8-1f1ea.svg" && pics(9702)[2].naturalWidth > 0);
-  check("joined emojis stay one", pics(9703).map((i) => i.alt).join("|") === "❤️|👨‍👩‍👧" && pics(9703)[0].getAttribute("src") === "emoji/2764.svg");
+  check("a flag is a picture, not two letters", pics(9702)[2].getAttribute("src") === "emoji/1f1f8-1f1ea.png" && pics(9702)[2].naturalWidth > 0);
+  check("joined emojis stay one", pics(9703).map((i) => i.alt).join("|") === "❤️|👨‍👩‍👧" && pics(9703)[0].getAttribute("src") === "emoji/2764.png");
   check("words with an emoji aren't big", !msg(9701).classList.contains("jumbo") && !msg(9703).classList.contains("jumbo"));
 
   emit("reactions", { channel: 0, id: 9701, reactions: [{ emoji: "🔥", keys: [KEYS.elin] }] });
@@ -62,10 +62,11 @@
   tones[3].click();
   await wait(40);
   const pb = document.querySelector("#emoji-picker .picker-body");
-  pb.scrollTop = pb.scrollHeight / 2;
+  // The hands are in People: scroll there (groups out of sight are emptied).
+  const people = [...pb.querySelectorAll(".emoji-head")].find((h) => h.textContent === "People");
+  pb.scrollTop = people.offsetTop;
   pb.dispatchEvent(new Event("scroll"));
   await wait(300);
-  pb.scrollTop = 0;
   const thumbs = [...document.querySelectorAll("#emoji-picker .emoji-option img.emoji")].map((i) => i.alt);
   check("picking one changes the hands", thumbs.includes("👍🏽") && !thumbs.includes("👍"));
   tones.length && document.querySelector("#emoji-picker .skin-tone").click();

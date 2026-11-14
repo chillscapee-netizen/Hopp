@@ -1,11 +1,14 @@
-// Builds the emoji set the app ships: Twemoji's pictures (client/src/emoji/*.svg) and the
+// Builds the emoji set the app ships: Twemoji's pictures (client/src/emoji/*.png, 72 px, drawn
+// from Twemoji's SVGs here: an SVG in a page is a little document of its own and costs hundreds
+// of KB each, so scrolling the picker used 550 MB; as PNGs they're ~20 KB each) and the
 // picker's list with names, search words, groups and skin tones (client/src/emoji-list.js).
 // Run after updating @twemoji/svg or emojibase-data:  node tools/make-emoji.mjs
 //
 // Twemoji graphics: Copyright 2020 Twitter, Inc and other contributors, CC-BY 4.0
 // (https://creativecommons.org/licenses/by/4.0/). Names and words: emojibase-data, MIT.
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,7 +58,11 @@ for (const e of data.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))) {
 // Every picture Twemoji has (also tones and ones the list doesn't name), so pasted emojis show too.
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
-for (const name of have) copyFileSync(join(svgDir, name + ".svg"), join(outDir, name + ".svg"));
+const { Resvg } = createRequire(join(root, "package.json"))("@resvg/resvg-js");
+for (const name of have) {
+  const png = new Resvg(readFileSync(join(svgDir, name + ".svg")), { fitTo: { mode: "width", value: 72 } }).render().asPng();
+  writeFileSync(join(outDir, name + ".png"), png);
+}
 
 const list = [...groups].filter(([, l]) => l.length).map(([g, l]) => [g, l.join("|")]);
 writeFileSync(join(root, "src", "emoji-list.js"),

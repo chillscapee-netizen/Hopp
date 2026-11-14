@@ -3046,7 +3046,7 @@ function emojiFile(text) {
  */
 function emojiImg(text) {
   const img = el("img", "emoji");
-  img.src = "emoji/" + emojiFile(text) + ".svg";
+  img.src = "emoji/" + emojiFile(text) + ".png";
   img.alt = text;
   img.draggable = false;
   img.decoding = "async";
@@ -7627,6 +7627,8 @@ function emojiGroups() {
   }
   return emojiGroupsRead;
 }
+/** How far out of sight (px) a drawn emoji group is emptied again. */
+var FAR_PX = 1500;
 /** A search that matches most of the list shows this many, and asks for more letters. */
 var EMOJI_SEARCH_SHOWN = 240;
 
@@ -7654,6 +7656,7 @@ function renderPickerBody(body, q) {
       b.addEventListener("click", () => pick(emoji));
       g.append(b);
     }
+    g.source = list;
     return g;
   };
   // A long group is drawn when it scrolls near, not all ~1,900 at once: until then it's an
@@ -7669,6 +7672,19 @@ function renderPickerBody(body, q) {
   picker.fillNear = () => {
     const bottom = body.scrollTop + body.clientHeight + 500;
     for (const spot of body.querySelectorAll(".emoji-grid-later")) if (spot.offsetTop < bottom) fill(spot);
+    // Groups far out of sight are emptied again (the same height stays, so nothing jumps): fast
+    // scrolling through everything doesn't keep ~1,900 pictures around.
+    const top = body.scrollTop - FAR_PX;
+    const far = body.scrollTop + body.clientHeight + FAR_PX;
+    for (const g of body.querySelectorAll(".emoji-grid:not(.emoji-grid-later)")) {
+      if (!g.source || g.source.length <= 48) continue;
+      if (g.offsetTop + g.offsetHeight > top && g.offsetTop < far) continue;
+      const spot = el("div", "emoji-grid emoji-grid-later");
+      spot.style.height = g.offsetHeight + "px";
+      spot.pending = g.source;
+      g.replaceWith(spot);
+      picker.lazy.observe(spot);
+    }
   };
   if (!body.dataset.lazyScroll) {
     body.dataset.lazyScroll = "1";
