@@ -39,6 +39,6 @@
   window.dispatchEvent(new MessageEvent("message", { origin: "https://evil.example", source: third.contentWindow, data: JSON.stringify({ event: "onStateChange", info: 0 }) }));
   await wait(1800);
   check("only YouTube itself can say it stopped", !!card().querySelector("iframe"));
-  YT_REST_MS = 15000;
+  YT_REST_MS = 3000;
   report();
 })();

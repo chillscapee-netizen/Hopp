@@ -10999,7 +10999,7 @@ function youtubeEmbeds(text) {
  * for a while, paused out of sight or behind another window, or finished, the player is closed
  * and the picture comes back with "Continue at 2:31", which opens it again where it was.
  */
-var YT_REST_MS = 15000;
+var YT_REST_MS = 3000;
 var ytResume = new Map(); // "id|start" → seconds to continue from
 var ytPlayers = new Map(); // the player's window → its state
 function ytWatch(player, key, sleep) {
