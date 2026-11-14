@@ -10,3 +10,6 @@ cloud/public/whats-new.json
 
 # Pictures of the app stay off GitHub (the website gets them from this folder when deployed).
 cloud/public/site/app*.png
+
+# Research notes and reports stay on this computer.
+reports/
