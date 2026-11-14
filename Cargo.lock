@@ -4705,6 +4705,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "webview2-com",
  "windows 0.62.2",
  "windows-future",
 ]

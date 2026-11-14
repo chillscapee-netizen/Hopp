@@ -4405,6 +4405,36 @@ function fillSelect(select, names, defaultName, selected) {
   select.value = selected;
 }
 
+/**
+ * The microphone level only travels from Rust to this window while a meter can be seen (voice
+ * settings, the mic check); the rest of the time it isn't sent at all.
+ */
+var meterWanted = null;
+function syncMeter() {
+  const want = [...document.querySelectorAll(".meter")].some((n) => n.checkVisibility?.() ?? n.offsetParent !== null);
+  if (want === meterWanted) return;
+  meterWanted = want;
+  invoke("set_level_meter", { on: want }).catch(() => (meterWanted = null));
+}
+// At once when a meter comes into view, and a cheap look each second for when one goes away.
+var meterWatch = new IntersectionObserver(syncMeter);
+document.querySelectorAll(".meter").forEach((n) => meterWatch.observe(n));
+setInterval(syncMeter, 1000);
+
+/**
+ * Headphones can't echo: echo removal (the heaviest part of the microphone's processing) is
+ * off while the sound goes to headphones or a headset, and on for speakers, if you have it on.
+ */
+var HEADPHONES = /headphone|headset|h[öo]rlur|earphone|earbud|airpods|buds|kopfh[öo]rer|casque|auricular|cuffie/i;
+function applyEcho(list = state.deviceList) {
+  const output = prefs.outputDevice || list?.default_output || "";
+  const headphones = HEADPHONES.test(output) && !/speaker|h[öo]gtalare/i.test(output);
+  state.echoForHeadphones = headphones;
+  call("set_echo_cancellation", { on: prefs.echo && !headphones });
+  const hint = $("echo-hint");
+  if (hint) hint.hidden = !(prefs.echo && headphones);
+}
+
 /** Windows names a Bluetooth headset's call-mode endpoints "Hands-Free". */
 function checkBluetooth(list) {
   const input = prefs.inputDevice || list.default_input || "";
@@ -4414,7 +4444,9 @@ function checkBluetooth(list) {
 
 async function refreshDevices() {
   const show = (list) => {
+    state.deviceList = list;
     checkBluetooth(list);
+    applyEcho(list);
     fillSelect($("input-device"), list.inputs, list.default_input, prefs.inputDevice);
     fillSelect($("output-device"), list.outputs, list.default_output, prefs.outputDevice);
   };
@@ -4895,9 +4927,13 @@ for (const [id, key, cmd] of [["echo", "echo", "set_echo_cancellation"], ["auto-
   $(id).addEventListener("change", (e) => {
     prefs[key] = e.target.checked;
     save(key, prefs[key] ? "1" : "0");
-    call(cmd, { on: prefs[key] });
+    if (key === "echo") applyEcho();
+    else call(cmd, { on: prefs[key] });
   });
 }
+
+// Out of sight (minimized, closed to the notification area): give memory back until you look again.
+document.addEventListener("visibilitychange", () => invoke("set_memory_low", { low: document.hidden }).catch(() => {}));
 
 $("noise").checked = prefs.noise;
 $("noise").addEventListener("change", (e) => {
@@ -4960,7 +4996,7 @@ function applyVoicePrefs() {
   call("set_transmit_mode", { mode: prefs.mode });
   call("set_vad_threshold", { db: prefs.threshold });
   call("set_noise_suppression", { on: prefs.noise });
-  call("set_echo_cancellation", { on: prefs.echo });
+  applyEcho();
   call("set_auto_gain", { on: prefs.autoGain });
   call("set_auto_sensitivity", { on: prefs.autoSensitivity });
   call("set_output_volume", { volume: prefs.outputVolume / 100 });
@@ -12291,9 +12327,8 @@ function shareConstraints() {
 function shareHint() {
   return prefs.shareQuality.rate >= 60 ? "motion" : "detail";
 }
-/** For smooth motion the graphics card does the work (H.264) where it can, so games don't slow down. */
+/** The graphics card encodes a shared screen (H.264) where it can, at every quality, so games don't slow down. */
 function preferSmoothCodec(pc) {
-  if (prefs.shareQuality.rate < 60) return;
   try {
     const all = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
     const first = all.filter((c) => /h264/i.test(c.mimeType));

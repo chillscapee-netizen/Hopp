@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -808,6 +809,9 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
         let ui = app.clone();
         std::thread::spawn(move || {
             for ev in events {
+                if skip_level(&ev) {
+                    continue;
+                }
                 let _ = ui.emit("voice", ev);
             }
         });
@@ -879,6 +883,9 @@ fn start_peer_voice(ui: AppHandle, generation: u64, attempt: u64, channel: Chann
                     with_generation(&relay.state::<AppState>(), generation, |c| {
                         c.control.send(ClientMsg::VoiceEndpoint { public: endpoint.public.clone(), local: endpoint.local.clone() });
                     });
+                }
+                if skip_level(&ev) {
+                    continue;
                 }
                 let _ = relay.emit("voice", ev);
             }
@@ -1389,6 +1396,44 @@ async fn install_update(app: AppHandle) -> CmdResult {
         .map_err(|e| format!("Couldn't update: {e}"))?;
     shell::prepare_quit();
     app.restart();
+}
+
+/// Whether a microphone level meter is on screen. The level comes 33 times a second while in
+/// voice; with nothing to show it on, sending it to the window only costs time.
+static LEVELS_WANTED: AtomicBool = AtomicBool::new(false);
+
+fn skip_level(ev: &strom_voice::EngineEvent) -> bool {
+    matches!(ev, strom_voice::EngineEvent::InputLevel { .. }) && !LEVELS_WANTED.load(Ordering::Relaxed)
+}
+
+/// The window shows a level meter (voice settings, the mic check), or no longer does.
+#[tauri::command]
+fn set_level_meter(on: bool) {
+    LEVELS_WANTED.store(on, Ordering::Relaxed);
+}
+
+/// Hopp out of sight (minimized, or closed to the notification area): the webview gives back
+/// what memory it can, and takes it again when you open Hopp. Voice and calls carry on.
+#[tauri::command]
+fn set_memory_low(window: tauri::WebviewWindow, low: bool) {
+    #[cfg(windows)]
+    let _ = window.with_webview(move |w| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        };
+        use windows::core::Interface;
+        // SAFETY: the controller and its webview belong to this window and are used on its thread.
+        unsafe {
+            if let Ok(core) = w.controller().CoreWebView2() {
+                if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+                    let level = if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
+                    let _ = core.SetMemoryUsageTargetLevel(level);
+                }
+            }
+        }
+    });
+    #[cfg(not(windows))]
+    let _ = (window, low);
 }
 
 /// Whether this is the Microsoft Store copy (Microsoft signs and updates it).
@@ -1908,6 +1953,8 @@ fn main() {
             autostart_enabled,
             check_update,
             store_install,
+            set_level_meter,
+            set_memory_low,
             install_update,
             set_role,
             transfer_ownership,
