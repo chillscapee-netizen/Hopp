@@ -31,7 +31,8 @@ const IDENTITY = {
 const version = conf.version.split(".").concat(["0", "0", "0"]).slice(0, 3).join(".") + ".0";
 
 const out = join(target, "msix");
-const layout = join(out, "layout");
+// A test install runs straight from its folder (and keeps it in use), so it gets its own.
+const layout = join(out, process.argv.includes("--register") ? "test-install" : "package");
 rmSync(layout, { recursive: true, force: true });
 mkdirSync(join(layout, "Assets"), { recursive: true });
 copyFileSync(exe, join(layout, "Hopp.exe"));
