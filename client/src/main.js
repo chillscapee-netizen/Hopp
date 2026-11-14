@@ -9691,7 +9691,16 @@ var updates = {
   error: "",
 };
 
+// From the Microsoft Store: Microsoft keeps it up to date, so Hopp's own updater stays out of sight.
+invoke("store_install")
+  .then((yes) => {
+    state.storeInstall = !!yes;
+    if (yes) renderUpdates();
+  })
+  .catch(() => {});
+
 async function checkForUpdate(manual) {
+  if (state.storeInstall) return;
   if (updates.status === "installing" || updates.status === "checking") return;
   if (manual) {
     updates.status = "checking";
@@ -9749,6 +9758,12 @@ function renderUpdates() {
 
   $("version-title").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
   $("settings-version").textContent = updates.version ? `Hopp ${updates.version}` : "Hopp";
+  btn.hidden = !!state.storeInstall;
+  $("version-btn").hidden = !!state.storeInstall;
+  if (state.storeInstall) {
+    $("version-sub").textContent = "Updates come from the Microsoft Store.";
+    return;
+  }
   $("version-sub").textContent = installing
     ? updateProgressText()
     : updates.status === "checking"

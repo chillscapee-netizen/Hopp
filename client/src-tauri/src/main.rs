@@ -15,6 +15,7 @@ mod preview;
 mod attenuate;
 mod ptt;
 mod shell;
+mod store;
 
 const HELLO_VALID_FOR: Duration = Duration::from_secs(180);
 use strom_shared::{ChannelId, ChannelKind, ClientMsg, PeerEndpoint, ServerMsg, SessionId};
@@ -1356,6 +1357,10 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
 #[tauri::command]
 async fn check_update(app: AppHandle) -> CmdResult<Option<serde_json::Value>> {
     use tauri_plugin_updater::UpdaterExt;
+    // The Store keeps its copy up to date itself.
+    if store::packaged() {
+        return Ok(None);
+    }
     let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
     Ok(update.map(|u| serde_json::json!({ "version": u.version, "notes": u.body })))
 }
@@ -1364,6 +1369,9 @@ async fn check_update(app: AppHandle) -> CmdResult<Option<serde_json::Value>> {
 #[tauri::command]
 async fn install_update(app: AppHandle) -> CmdResult {
     use tauri_plugin_updater::UpdaterExt;
+    if store::packaged() {
+        return Err("The Microsoft Store updates this copy of Hopp.".into());
+    }
     let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
     let Some(update) = update else { return Err("You already have the newest Hopp.".into()) };
     // How far the download has come, for the progress bar.
@@ -1383,6 +1391,12 @@ async fn install_update(app: AppHandle) -> CmdResult {
     app.restart();
 }
 
+/// Whether this is the Microsoft Store copy (Microsoft signs and updates it).
+#[tauri::command]
+fn store_install() -> bool {
+    store::packaged()
+}
+
 /// The version of Hopp that's running.
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
@@ -1392,6 +1406,9 @@ fn app_version(app: AppHandle) -> String {
 #[tauri::command]
 fn autostart_enabled(app: AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
+    if store::packaged() {
+        return store::startup_enabled();
+    }
     app.autolaunch().is_enabled().unwrap_or(false)
 }
 
@@ -1399,6 +1416,9 @@ fn autostart_enabled(app: AppHandle) -> bool {
 #[tauri::command]
 fn set_autostart(app: AppHandle, on: bool) -> CmdResult {
     use tauri_plugin_autostart::ManagerExt;
+    if store::packaged() {
+        return store::set_startup(on);
+    }
     let launcher = app.autolaunch();
     if on { launcher.enable() } else { launcher.disable() }.map_err(|e| format!("Couldn't change that: {e}"))
 }
@@ -1880,6 +1900,7 @@ fn main() {
             gif_search,
             autostart_enabled,
             check_update,
+            store_install,
             install_update,
             set_role,
             transfer_ownership,
