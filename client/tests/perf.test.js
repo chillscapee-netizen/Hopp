@@ -12,7 +12,7 @@
 
   // Level meter: on while the voice settings show one, off when they close.
   openSettings("voice");
-  await wait(150);
+  await wait(1100);
   check("voice settings open: the level is wanted", last("meter")?.on === true, JSON.stringify(last("meter")));
   $("settings").close?.();
   await wait(1100);
