@@ -3318,15 +3318,10 @@ function renderMessages(keepScrollUnlessAtBottom) {
       if (caption) li.append(messageText(caption));
       li.append(pictureView(id, Number(w), Number(h)));
     } else if (GIF_URL.test(m.text.trim())) {
-      const img = el("img", "msg-gif");
-      img.src = m.text.trim();
-      img.alt = "GIF";
-      img.loading = "lazy";
-      img.addEventListener("load", () => {
+      li.append(gifNode(m.text.trim(), () => {
         const scroller = $("scroller");
         if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 400) scroller.scrollTop = scroller.scrollHeight;
-      });
-      li.append(img);
+      }));
     } else if (isInviteOnly(m.text)) {
       // Just an invite: the card below says it all.
     } else {
@@ -3461,6 +3456,9 @@ function renderTyping() {
     else typers.delete(id);
   }
   const box = $("typing");
+  const said = names.join("\n");
+  if (box.dataset.said === said) return;
+  box.dataset.said = said;
   if (names.length === 0) {
     box.replaceChildren();
     return;
@@ -4480,7 +4478,12 @@ function syncMeter() {
 // At once when a meter comes into view, and a cheap look each second for when one goes away.
 var meterWatch = new IntersectionObserver(syncMeter);
 document.querySelectorAll(".meter").forEach((n) => meterWatch.observe(n));
-setInterval(syncMeter, 1000);
+setInterval(() => {
+  // Asking whether a meter shows makes the browser work out styles: skip it when no window
+  // that has one is open (and say no once, if it had been yes).
+  if (!document.querySelector("dialog[open]") && !meterWanted) return;
+  syncMeter();
+}, 1000);
 
 /**
  * Headphones can't echo: echo removal (the heaviest part of the microphone's processing) is
@@ -5111,6 +5114,15 @@ function renderMeterState(voice, clipping) {
 
 function closePopovers() {
   document.querySelectorAll(".popover").forEach((p) => (p.hidden = true));
+  // A closed emoji picker lets go of its buttons, once it is still closed a moment later
+  // (opening a popover closes the others first, the picker included).
+  setTimeout(() => {
+    const pop = document.getElementById("emoji-picker");
+    if (pop?.hidden && pop.childElementCount) {
+      picker.lazy?.disconnect();
+      pop.replaceChildren();
+    }
+  }, 0);
   const sub = document.getElementById("server-submenu");
   if (sub) sub.hidden = true;
   $("sidebar-head").classList.remove("open");
@@ -6645,11 +6657,7 @@ function renderDmView(keepScroll) {
       if (caption) li.append(messageText(caption));
       li.append(dmPictureView(owner, id, key, Number(w), Number(h)));
     } else if (m.text !== null && GIF_URL.test(m.text.trim())) {
-      const img = el("img", "msg-gif");
-      img.src = m.text.trim();
-      img.alt = "GIF";
-      img.loading = "lazy";
-      li.append(img);
+      li.append(gifNode(m.text.trim()));
     } else if (m.text !== null && isInviteOnly(m.text)) {
       // Just an invite: the card says it all.
     } else {
@@ -7779,7 +7787,66 @@ $("emoji-btn").addEventListener("click", (e) => {
 $("emoji-btn").addEventListener("mousedown", (e) => e.preventDefault());
 
 /** A message that is just a GIF from the picker shows as the GIF. */
-var GIF_URL = /^https:\/\/static\d?\.klipy\.com\/[^\s]+\.(gif|webp)$/i;
+var GIF_URL = /^https:\/\/static\d?\.klipy\.com\/[^\s]+\.(gif|webp|mp4)$/i;
+
+/**
+ * A GIF in a message. New ones are short videos (MP4): the graphics card plays them, where a GIF
+ * file is decoded picture by picture on the processor. They play only while you can see them
+ * and Hopp is in front (like Discord), and stop when you scroll past or switch to a game.
+ */
+function gifNode(url, onLoad) {
+  if (!/\.mp4$/i.test(url)) {
+    const img = el("img", "msg-gif");
+    img.src = url;
+    img.alt = "GIF";
+    img.loading = "lazy";
+    if (onLoad) img.addEventListener("load", onLoad);
+    return img;
+  }
+  const video = el("video", "msg-gif");
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+  video.disablePictureInPicture = true;
+  video.setAttribute("aria-label", "GIF");
+  video.src = url;
+  if (onLoad) video.addEventListener("loadedmetadata", onLoad, { once: true });
+  gifWatch.observe(video);
+  return video;
+}
+var gifsInView = new Set();
+var gifWatch = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (e.isIntersecting) gifsInView.add(e.target);
+    else {
+      gifsInView.delete(e.target);
+      e.target.pause();
+    }
+  }
+  playGifs();
+});
+var appFocused = document.hasFocus();
+function playGifs() {
+  const on = appFocused && !document.hidden;
+  for (const v of [...gifsInView]) {
+    if (!v.isConnected) {
+      gifsInView.delete(v);
+      continue;
+    }
+    if (on) v.play().catch(() => {});
+    else v.pause();
+  }
+}
+window.addEventListener("focus", () => {
+  appFocused = true;
+  playGifs();
+});
+window.addEventListener("blur", () => {
+  appFocused = false;
+  playGifs();
+});
+document.addEventListener("visibilitychange", playGifs);
 
 // ---------- older messages ----------
 
@@ -8548,13 +8615,8 @@ function forwardView(f) {
   const head = el("div", "forwarded-head");
   head.append(icon("forward", "xs"), el("span", "", "Forwarded"));
   box.append(head);
-  if (GIF_URL.test(f.text.trim())) {
-    const img = el("img", "msg-gif");
-    img.src = f.text.trim();
-    img.alt = "GIF";
-    img.loading = "lazy";
-    box.append(img);
-  } else box.append(messageText(f.text));
+  if (GIF_URL.test(f.text.trim())) box.append(gifNode(f.text.trim()));
+  else box.append(messageText(f.text));
   const from = [f.name, f.where, f.at ? `${dayLabel(f.at)} at ${clock(f.at)}` : ""].filter(Boolean).join(" · ");
   box.append(el("div", "forwarded-from ellipsis", from));
   return box;

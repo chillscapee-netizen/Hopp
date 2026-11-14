@@ -156,7 +156,7 @@ async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response
   if (q) api.searchParams.set("q", q);
   if (pos) api.searchParams.set("pos", pos);
   api.searchParams.set("limit", "30");
-  api.searchParams.set("media_filter", "gif,tinygif");
+  api.searchParams.set("media_filter", "gif,tinygif,mp4");
   api.searchParams.set("contentfilter", "medium");
   const upstream = await fetch(api);
   if (!upstream.ok) return json({ error: "Couldn't load GIFs right now." }, 502);
@@ -165,9 +165,11 @@ async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response
     .map((r) => {
       const full = r.media_formats?.gif;
       const small = r.media_formats?.tinygif ?? full;
+      // What goes in a message: the video when there is one, else the GIF.
+      const video = r.media_formats?.mp4;
       return {
         id: String(r.id ?? ""),
-        url: String(full?.url ?? ""),
+        url: String(video?.url ?? full?.url ?? ""),
         preview: String(small?.url ?? ""),
         width: Number(small?.dims?.[0] ?? full?.dims?.[0] ?? 0),
         height: Number(small?.dims?.[1] ?? full?.dims?.[1] ?? 0),
