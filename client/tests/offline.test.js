@@ -20,7 +20,10 @@
   check("by name, a step back, with an offline dot", rows.map((n) => n.querySelector(".member-name").textContent).join() === "Nora,Omar" && !!rows[0].querySelector(".status-dot.offline") && Number(getComputedStyle(rows[0]).opacity) < 1);
   check("nobody is listed twice", document.querySelectorAll("#member-list .member").length === state.roster.users.length + 2);
 
-  // Someone goes offline: from Online to Offline, without asking again.
+  // Someone closes Hopp: from Online to Offline, without asking again. (Leaving the server
+  // while Hopp is still open keeps you online; that's in serverpresence.test.js.)
+  const sara = state.friends?.get(KEYS.sara);
+  if (sara) sara.status = "offline";
   const r2 = structuredClone(state.roster);
   r2.users = r2.users.filter((u) => u.name !== "Sara");
   emit("roster", r2);

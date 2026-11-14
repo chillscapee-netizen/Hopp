@@ -58,6 +58,20 @@ try {
   }
 }
 
+// The installed app only passes account messages it knows (client/src-tauri/src/account.rs);
+// these test pages pass anything. A type the app sends but the list lacks is dropped for real.
+{
+  const allowed = new Set([...readFileSync(join(here, "..", "src-tauri", "src", "account.rs"), "utf8").match(/const ALLOWED[^=]*=\s*&\[([^\]]*)\]/)[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
+  const main = readFileSync(join(here, "..", "src", "main.js"), "utf8");
+  const sent = new Set();
+  for (const m of main.matchAll(/(?:accountSend\(|"account_send",\s*\{\s*msg:\s*)\{\s*type:\s*"([a-z_]+)"/g)) sent.add(m[1]);
+  const missing = [...sent].filter((t) => !allowed.has(t));
+  if (!sent.size || missing.length) {
+    console.log("FAIL account messages the app would drop (add them to ALLOWED in client/src-tauri/src/account.rs): " + (missing.join(", ") || "none found, the check is broken"));
+    process.exit(1);
+  }
+}
+
 // Some Edge builds (e.g. while an update waits for a restart) print nothing with --dump-dom.
 // Then every test runs live over the debugging port (slower, in real time).
 const probeFile = join(work, "probe.html");

@@ -232,9 +232,15 @@ kbd { font: 600 12px "Inter", sans-serif; background: var(--elev-2); border: 1px
   width: 14px; height: 14px;
   border-radius: 50%;
   background: var(--faint);
-  border: 3px solid var(--side-2);
+  border: 3px solid var(--dot-ring, var(--side-2));
 }
 .status-dot.online { background: var(--green); }
+/* Shapes as well as colours (as in Discord), so they read without telling colours apart:
+   a moon for idle, a bar for do not disturb, a ring for offline. */
+.status-dot.idle::after, .status-dot.dnd::after, .status-dot.offline::after { content: ""; position: absolute; background: var(--dot-ring, var(--side-2)); }
+.status-dot.idle::after { width: 62%; height: 62%; left: -10%; top: -10%; border-radius: 50%; }
+.status-dot.dnd::after { left: 18%; right: 18%; top: 50%; height: 2px; margin-top: -1px; border-radius: 1px; }
+.status-dot.offline::after { width: 38%; height: 38%; left: 31%; top: 31%; border-radius: 50%; }
 
 /* ---------- sidebar ---------- */
 .sidebar {
@@ -1364,7 +1370,7 @@ input[type=range]::-webkit-slider-thumb {
   border: 1px solid var(--border);
   border-radius: 10px;
 }
-.user-panel .status-dot { border-color: var(--panel); }
+.user-panel .status-dot { --dot-ring: var(--panel); }
 .me-card { height: 38px; gap: 8px; padding: 0 6px 0 4px; }
 .me-card:hover { background: var(--active); }
 .me-text { line-height: 1.2; }
@@ -1900,8 +1906,8 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .settings-tab.subtle { margin-top: auto; color: var(--faint); font-size: 13px; }
 .settings-tab.subtle .i { width: 16px; height: 16px; }
 
-.member .status-dot { border-color: var(--side); }
-.member:hover .status-dot { border-color: color-mix(in srgb, var(--side) 92%, white); }
+.member .status-dot { --dot-ring: var(--side); }
+.member:hover .status-dot { --dot-ring: color-mix(in srgb, var(--side) 92%, white); }
 
 /* ---------- friends ---------- */
 .friends-head { gap: 12px; }
@@ -1950,7 +1956,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 }
 .friend-row:hover { background: var(--hover); border-top-color: transparent; }
 .friend-row:hover + .friend-row { border-top-color: transparent; }
-.friend-row .avatar .status-dot { border-color: var(--main); }
+.friend-row .avatar .status-dot { --dot-ring: var(--main); }
 .friend-text { flex: 1; display: grid; gap: 2px; min-width: 0; }
 .friend-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .friend-top strong { font-size: 15px; }
@@ -2023,7 +2029,7 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .msg-failed { color: var(--red); font-size: 12px; }
 .msg-text.unreadable { color: var(--faint); font-style: italic; }
 .dm-row .avatar { width: 32px; height: 32px; }
-.dm-row .avatar .status-dot { border-color: var(--side); }
+.dm-row .avatar .status-dot { --dot-ring: var(--side); }
 .dm-row.active { background: var(--active); color: var(--text); }
 .dm-row.unread .row-title { color: var(--text); font-weight: 700; }
 .friend-row.clickable { cursor: pointer; }
@@ -3278,11 +3284,11 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
   overflow: hidden;
 }
 /* Rings around status dots and speaking avatars match the window, not a panel. */
-.status-dot { border-color: var(--app-solid); }
+.status-dot { --dot-ring: var(--app-solid); }
 .sidebar, .members { --speak-gap: var(--app-solid); }
 /* Your own row and the message box: the same soft layer, no lines. */
 .user-panel { --panel: var(--layer-2); background: var(--layer-2); border: none; border-radius: 12px; }
-.user-panel .status-dot { border-color: var(--app-solid); }
+.user-panel .status-dot { --dot-ring: var(--app-solid); }
 .composer-box { background: var(--layer-2); border: none; }
 .composer-box:focus-within { border: none; background: color-mix(in srgb, var(--layer-2) 100%, rgb(255 255 255 / 0.02)); }
 /* Empty cards: soft, no dashes. */
@@ -3704,7 +3710,8 @@ body.resizing-call iframe, body.resizing-call video { pointer-events: none; }
 /* The thin line that holds the server together stays: around the content, and between the
    channel list and the conversation. */
 .frame { background: var(--app-bg, var(--app-solid)) fixed; }
-.status-dot, .rail-badge, .rail-voice { border-color: var(--app-solid); }
+.rail-badge, .rail-voice { border-color: var(--app-solid); }
+.status-dot { --dot-ring: var(--app-solid); }
 
 /* Friends who wrote, under the Hopp button. */
 .dm-peeks { display: contents; }

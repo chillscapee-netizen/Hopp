@@ -1196,7 +1196,8 @@ fn get_audit_log(state: State<'_, AppState>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetAuditLog))
 }
 
-/// Seconds since the last key press or mouse move anywhere in Windows (for the AFK channel).
+/// Seconds since the last key press or mouse move anywhere in Windows (for the AFK channel,
+/// and going Idle by yourself).
 #[tauri::command]
 fn idle_seconds() -> u64 {
     #[cfg(windows)]

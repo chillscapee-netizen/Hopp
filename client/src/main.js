@@ -2121,9 +2121,20 @@ function tellAccountServers(force) {
   invoke("account_send", { msg: { type: "set_servers", ids } }).catch(() => (accountServersSent = null));
 }
 
-/** A member's status from the server: "online", "idle" or "dnd" while they have Hopp open, else null. */
+/**
+ * Someone's status for a member list: "online", "idle" or "dnd" while they have Hopp open, else
+ * null. What this app knows first hand wins (your own status, your friends'); for everyone
+ * else, what the server heard from their account.
+ */
 function memberStatus(key) {
-  if (!key || membersAsked.server !== state.activeId) return null;
+  if (!key) return null;
+  if (key === state.account?.publicKey && state.me) {
+    const mine = state.me.status ?? "online";
+    return mine === "invisible" ? null : mine;
+  }
+  const friend = state.friends?.get(key);
+  if (friend?.state === "friend" && friend.status) return friend.status === "offline" ? null : friend.status;
+  if (membersAsked.server !== state.activeId) return null;
   return state.members.find((m) => m.public_key === key)?.status ?? null;
 }
 
@@ -2599,7 +2610,7 @@ function userRow(u, className, size, sub) {
   row.dataset.user = u.session_id;
   const member = className === "member";
   // The member list is just who is here: avatar with a status dot, name, crown.
-  row.append(avatar(u.name, size, member ? memberStatus(keyOf(u)) ?? "online" : undefined, pictureFor(keyOf(u))));
+  row.append(avatar(u.name, size, member ? memberStatus(keyOf(u)) ?? (isSelf && state.me?.status === "invisible" ? "offline" : "online") : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
   const nameEl = styleName(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name), keyOf(u), u.name, false);
   nameLine.append(nameEl);
@@ -2804,7 +2815,7 @@ function renderMembers() {
   const hereKeys = new Set(here.map((u) => keyOf(u)).filter(Boolean));
   // In Hopp but not in this server right now (another server, DMs): online all the same.
   const elsewhere = membersAsked.server === state.activeId
-    ? state.members.filter((m) => m.status && !hereKeys.has(m.public_key)).map((m) => ({ name: m.name, public_key: m.public_key, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", voice_channel: null, member: m }))
+    ? state.members.filter((m) => memberStatus(m.public_key) && !hereKeys.has(m.public_key)).map((m) => ({ name: m.name, public_key: m.public_key, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", voice_channel: null, member: { ...m, status: memberStatus(m.public_key) } }))
     : [];
   const users = [...here, ...elsewhere].sort(byName);
   // Each person under their highest role that's shown separately; the rest as before.
@@ -5400,6 +5411,7 @@ listen("account", (e) => {
       break;
     case "status":
       state.me.status = m.status;
+      if (online()) renderMembers();
       break;
     case "privacy":
       state.me.privacy = m.requests;
@@ -5445,6 +5457,7 @@ listen("account", (e) => {
     case "presence": {
       const f = state.friends.get(m.key);
       if (f) Object.assign(f, { status: m.status, activity: m.activity, voice: m.voice ?? null });
+      if (f && online()) renderMembers();
       if (state.call?.peer === m.key && m.status === "offline") {
         toast(`${f?.display_name ?? "Your friend"} went offline. The call ended.`);
         endCall("remote");
@@ -5490,6 +5503,36 @@ function setActivityFromVoice() {
 
 const STATUS_LABEL = { online: "Online", idle: "Idle", dnd: "Do Not Disturb", invisible: "Invisible", offline: "Offline" };
 
+/**
+ * Away from the computer for a while (no key or mouse anywhere): Idle by itself, like Discord,
+ * and Online again once you're back. Only from Online, and only what it set itself: a status
+ * you picked (Idle, Do Not Disturb, Invisible) stays as it is.
+ */
+var AUTO_IDLE_AFTER = 10 * 60;
+var autoIdle = false;
+async function checkAway() {
+  if (!state.accountConnected || !state.me) return;
+  let away;
+  try {
+    away = await invoke("idle_seconds");
+  } catch {
+    return;
+  }
+  if (typeof away !== "number") return;
+  const status = state.me.status ?? "online";
+  if (!autoIdle && status === "online" && away >= AUTO_IDLE_AFTER) {
+    autoIdle = true;
+    accountSend({ type: "set_status", status: "idle" }).catch(() => (autoIdle = false));
+  } else if (autoIdle && status === "idle" && away < 60) {
+    autoIdle = false;
+    accountSend({ type: "set_status", status: "online" }).catch(() => {});
+  } else if (autoIdle && status !== "idle") {
+    // Changed somewhere else (another device, the menu): not ours any more.
+    autoIdle = false;
+  }
+}
+setInterval(checkAway, 20000);
+
 function openStatusMenu(x, y) {
   const current = state.me?.status ?? "online";
   const item = (status, sub) => ({
@@ -5497,7 +5540,10 @@ function openStatusMenu(x, y) {
     sub,
     swatch: { online: "var(--green)", idle: "var(--yellow)", dnd: "var(--red)", invisible: "var(--faint)" }[status],
     checked: current === status,
-    action: () => accountSend({ type: "set_status", status }).catch(() => {}),
+    action: () => {
+      autoIdle = false;
+      accountSend({ type: "set_status", status }).catch(() => {});
+    },
   });
   openMenu(
     [
