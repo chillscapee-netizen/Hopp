@@ -8,6 +8,12 @@ import type { Env } from "./index";
 import { inviteIndex } from "./invites";
 import { accountOf } from "./account";
 
+/** What a member list shows of someone who's in Hopp but not in this server right now. */
+const MEMBER_STATUSES = new Set(["online", "idle", "dnd", "offline"]);
+/** Up to this many members, the list goes out again when someone comes or goes. */
+const PRESENCE_PUSH_LIMIT = 300;
+/** A status older than this is treated as gone (the account missed saying goodbye). */
+const STATUS_STALE_MS = 3 * 24 * 3600 * 1000;
 const PROTOCOL_VERSION = 5;
 const MAX_NAME_LEN = 32;
 const MAX_SERVER_NAME_LEN = 40;
@@ -155,7 +161,7 @@ interface User {
 type Role = "owner" | "admin" | "mod";
 const RANK: Record<string, number> = { owner: 3, admin: 2, mod: 1 };
 const rank = (role: Role | null | undefined) => (role ? RANK[role] : 0);
-interface Member { public_key: string; name: string; role: Role | null; joined_at: number; roles: number[]; nick?: string | null; account_name?: string }
+interface Member { public_key: string; name: string; role: Role | null; joined_at: number; roles: number[]; nick?: string | null; account_name?: string; status?: string }
 interface Reply { id: number; sender_name: string; author_key: string; text: string }
 interface Reaction { emoji: string; keys: string[] }
 interface ChatMessage {
@@ -290,6 +296,7 @@ export class StromServer extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS member_roles (key TEXT NOT NULL, role INTEGER NOT NULL, PRIMARY KEY (key, role));
+      CREATE TABLE IF NOT EXISTS member_status (key TEXT PRIMARY KEY, status TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, channel INTEGER NOT NULL, sender INTEGER NOT NULL,
@@ -352,6 +359,23 @@ export class StromServer extends DurableObject<Env> {
   }
 
   /** What an invite shows before joining: like an invite card, nothing more. */
+  /**
+   * A member's account says they came online, went idle or busy, or left Hopp: the member list
+   * shows it, like everywhere else. Only for members; strangers are ignored.
+   */
+  async memberStatus(key: string, status: string) {
+    if (!MEMBER_STATUSES.has(status)) return;
+    const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ? AND key NOT IN (SELECT key FROM bans)", key).toArray().length > 0;
+    const was = this.sql.exec("SELECT status FROM member_status WHERE key = ?", key).toArray()[0]?.status ?? "offline";
+    if (!member || was === status) return;
+    if (status === "offline") this.sql.exec("DELETE FROM member_status WHERE key = ?", key);
+    else this.sql.exec("INSERT INTO member_status (key, status, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET status = excluded.status, at = excluded.at", key, status, Date.now());
+    const list = this.memberList();
+    // A big server doesn't send its whole list for every arrival; it's fresh when asked.
+    if (list.length > PRESENCE_PUSH_LIMIT) return;
+    for (const [mws] of this.members()) this.send(mws, { type: "members", members: list });
+  }
+
   async preview(code: string) {
     const name = this.meta("name");
     if (name === null || !this.invites().some((i) => i.code === code)) return null;
@@ -495,6 +519,9 @@ export class StromServer extends DurableObject<Env> {
       list.push(Number(r.role));
       roles.set(String(r.key), list);
     }
+    // Online somewhere in Hopp; a status not heard about for days is old news.
+    const status = new Map<string, string>();
+    for (const r of this.sql.exec("SELECT key, status FROM member_status WHERE at > ?", Date.now() - STATUS_STALE_MS)) status.set(String(r.key), String(r.status));
     return this.sql
       .exec("SELECT key, name, nick, role, created_at FROM accounts WHERE key NOT IN (SELECT key FROM bans) ORDER BY lower(coalesce(nick, name)) LIMIT 1000")
       .toArray()
@@ -506,6 +533,7 @@ export class StromServer extends DurableObject<Env> {
         role: r.key === owner ? "owner" : r.role === "admin" || r.role === "mod" ? (r.role as Role) : null,
         joined_at: Number(r.created_at),
         roles: roles.get(String(r.key)) ?? [],
+        ...(status.has(String(r.key)) ? { status: status.get(String(r.key)) } : {}),
       }));
   }
 

@@ -128,6 +128,7 @@ function newServer(address, label, invite) {
 }
 function saveServers() {
   save("servers", JSON.stringify(prefs.servers));
+  if (typeof tellAccountServers === "function") tellAccountServers();
   if (typeof syncState !== "undefined" && syncState.ready) scheduleSync();
 }
 
@@ -2106,6 +2107,27 @@ listen("members", (e) => {
  * list: asked once per visit, and again when someone new turns up.
  */
 var membersAsked = { server: null, at: 0 };
+
+/**
+ * Tells your account which Hopp Cloud servers you're in, so their member lists show you online
+ * (or idle, or busy) while you have Hopp open, wherever you are in it. Only when it changed.
+ */
+var accountServersSent = null;
+function tellAccountServers(force) {
+  if (!state.accountFeatures?.includes("server-presence")) return;
+  const ids = prefs.servers.filter(isCloud).map((x) => x.address.slice(6)).sort();
+  if (!force && ids.join(",") === accountServersSent) return;
+  accountServersSent = ids.join(",");
+  invoke("account_send", { msg: { type: "set_servers", ids } }).catch(() => (accountServersSent = null));
+}
+
+/** A member's status from the server: "online", "idle" or "dnd" while they have Hopp open, else null. */
+function memberStatus(key) {
+  if (!key || membersAsked.server !== state.activeId) return null;
+  return state.members.find((m) => m.public_key === key)?.status ?? null;
+}
+
+
 function wantMembers() {
   if (!connected() || !state.roster.features?.includes("members")) return;
   const fresh = membersAsked.server !== state.activeId;
@@ -2124,30 +2146,50 @@ function offlineRows(onlineKeys) {
   const away = state.members.filter((m) => !onlineKeys.has(m.public_key));
   if (!away.length) return [];
   const rows = [el("li", "member-group", "Offline — " + away.length)];
-  away.slice(0, OFFLINE_SHOWN).forEach((m, i) => {
-    const row = el("li", "member offline");
-    row.dataset.key = m.public_key;
-    row.append(avatar(m.name, "", "offline", pictureFor(m.public_key)));
-    const line = el("span", "name-line");
-    line.append(styleName(el("span", "member-name ellipsis", m.name), m.public_key, m.name, false));
-    row.append(line);
-    // Their profile opens like anyone's; they just aren't here to be moved or muted.
-    const person = { session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: true };
-    row.addEventListener("click", () => openUserCard(person, row));
-    // Right-click: their profile, and for moderators taking them out of the server.
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      const items = [{ label: "Profile", icon: "user", action: () => openUserCard(person, row) }];
-      if (can("moderate") && rankOf(me()) > rankOf(person)) {
-        items.push("sep", { label: "Kick " + m.name, icon: "logout", danger: true, action: () => removeUser(false, person) });
-        if (can("manage")) items.push({ label: "Ban " + m.name, icon: "ban", danger: true, action: () => removeUser(true, person) });
-      }
-      openMenu(items, e.clientX, e.clientY);
-    });
-    rows.push(row);
-  });
+  away.slice(0, OFFLINE_SHOWN).forEach((m, i) => rows.push(personRow(m, i, null)));
   if (away.length > OFFLINE_SHOWN) rows.push(el("li", "member-more", "and " + (away.length - OFFLINE_SHOWN) + " more"));
   return rows;
+}
+
+/** A member who isn't connected to this server: in Hopp elsewhere (`status`), or offline. */
+function personRow(m, i, status) {
+  const row = el("li", "member" + (status ? "" : " offline"));
+  row.dataset.key = m.public_key;
+  row.append(avatar(m.name, "", status ?? "offline", pictureFor(m.public_key)));
+  const line = el("span", "name-line");
+  line.append(styleName(el("span", "member-name ellipsis", m.name), m.public_key, m.name, false));
+  // Online elsewhere: the same crown or shield, and custom status, as someone who's here.
+  const role = m.role === "owner" ? "owner" : m.role === "admin" || m.role === "mod" ? m.role : null;
+  if (status && role) {
+    const wrap = el("span", "role-tip");
+    wrap.dataset.tip = ROLE_LABEL[role];
+    wrap.append(role === "owner" ? icon("crown", "crown") : icon("shield", `role-mark ${role}`));
+    line.append(wrap);
+  }
+  const custom = status ? customStatusOf(m.public_key) : null;
+  if (custom) {
+    const info = el("span", "member-info");
+    const sub = el("span", "member-sub");
+    sub.append(...statusParts(custom));
+    info.append(line, sub);
+    row.append(info);
+  } else {
+    row.append(line);
+  }
+  // Their profile opens like anyone's; they just aren't here to be moved or muted.
+  const person = { session_id: -1 - i, name: m.name, public_key: m.public_key, voice_channel: null, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", offline: !status };
+  row.addEventListener("click", () => openUserCard(person, row));
+  // Right-click: their profile, and for moderators taking them out of the server.
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const items = [{ label: "Profile", icon: "user", action: () => openUserCard(person, row) }];
+    if (can("moderate") && rankOf(me()) > rankOf(person)) {
+      items.push("sep", { label: "Kick " + m.name, icon: "logout", danger: true, action: () => removeUser(false, person) });
+      if (can("manage")) items.push({ label: "Ban " + m.name, icon: "ban", danger: true, action: () => removeUser(true, person) });
+    }
+    openMenu(items, e.clientX, e.clientY);
+  });
+  return row;
 }
 
 listen("disconnected", () => {
@@ -2557,7 +2599,7 @@ function userRow(u, className, size, sub) {
   row.dataset.user = u.session_id;
   const member = className === "member";
   // The member list is just who is here: avatar with a status dot, name, crown.
-  row.append(avatar(u.name, size, member ? "online" : undefined, pictureFor(keyOf(u))));
+  row.append(avatar(u.name, size, member ? memberStatus(keyOf(u)) ?? "online" : undefined, pictureFor(keyOf(u))));
   const nameLine = el("span", "name-line");
   const nameEl = styleName(el("span", className === "member" ? "member-name ellipsis" : "ellipsis", u.name), keyOf(u), u.name, false);
   nameLine.append(nameEl);
@@ -2758,7 +2800,13 @@ function renderMembers() {
     const seen = byKey.get(id);
     if (!seen || (seen.voice_channel === null && u.voice_channel !== null)) byKey.set(id, u);
   }
-  const users = [...byKey.values()].sort(byName);
+  const here = [...byKey.values()];
+  const hereKeys = new Set(here.map((u) => keyOf(u)).filter(Boolean));
+  // In Hopp but not in this server right now (another server, DMs): online all the same.
+  const elsewhere = membersAsked.server === state.activeId
+    ? state.members.filter((m) => m.status && !hereKeys.has(m.public_key)).map((m) => ({ name: m.name, public_key: m.public_key, roles: m.roles ?? [], role: m.role ?? undefined, owner: m.role === "owner", voice_channel: null, member: m }))
+    : [];
+  const users = [...here, ...elsewhere].sort(byName);
   // Each person under their highest role that's shown separately; the rest as before.
   const hoisted = (state.roster.roles ?? []).filter((r) => r.hoist);
   const placed = new Set();
@@ -2775,10 +2823,10 @@ function renderMembers() {
   for (const [label, list] of groups) {
     if (list.length === 0) continue;
     items.push(el("li", "member-group", `${label} — ${list.length}`));
-    items.push(...list.map((u) => userRow(u, "member", "")));
+    items.push(...list.map((u, i) => (u.member ? personRow(u.member, i, u.member.status) : userRow(u, "member", ""))));
   }
   wantMembers();
-  const offline = offlineRows(new Set(users.map((u) => keyOf(u)).filter(Boolean)));
+  const offline = offlineRows(new Set(users.map((u) => u.public_key ?? keyOf(u)).filter(Boolean)));
   items.push(...offline);
   $("member-list").replaceChildren(...items);
 }
@@ -5288,6 +5336,8 @@ listen("account", (e) => {
       state.readsLoaded = true;
       state.inbox = m.inbox ?? [];
       state.inboxSeen = m.inbox_seen ?? 0;
+      state.accountFeatures = m.features ?? [];
+      tellAccountServers(true);
       renderInboxBadge();
       renderUnread();
       // A reconnect: fetch what arrived meanwhile for conversations already open.

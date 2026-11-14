@@ -52,6 +52,10 @@ const CALL_KINDS = new Set(["ring", "answer", "decline", "end", "busy", "endpoin
 // "ip:port" for IPv4, "[ip]:port" for IPv6.
 const CALL_ENDPOINT = /^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$/;
 const STATUSES = new Set(["online", "idle", "dnd", "invisible"]);
+/** A Hopp Cloud server's id, as in /servers/<id>/ws. */
+const SERVER_ID = /^[A-Za-z0-9]{12,40}$/;
+/** How many servers hear when you come and go (each is one call). */
+const MAX_PRESENCE_SERVERS = 100;
 const PRIVACY = new Set(["everyone", "friends_of_friends", "nobody"]);
 
 type Msg = { type: string; [field: string]: any };
@@ -522,6 +526,7 @@ export class StromAccount extends DurableObject<Env> {
       groups: this.groups(),
       inbox: this.inbox(),
       inbox_seen: Number(this.meta("inbox_seen") ?? 0),
+      features: ["server-presence"],
     });
     if (wasOffline) await this.announcePresence();
   }
@@ -800,6 +805,15 @@ export class StromAccount extends DurableObject<Env> {
         if (msg.unread) return this.markUnread(server, channel, id);
         return this.markRead(server, channel, id);
       }
+      case "set_servers": {
+        // The app lists the cloud servers you're in, so they can show you online.
+        const ids = [...new Set((Array.isArray(msg.ids) ? msg.ids : []).map(String).filter((id: string) => SERVER_ID.test(id)))].slice(0, MAX_PRESENCE_SERVERS);
+        const before = new Set(this.serverIds());
+        this.setMeta("server_ids", JSON.stringify(ids));
+        const added = ids.filter((id) => !before.has(id));
+        // Left a server: it no longer needs to hear from you (it drops you anyway).
+        return this.tellServers(added);
+      }
       case "ping":
         return this.send(ws, { type: "pong" });
       default:
@@ -1041,7 +1055,33 @@ export class StromAccount extends DurableObject<Env> {
     await Promise.allSettled(this.friendKeys().map((k) => call(accountOf(this.env, k))));
   }
 
+  /** Your servers on Hopp Cloud (their ids), as your app last listed them. */
+  private serverIds(): string[] {
+    try {
+      const ids = JSON.parse(this.meta("server_ids") ?? "[]");
+      return Array.isArray(ids) ? ids.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Your servers' member lists show you online, idle, busy or offline like everywhere else
+   * (just that: never what you're doing). Told when it changes, to `only` when given.
+   */
+  private async tellServers(only?: string[]) {
+    const key = this.meta("key")!;
+    const status = this.presence().status;
+    const ids = only ?? this.serverIds();
+    if (!only) {
+      if (this.meta("server_status") === status) return;
+      this.setMeta("server_status", status);
+    }
+    await Promise.allSettled(ids.map((id) => this.env.SERVERS.get(this.env.SERVERS.idFromName(id)).memberStatus(key, status)));
+  }
+
   private async announcePresence() {
+    await this.tellServers();
     const myKey = this.meta("key")!;
     const presence = this.presence();
     const last = this.meta("last_presence");

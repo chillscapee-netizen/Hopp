@@ -206,6 +206,10 @@ pub struct Member {
     pub joined_at: u64,
     #[serde(default)]
     pub roles: Vec<u32>,
+    /// On Hopp Cloud: "online", "idle" or "dnd" while they have Hopp open somewhere (not
+    /// necessarily in this server); missing when they don't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -714,3 +714,50 @@ test("@everyone, @here and roles: moderators ping many, others only roles that a
   assert.ok(!account.inbox.some((m) => m.type === "channel_activity" && m.mention), "away people aren't pinged by @here");
   for (const d of [owner, c, account]) d.close();
 });
+
+test("online is online: a server's member list shows members who have Hopp open elsewhere, with their status", async () => {
+  const serverId = crypto.randomBytes(12).toString("hex");
+  const alice = newKey();
+  const bob = newKey();
+  const owner = await joinServer(serverId, "alice", alice, { create: "Presence test" });
+  owner.send({ type: "create_invite", max_uses: null, expires_in_hours: null });
+  const { invite } = await owner.waitFor((m) => m.type === "invite_created");
+  const bobInServer = await joinServer(serverId, "bob", bob, { invite: invite.code });
+  bobInServer.close();
+  await sleep(200);
+
+  // Bob opens Hopp somewhere else (his account is connected) and says which servers he's in.
+  const bobApp = await Device.open(bob, "Bob");
+  assert.ok(bobApp.welcome.features?.includes("server-presence"));
+  bobApp.send({ type: "set_servers", ids: [serverId, "not a server id!"] });
+  const online = await owner.waitFor((m) => m.type === "members" && m.members.some((x) => x.public_key === bob.pub && x.status === "online"));
+  assert.ok(online);
+
+  // Busy shows as busy.
+  bobApp.send({ type: "set_status", status: "dnd" });
+  await owner.waitFor((m) => m.type === "members" && m.members.find((x) => x.public_key === bob.pub)?.status === "dnd");
+
+  // Invisible and closing Hopp both look offline.
+  bobApp.send({ type: "set_status", status: "invisible" });
+  await owner.waitFor((m) => m.type === "members" && !m.members.find((x) => x.public_key === bob.pub)?.status);
+  bobApp.send({ type: "set_status", status: "online" });
+  await owner.waitFor((m) => m.type === "members" && m.members.find((x) => x.public_key === bob.pub)?.status === "online");
+  bobApp.close();
+  await owner.waitFor((m) => m.type === "members" && !m.members.find((x) => x.public_key === bob.pub)?.status);
+
+  // Asking for the list later shows the same.
+  owner.send({ type: "get_members" });
+  const list = await owner.waitFor((m) => m.type === "members");
+  assert.ok(!list.members.find((x) => x.public_key === bob.pub)?.status);
+
+  // Someone who isn't a member can't put themselves in the list.
+  const eve = newKey();
+  const eveApp = await Device.open(eve, "Eve");
+  eveApp.send({ type: "set_servers", ids: [serverId] });
+  await sleep(300);
+  owner.send({ type: "get_members" });
+  const after = await owner.waitFor((m) => m.type === "members");
+  assert.ok(!after.members.some((x) => x.public_key === eve.pub));
+  eveApp.close();
+  owner.close();
+});
