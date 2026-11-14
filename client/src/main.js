@@ -2932,8 +2932,21 @@ async function followInvite(link) {
  * `code`, ```code blocks```, > quotes and ||spoilers||; mentions show as names,
  * links are clickable. Everything is built as DOM nodes, never as HTML.
  */
+/** True while drawing a message of only emojis: its emojis are big, so they get the big pictures. */
+var emojiBig = false;
+
 function messageText(text) {
-  const out = el("div", "msg-text" + (ONLY_EMOJI.test(text) ? " jumbo" : ""));
+  const jumbo = ONLY_EMOJI.test(text);
+  const out = el("div", "msg-text" + (jumbo ? " jumbo" : ""));
+  emojiBig = jumbo;
+  try {
+    return messageTextInto(out, text);
+  } finally {
+    emojiBig = false;
+  }
+}
+
+function messageTextInto(out, text) {
   const parts = text.split(/```(?:[a-z0-9+#-]*\n)?([\s\S]*?)```/i);
   parts.forEach((part, i) => {
     if (i % 2) {
@@ -3046,7 +3059,8 @@ function emojiFile(text) {
  */
 function emojiImg(text) {
   const img = el("img", "emoji");
-  img.src = "emoji/" + emojiFile(text) + ".png";
+  // Small (40 px) wherever emojis are small; the 72 px picture only for big ones.
+  img.src = (emojiBig ? "emoji/" : "emoji/s/") + emojiFile(text) + ".png";
   img.alt = text;
   img.draggable = false;
   img.decoding = "async";
@@ -5118,10 +5132,7 @@ function closePopovers() {
   // (opening a popover closes the others first, the picker included).
   setTimeout(() => {
     const pop = document.getElementById("emoji-picker");
-    if (pop?.hidden && pop.childElementCount) {
-      picker.lazy?.disconnect();
-      pop.replaceChildren();
-    }
+    if (pop?.hidden && pop.childElementCount) pop.replaceChildren();
   }, 0);
   const sub = document.getElementById("server-submenu");
   if (sub) sub.hidden = true;
@@ -7627,14 +7638,42 @@ function emojiGroups() {
   }
   return emojiGroupsRead;
 }
-/** How far out of sight (px) a drawn emoji group is emptied again. */
-var FAR_PX = 1500;
 /** A search that matches most of the list shows this many, and asks for more letters. */
 var EMOJI_SEARCH_SHOWN = 240;
 
+/** Row and heading heights in the emoji picker (px); its list is laid out from these. */
+var PICK_ROW = 42;
+var PICK_HEAD = 28;
+var PICK_COLS = 8;
+var PICK_SIZE = 30;
+
+/**
+ * One emoji in the picker: its square of a sheet (emoji-sheets.js), so a group costs one small
+ * picture instead of one per emoji. The server's own emojis and Hopp's are pictures as before.
+ */
+function emojiFace(emoji) {
+  const spot = !CUSTOM_EMOJI.test(emoji) && window.EMOJI_SPRITE?.[emoji];
+  if (!spot) {
+    const node = emojiNode(emoji, "custom-emoji option");
+    return node;
+  }
+  const { tile, cols, sheets } = window.EMOJI_SHEET;
+  const [sheet, i] = spot;
+  const [w, h] = sheets[sheet];
+  const scale = PICK_SIZE / tile;
+  const face = el("span", "emoji-sprite");
+  face.style.backgroundImage = "url(emoji/sheets/" + sheet + ".png)";
+  face.style.backgroundSize = w * scale + "px " + h * scale + "px";
+  face.style.backgroundPosition = -(i % cols) * PICK_SIZE + "px " + -Math.floor(i / cols) * PICK_SIZE + "px";
+  return face;
+}
+
+/**
+ * The emoji list: only the rows you can see (and a few around them) exist; scrolling swaps them,
+ * so ~1,900 emojis cost the same as ~100, however fast or far you scroll.
+ */
 function renderPickerBody(body, q) {
   if (picker.tab === "gif") return renderGifs(body, q);
-  picker.lazy?.disconnect();
   const pick = (emoji) => {
     rememberEmoji(emoji);
     closePopovers();
@@ -7642,69 +7681,21 @@ function renderPickerBody(body, q) {
     const custom = emoji.match(CUSTOM_EMOJI);
     picker.onEmoji(emoji, custom ? ":" + custom[1] + ": " : emoji);
   };
-  const grid = (list) => {
-    const g = el("div", "emoji-grid");
-    for (const [plain, words] of list) {
-      const emoji = CUSTOM_EMOJI.test(plain) ? plain : withSkin(plain);
-      const b = el("button", "emoji-option");
-      b.append(emojiNode(emoji, "custom-emoji option"));
-      b.querySelectorAll("img.emoji").forEach((i) => (i.loading = "lazy"));
-      b.type = "button";
-      const name = words ? words.split(" ")[0] : "";
-      b.setAttribute("aria-label", name ? name.replace(/_/g, " ") : emoji);
-      b.dataset.tip = name ? ":" + name + ":" : "";
-      b.addEventListener("click", () => pick(emoji));
-      g.append(b);
-    }
-    g.source = list;
-    return g;
-  };
-  // A long group is drawn when it scrolls near, not all ~1,900 at once: until then it's an
-  // empty block of the same height, so the group buttons still jump to the right place.
-  const fill = (spot) => {
-    if (!spot.pending || !spot.isConnected) return;
-    picker.lazy.unobserve(spot);
-    spot.replaceWith(grid(spot.pending));
-    spot.pending = null;
-  };
-  picker.lazy = new IntersectionObserver((entries) => entries.forEach((e) => e.isIntersecting && fill(e.target)), { root: body, rootMargin: "500px 0px" });
-  // And on scrolling, for anything the observer hasn't caught yet.
-  picker.fillNear = () => {
-    const bottom = body.scrollTop + body.clientHeight + 500;
-    for (const spot of body.querySelectorAll(".emoji-grid-later")) if (spot.offsetTop < bottom) fill(spot);
-    // Groups far out of sight are emptied again (the same height stays, so nothing jumps): fast
-    // scrolling through everything doesn't keep ~1,900 pictures around.
-    const top = body.scrollTop - FAR_PX;
-    const far = body.scrollTop + body.clientHeight + FAR_PX;
-    for (const g of body.querySelectorAll(".emoji-grid:not(.emoji-grid-later)")) {
-      if (!g.source || g.source.length <= 48) continue;
-      if (g.offsetTop + g.offsetHeight > top && g.offsetTop < far) continue;
-      const spot = el("div", "emoji-grid emoji-grid-later");
-      spot.style.height = g.offsetHeight + "px";
-      spot.pending = g.source;
-      g.replaceWith(spot);
-      picker.lazy.observe(spot);
-    }
-  };
-  if (!body.dataset.lazyScroll) {
-    body.dataset.lazyScroll = "1";
-    body.addEventListener("scroll", () => picker.fillNear?.(), { passive: true });
-  }
-  const lazyGrid = (list, now) => {
-    if (now || list.length <= 48) return grid(list);
-    const spot = el("div", "emoji-grid emoji-grid-later");
-    spot.style.height = Math.ceil(list.length / 8) * 42 + "px";
-    spot.pending = list;
-    picker.lazy.observe(spot);
-    return spot;
-  };
   const all = emojiGroups().slice();
   // Custom ones first: this server's (by its name), then Hopp's own.
   const own = serverEmojis().map((e) => ["<:" + e.name + ":" + e.id + ">", e.name.replace(/_/g, " ") + " " + e.name]);
   const hopp = Object.keys(window.HOPP_EMOJI ?? {}).map((n) => ["<:" + n + ":0>", n.replace(/_/g, " ") + " " + n]);
   if (hopp.length && !picker.plain) all.unshift(["Hopp", hopp]);
   if (own.length && !picker.plain) all.unshift([state.roster?.server_name || "This server", own]);
-  const parts = [];
+
+  // What the list holds, top to bottom: headings and rows of up to eight.
+  const items = [];
+  const addRows = (list) => {
+    for (let i = 0; i < list.length; i += PICK_COLS) items.push({ cells: list.slice(i, i + PICK_COLS) });
+  };
+  let count = 0;
+  const heads = new Map();
+  let note = null;
   if (q) {
     // Every word you type has to start one of the emoji's words: "thumbs up", "flag swe".
     const typed = q.split(/\s+/).filter(Boolean);
@@ -7712,32 +7703,118 @@ function renderPickerBody(body, q) {
       const mine = words.split(" ");
       return typed.every((t) => mine.some((w) => w.startsWith(t)));
     });
-    parts.push(found.length ? grid(found.slice(0, EMOJI_SEARCH_SHOWN)) : el("div", "picker-empty", "No emoji found."));
-    if (found.length > EMOJI_SEARCH_SHOWN) parts.push(el("div", "picker-empty", "Type a little more to see the rest."));
+    addRows(found.slice(0, EMOJI_SEARCH_SHOWN));
+    count = Math.min(found.length, EMOJI_SEARCH_SHOWN);
+    note = !found.length ? "No emoji found." : found.length > EMOJI_SEARCH_SHOWN ? "Type a little more to see the rest." : null;
   } else {
     const recent = recentEmoji().filter((e) => !CUSTOM_EMOJI.test(e) || (!picker.plain && emojiUrl(...e.match(CUSTOM_EMOJI).slice(1))));
-    if (recent.length) parts.push(el("div", "emoji-head", "Recently used"), grid(recent.map((e) => [e, ""])));
-    // A row of the groups at the top: one click to jump to Food or Flags in a long list.
+    if (recent.length) {
+      items.push({ head: "Recently used" });
+      addRows(recent.map((e) => [e, ""]));
+    }
+    for (const [name, list] of all) {
+      heads.set(name, items.length);
+      items.push({ head: name });
+      addRows(list);
+      count += list.length;
+    }
+  }
+  // Where each item sits.
+  const tops = [];
+  let height = 0;
+  for (const item of items) {
+    tops.push(height);
+    height += item.head ? PICK_HEAD : PICK_ROW;
+  }
+
+  const list = el("div", "emoji-list");
+  list.style.height = height + "px";
+  list.dataset.count = String(count);
+  list.addEventListener("click", (e) => {
+    const b = e.target.closest(".emoji-option");
+    if (b?.dataset.emoji) pick(b.dataset.emoji);
+  });
+  const drawn = new Map();
+  const make = (i) => {
+    const item = items[i];
+    let node;
+    if (item.head) node = el("div", "emoji-head", item.head);
+    else {
+      node = el("div", "emoji-row");
+      for (const [plain, words] of item.cells) {
+        const emoji = CUSTOM_EMOJI.test(plain) ? plain : withSkin(plain);
+        const b = el("button", "emoji-option");
+        b.type = "button";
+        b.dataset.emoji = emoji;
+        const name = words ? words.split(" ")[0] : "";
+        b.setAttribute("aria-label", name ? name.replace(/_/g, " ") : emoji);
+        b.dataset.tip = name ? ":" + name + ":" : "";
+        b.append(emojiFace(emoji));
+        node.append(b);
+      }
+    }
+    node.style.top = tops[i] + "px";
+    return node;
+  };
+  // The rows in view (and some above and below) are on the page; the rest aren't.
+  const sync = () => {
+    const from = list.offsetTop;
+    const top = body.scrollTop - from - 300;
+    const bottom = body.scrollTop - from + body.clientHeight + 300;
+    let first = 0;
+    let lo = 0;
+    let hi = tops.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (tops[mid] < top) {
+        first = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    const keep = new Set();
+    for (let i = first; i < items.length && tops[i] < bottom; i++) {
+      keep.add(i);
+      if (!drawn.has(i)) {
+        const node = make(i);
+        drawn.set(i, node);
+        list.append(node);
+      }
+    }
+    for (const [i, node] of drawn) {
+      if (keep.has(i)) continue;
+      node.remove();
+      drawn.delete(i);
+    }
+  };
+  picker.sync = sync;
+  if (!body.dataset.virtualScroll) {
+    body.dataset.virtualScroll = "1";
+    body.addEventListener("scroll", () => picker.sync?.(), { passive: true });
+  }
+
+  const parts = [];
+  if (!q) {
+    // A row of the groups at the top: one click to jump to Food or Flags.
     const nav = el("div", "emoji-nav");
-    all.forEach(([name, list], i) => {
-      const head = el("div", "emoji-head", name);
-      // The first group shows at once; the rest as they come near.
-      parts.push(head, lazyGrid(list, i === 0));
+    for (const [name, groupList] of all) {
       const jump = el("button", "emoji-nav-btn");
       jump.type = "button";
       jump.dataset.tip = name;
       jump.setAttribute("aria-label", name);
-      jump.append(emojiNode(GROUP_ICONS[name] ?? list[0][0], "custom-emoji option"));
+      jump.append(emojiNode(GROUP_ICONS[name] ?? groupList[0][0], "custom-emoji option"));
       jump.addEventListener("click", () => {
-        body.scrollTo({ top: head.offsetTop - nav.offsetHeight - 4 });
-        picker.fillNear();
+        body.scrollTop = list.offsetTop + tops[heads.get(name)] - nav.offsetHeight - 4;
+        sync();
       });
       nav.append(jump);
-    });
-    parts.unshift(nav);
+    }
+    parts.push(nav);
   }
+  parts.push(list);
+  if (note) parts.push(el("div", "picker-empty", note));
   body.replaceChildren(...parts);
   body.scrollTop = 0;
+  sync();
 }
 
 function renderGifs(body, q) {

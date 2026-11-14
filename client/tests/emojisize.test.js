@@ -13,14 +13,14 @@
   const inLine = msg(9701);
   const words = parseFloat(getComputedStyle(inLine).fontSize);
   check("emojis in a sentence are pictures", pics(9701).map((i) => i.alt).join("") === "😂🔥", pics(9701).map((i) => i.alt).join("|"));
-  check("from the set shipped with the app", pics(9701)[0].getAttribute("src") === "emoji/1f602.png" && pics(9701)[0].naturalWidth > 0, pics(9701)[0].getAttribute("src"));
+  check("from the set shipped with the app", pics(9701)[0].getAttribute("src") === "emoji/s/1f602.png" && pics(9701)[0].naturalWidth > 0, pics(9701)[0].getAttribute("src"));
   check("and bigger than the words", pics(9701)[0].getBoundingClientRect().height > words * 1.3, pics(9701)[0].getBoundingClientRect().height + " vs " + words);
   check("the text around them is unchanged", inLine.textContent.includes("that was so good") && inLine.textContent.includes("haha"));
 
   check("a message of only emojis is big", msg(9702).classList.contains("jumbo") && pics(9702)[0].getBoundingClientRect().height >= 48, msg(9702).className);
   check("skin tones and flags stay whole", pics(9702).map((i) => i.alt).join("|") === "😂|👍🏽|🇸🇪");
   check("a flag is a picture, not two letters", pics(9702)[2].getAttribute("src") === "emoji/1f1f8-1f1ea.png" && pics(9702)[2].naturalWidth > 0);
-  check("joined emojis stay one", pics(9703).map((i) => i.alt).join("|") === "❤️|👨‍👩‍👧" && pics(9703)[0].getAttribute("src") === "emoji/2764.png");
+  check("joined emojis stay one", pics(9703).map((i) => i.alt).join("|") === "❤️|👨‍👩‍👧" && pics(9703)[0].getAttribute("src") === "emoji/s/2764.png");
   check("words with an emoji aren't big", !msg(9701).classList.contains("jumbo") && !msg(9703).classList.contains("jumbo"));
 
   emit("reactions", { channel: 0, id: 9701, reactions: [{ emoji: "🔥", keys: [KEYS.elin] }] });
@@ -28,30 +28,46 @@
   const r = document.querySelector('.msg[data-id="9701"] .reaction-emoji img.emoji');
   check("reactions are pictures, easy to see", r && r.getBoundingClientRect().height >= 18, r && r.getBoundingClientRect().height);
 
-  // The picker: every emoji, a row to jump between groups, skin tones, and search by several words.
+  // The picker: every emoji, only the rows in view on the page, a row of groups to jump
+  // between, skin tones, and search by several words.
   openEmojiPicker($("chat-input"), () => {}, null);
   await wait(60);
-  const drawn = document.querySelectorAll("#emoji-picker .emoji-option").length;
-  const later = [...document.querySelectorAll("#emoji-picker .emoji-grid-later")].reduce((n, g) => n + (g.pending?.length ?? 0), 0);
-  check("the picker has the whole set", drawn + later > 1500, drawn + " + " + later);
-  check("but only draws what's near (not ~1,900 at once)", drawn < 400, String(drawn));
-  const pickerBody = document.querySelector("#emoji-picker .picker-body");
-  pickerBody.scrollTop = pickerBody.scrollHeight;
-  pickerBody.dispatchEvent(new Event("scroll"));
-  await wait(300);
-  check("scrolling down draws the rest", document.querySelectorAll("#emoji-picker .emoji-option").length > drawn);
-  pickerBody.scrollTop = 0;
+  const pb = document.querySelector("#emoji-picker .picker-body");
+  const shown = () => [...document.querySelectorAll("#emoji-picker .emoji-option")].map((b) => b.dataset.emoji);
+  const total = Number(document.querySelector("#emoji-picker .emoji-list")?.dataset.count);
+  check("the picker has the whole set", total > 1500, String(total));
+  const atStart = shown().length;
+  check("but only the rows in view are on the page", atStart > 0 && atStart < 250, String(atStart));
+  check("emojis are squares of a few sheets, not a picture each", document.querySelectorAll("#emoji-picker .emoji-sprite").length > 0 && !document.querySelector("#emoji-picker .emoji-option img.emoji"));
+  pb.scrollTop = pb.scrollHeight;
+  pb.dispatchEvent(new Event("scroll"));
+  await wait(100);
+  const atEnd = shown();
+  check("scrolling to the end shows the end (flags)", atEnd.includes("🇸🇪") && atEnd.length < 250, atEnd.length + " shown");
+  check("and the start is gone from the page", !atEnd.includes("😀"));
+  pb.scrollTop = 0;
+  pb.dispatchEvent(new Event("scroll"));
+  await wait(100);
   check("with a row of groups to jump between", document.querySelectorAll("#emoji-picker .emoji-nav-btn").length >= 8);
+  [...document.querySelectorAll("#emoji-picker .emoji-nav-btn")].find((b) => b.dataset.tip === "Flags").click();
+  await wait(100);
+  check("a group button jumps there", shown().includes("🏁"), shown().slice(0, 4).join(" "));
+  let picked = null;
+  picker.onEmoji = (e) => (picked = e);
+  document.querySelector('#emoji-picker .emoji-option[data-emoji="🏁"]').click();
+  check("clicking one picks it", picked === "🏁", String(picked));
+
+  openEmojiPicker($("chat-input"), () => {}, null);
+  await wait(60);
   const search = document.querySelector("#emoji-picker .picker-search");
   search.value = "flag swe";
   search.dispatchEvent(new Event("input"));
   await wait(200);
-  const found = [...document.querySelectorAll("#emoji-picker .emoji-option img.emoji")].map((i) => i.alt);
-  check("searching with two words finds the flag", found.includes("🇸🇪"), found.slice(0, 5).join(" "));
+  check("searching with two words finds the flag", shown().includes("🇸🇪"), shown().slice(0, 5).join(" "));
   search.value = "a";
   search.dispatchEvent(new Event("input"));
   await wait(200);
-  check("a search matching most of the list shows a part and asks for more", document.querySelectorAll("#emoji-picker .emoji-option").length <= 240 && document.querySelector("#emoji-picker .picker-body").textContent.includes("Type a little more"));
+  check("a search matching most of the list shows a part and asks for more", Number(document.querySelector("#emoji-picker .emoji-list").dataset.count) <= 240 && document.querySelector("#emoji-picker .picker-body").textContent.includes("Type a little more"));
   search.value = "";
   search.dispatchEvent(new Event("input"));
   await wait(200);
@@ -60,16 +76,15 @@
   const tones = document.querySelectorAll("#emoji-picker .skin-choice");
   check("six skin tones to choose from", tones.length === 6, tones.length);
   tones[3].click();
-  await wait(40);
-  const pb = document.querySelector("#emoji-picker .picker-body");
-  // The hands are in People: scroll there (groups out of sight are emptied).
-  const people = [...pb.querySelectorAll(".emoji-head")].find((h) => h.textContent === "People");
-  pb.scrollTop = people.offsetTop;
-  pb.dispatchEvent(new Event("scroll"));
-  await wait(300);
-  const thumbs = [...document.querySelectorAll("#emoji-picker .emoji-option img.emoji")].map((i) => i.alt);
-  check("picking one changes the hands", thumbs.includes("👍🏽") && !thumbs.includes("👍"));
-  tones.length && document.querySelector("#emoji-picker .skin-tone").click();
+  await wait(60);
+  // The hands are in People.
+  [...document.querySelectorAll("#emoji-picker .emoji-nav-btn")].find((b) => b.dataset.tip === "People").click();
+  await wait(100);
+  const hands = shown();
+  check("picking one changes the hands", hands.includes("👍🏽") && !hands.includes("👍"), hands.filter((e) => e.startsWith("👍")).join(" "));
+  const sheet = document.querySelector('#emoji-picker .emoji-option[data-emoji="👍🏽"] .emoji-sprite')?.style.backgroundImage ?? "";
+  check("from that tone's own sheet", /sheets\/g\d+t3\.png/.test(sheet), sheet);
+  document.querySelector("#emoji-picker .skin-tone").click();
   await wait(20);
   document.querySelectorAll("#emoji-picker .skin-choice")[0]?.click();
   closePopovers();

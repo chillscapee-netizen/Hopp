@@ -33,7 +33,7 @@ writeFileSync(join(work, "setup.js"), `
     await wait(40);
   }
   await wait(3000);
-  window.phase = "scrolled:" + document.querySelectorAll("#emoji-picker img.emoji").length;
+  window.phase = "scrolled:" + document.querySelectorAll("#emoji-picker .emoji-option").length;
 })();`);
 writeFileSync(join(work, "page.html"), readFileSync(join(here, "..", "src", "index.html"), "utf8").replace('<script src="main.js"></script>', '<script src="mock.js"></script><script src="main.js"></script><script src="setup.js"></script>'));
 
@@ -102,7 +102,7 @@ try {
   const after = await settled();
   const grew = after - before;
   failed = grew > LIMIT_MB;
-  console.log(`${failed ? "FAIL" : "ok  "} scrolling through every emoji: memory ${before.toFixed(0)} → ${after.toFixed(0)} MB (+${grew.toFixed(0)} MB, limit ${LIMIT_MB}); ${String(phase).split(":")[1]} emoji pictures drawn`);
+  console.log(`${failed ? "FAIL" : "ok  "} scrolling through every emoji: memory ${before.toFixed(0)} → ${after.toFixed(0)} MB (+${grew.toFixed(0)} MB, limit ${LIMIT_MB}); ${String(phase).split(":")[1]} emoji buttons on the page at the end`);
   ws.close();
 } finally {
   browser.kill();

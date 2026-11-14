@@ -9,6 +9,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,11 +58,14 @@ for (const e of data.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9))) {
 
 // Every picture Twemoji has (also tones and ones the list doesn't name), so pasted emojis show too.
 rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+mkdirSync(join(outDir, "s"), { recursive: true });
 const { Resvg } = createRequire(join(root, "package.json"))("@resvg/resvg-js");
+// Two sizes: 72 px for big emojis (a message of only emojis), 40 px (emoji/s/) for everything
+// else: they show at 18-32 px, and a picture costs memory by its own size, not the size shown.
 for (const name of have) {
-  const png = new Resvg(readFileSync(join(svgDir, name + ".svg")), { fitTo: { mode: "width", value: 72 } }).render().asPng();
-  writeFileSync(join(outDir, name + ".png"), png);
+  const svg = readFileSync(join(svgDir, name + ".svg"));
+  writeFileSync(join(outDir, name + ".png"), new Resvg(svg, { fitTo: { mode: "width", value: 72 } }).render().asPng());
+  writeFileSync(join(outDir, "s", name + ".png"), new Resvg(svg, { fitTo: { mode: "width", value: 40 } }).render().asPng());
 }
 
 const list = [...groups].filter(([, l]) => l.length).map(([g, l]) => [g, l.join("|")]);
@@ -71,3 +75,6 @@ writeFileSync(join(root, "src", "emoji-list.js"),
   "window.EMOJI_SKINS = " + JSON.stringify(skins) + ";\n");
 const count = list.reduce((n, [, l]) => n + l.split("|").length, 0);
 console.log(`${have.size} pictures, ${count} emojis in the picker, ${Object.keys(skins).length} with skin tones`);
+
+// The picker's sheets are made from the same pictures (this folder was just emptied).
+execFileSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "make-emoji-sheets.mjs")], { stdio: "inherit" });

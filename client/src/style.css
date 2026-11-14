@@ -4014,3 +4014,10 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .skin-choice img.emoji { width: 22px; height: 22px; }
 .settings-credits { padding: 2px 10px 0; color: var(--faint); font-size: 11px; }
 .member-later { list-style: none; }
+
+/* Emoji picker: rows placed by the script; only those in view exist. */
+.emoji-list { position: relative; }
+.emoji-list > .emoji-head, .emoji-list > .emoji-row { position: absolute; left: 0; right: 0; }
+.emoji-list > .emoji-head { height: 28px; display: flex; align-items: flex-end; }
+.emoji-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; height: 40px; }
+.emoji-sprite { display: inline-block; width: 30px; height: 30px; background-repeat: no-repeat; pointer-events: none; }
