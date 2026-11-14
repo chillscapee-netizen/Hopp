@@ -35,7 +35,10 @@ const out = join(target, "msix");
 const layout = join(out, process.argv.includes("--register") ? "test-install" : "package");
 rmSync(layout, { recursive: true, force: true });
 mkdirSync(join(layout, "Assets"), { recursive: true });
-copyFileSync(exe, join(layout, "Hopp.exe"));
+// The same file name as the ordinary install: graphics drivers pick settings by it (a
+// packaged "Hopp.exe" made the whole screen flicker on an NVIDIA card).
+const EXE = "strom-client.exe";
+copyFileSync(exe, join(layout, EXE));
 
 const icons = join(root, "client", "src-tauri", "icons");
 for (const f of ["Square44x44Logo.png", "Square71x71Logo.png", "Square150x150Logo.png", "Square310x310Logo.png", "StoreLogo.png"]) {
@@ -71,7 +74,7 @@ writeFileSync(join(layout, "AppxManifest.xml"), `<?xml version="1.0" encoding="u
     <Resource Language="en-us" />
   </Resources>
   <Applications>
-    <Application Id="Hopp" Executable="Hopp.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Hopp" Executable="${EXE}" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="${xml(IDENTITY.displayName)}"
         Description="Voice, video and chat for you and your friends. Free, with no ads and no tracking."
@@ -82,7 +85,7 @@ writeFileSync(join(layout, "AppxManifest.xml"), `<?xml version="1.0" encoding="u
       </uap:VisualElements>
       <Extensions>
 ${protocols}
-        <desktop:Extension Category="windows.startupTask" Executable="Hopp.exe" EntryPoint="Windows.FullTrustApplication">
+        <desktop:Extension Category="windows.startupTask" Executable="${EXE}" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="HoppStartup" Enabled="false" DisplayName="Hopp" />
         </desktop:Extension>
       </Extensions>

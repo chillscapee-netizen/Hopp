@@ -1809,6 +1809,13 @@ fn main() {
             init_logging(app);
             // The window, from the settings; the second account's with web storage of its own.
             let mut config = app.config().app.windows.first().cloned().ok_or("no window in the settings")?;
+            // The Store copy runs inside an app package, and graphics drivers treat packaged apps
+            // like games: with variable refresh (G-SYNC) the whole screen flickered and felt slow.
+            // Drawing without DirectComposition there avoids it; the ordinary install is unchanged.
+            if store::packaged() {
+                let args = config.additional_browser_args.take().unwrap_or_default();
+                config.additional_browser_args = Some(format!("{args} --disable-direct-composition").trim().to_string());
+            }
             let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &{
                 config.create = true;
                 config
