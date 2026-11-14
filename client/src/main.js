@@ -2924,6 +2924,20 @@ var INLINE_RULES = [
   ["italic", /\*([^*\s](?:[^*]*[^*\s])?)\*|(?<![\p{L}\p{N}])_([^_\s](?:[^_]*[^_\s])?)_(?![\p{L}\p{N}])/u],
 ];
 
+/** One emoji: a pictograph with its skin tone, variation and joined parts, or a flag. */
+var EMOJI_RUN = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F\u20E3)(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*/gu;
+
+/** Plain text, with each emoji in a span of its own so it can be drawn bigger than the words. */
+function appendText(out, text) {
+  let at = 0;
+  for (const m of text.matchAll(EMOJI_RUN)) {
+    if (m.index > at) out.append(text.slice(at, m.index));
+    out.append(el("span", "emoji", m[0]));
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.append(text.slice(at));
+}
+
 function renderInline(text, out) {
   while (text) {
     let best = null;
@@ -2932,11 +2946,11 @@ function renderInline(text, out) {
       if (m && (!best || m.index < best.m.index)) best = { kind, m };
     }
     if (!best) {
-      out.append(text);
+      appendText(out, text);
       return;
     }
     const { kind, m } = best;
-    out.append(text.slice(0, m.index));
+    appendText(out, text.slice(0, m.index));
     const inner = m[1] ?? m[2] ?? "";
     if (kind === "code") out.append(el("code", "inline-code", inner));
     else if (kind === "emoji") out.append(emojiNode(m[0]));
@@ -7083,7 +7097,8 @@ function messageEditor(m) {
 var CUSTOM_EMOJI = /<:([a-z0-9_]{2,32}):(\d{1,9})>/;
 var CUSTOM_EMOJI_ALL = /<:([a-z0-9_]{2,32}):(\d{1,9})>/g;
 /** A message of only emojis (custom ones) shows them big. */
-var ONLY_EMOJI = /^\s*(?:<:[a-z0-9_]{2,32}:\d{1,9}>\s*){1,27}$/;
+// A message of nothing but emojis (the server's own or ordinary ones), up to 27: shown big.
+var ONLY_EMOJI = /^\s*(?:(?:<:[a-z0-9_]{2,32}:\d{1,9}>|(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F\u20E3)(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*)\s*){1,27}$/u;
 
 /** This server's emojis, when it has any. */
 function serverEmojis() {
