@@ -10993,6 +10993,78 @@ function youtubeEmbeds(text) {
   return cards;
 }
 
+/**
+ * A YouTube player is a whole page of YouTube's in its own process, and keeps running (and
+ * holding 100-250 MB) when paused. So Hopp listens to it (YouTube's player messages): paused
+ * for a while, paused out of sight or behind another window, or finished, the player is closed
+ * and the picture comes back with "Continue at 2:31", which opens it again where it was.
+ */
+var YT_REST_MS = 15000;
+var ytResume = new Map(); // "id|start" → seconds to continue from
+var ytPlayers = new Map(); // the player's window → its state
+function ytWatch(player, key, sleep) {
+  const ctrl = { player, key, sleep, state: -1, time: 0, timer: 0, seen: true };
+  ytPlayers.set(player.contentWindow, ctrl);
+  // Ask the player to tell us about itself, until it answers.
+  let tries = 0;
+  const hello = setInterval(() => {
+    if (!player.isConnected || ctrl.state !== -1 || ++tries > 40) return clearInterval(hello);
+    player.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: key, channel: "widget" }), "*");
+  }, 250);
+  player.addEventListener("load", () => ytPlayers.set(player.contentWindow, ctrl));
+  ytSight.observe(player);
+  return ctrl;
+}
+function ytSettle(ctrl) {
+  clearTimeout(ctrl.timer);
+  if (!ctrl.player.isConnected) {
+    ytPlayers.delete(ctrl.player.contentWindow);
+    return;
+  }
+  const paused = ctrl.state === 2;
+  const ended = ctrl.state === 0;
+  if (ended) ctrl.timer = setTimeout(() => ctrl.sleep(0), 1500);
+  else if (paused && (!ctrl.seen || !appFocused || document.hidden)) ctrl.sleep(ctrl.time);
+  else if (paused) ctrl.timer = setTimeout(() => ctrl.sleep(ctrl.time), YT_REST_MS);
+}
+window.addEventListener("message", (e) => {
+  if (!/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(e.origin)) return;
+  const ctrl = [...ytPlayers.values()].find((c) => c.player.contentWindow === e.source);
+  if (!ctrl) return;
+  let data;
+  try {
+    data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+  } catch {
+    return;
+  }
+  const info = data?.info;
+  if (data?.event === "onStateChange" && typeof info === "number") ctrl.state = info;
+  if (info && typeof info === "object") {
+    if (typeof info.playerState === "number") ctrl.state = info.playerState;
+    if (typeof info.currentTime === "number") ctrl.time = info.currentTime;
+  }
+  if (ctrl.state === -1 && data?.event) ctrl.state = 5; // answered: ready, not started
+  ytSettle(ctrl);
+});
+var ytSight = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    const ctrl = ytPlayers.get(e.target.contentWindow);
+    if (!ctrl) continue;
+    ctrl.seen = e.isIntersecting;
+    ytSettle(ctrl);
+  }
+});
+const ytAll = () => ytPlayers.forEach((c) => ytSettle(c));
+window.addEventListener("blur", ytAll);
+document.addEventListener("visibilitychange", ytAll);
+function ytClock(seconds) {
+  const t = Math.floor(seconds);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = String(t % 60).padStart(2, "0");
+  return h ? h + ":" + String(m).padStart(2, "0") + ":" + sec : m + ":" + sec;
+}
+
 function youtubeCard(id, start, link) {
   const card = el("div", "yt-card");
   card.dataset.keep = `yt|${id}|${start}`;
@@ -11008,29 +11080,42 @@ function youtubeCard(id, start, link) {
   head.append(site, title, author);
   const frame = el("div", "yt-frame");
   const key = id + "|" + start;
-  const play = () => {
-    playingVideos.add(key);
-    const player = el("iframe");
-    player.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0${start ? "&start=" + start : ""}`;
-    player.title = title.textContent;
-    player.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
-    player.allowFullscreen = true;
-    player.referrerPolicy = "strict-origin-when-cross-origin";
-    frame.replaceChildren(player);
-  };
-  if (playingVideos.has(key)) play();
-  else {
+  const picture = () => {
     const thumb = el("img");
     thumb.src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
     thumb.alt = "";
     thumb.loading = "lazy";
     const button = el("button", "yt-play");
     button.type = "button";
-    button.setAttribute("aria-label", "Play video");
+    const from = ytResume.get(key) ?? 0;
+    button.setAttribute("aria-label", from > 3 ? "Continue at " + ytClock(from) : "Play video");
     button.append(el("span", "yt-play-icon"));
     button.addEventListener("click", play);
-    frame.append(thumb, button);
-  }
+    frame.replaceChildren(thumb, button);
+    if (from > 3) frame.append(el("span", "yt-resume", "Continue at " + ytClock(from)));
+  };
+  const play = () => {
+    playingVideos.add(key);
+    const from = Math.floor(ytResume.get(key) ?? start ?? 0);
+    const player = el("iframe");
+    player.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}${from ? "&start=" + from : ""}`;
+    player.title = title.textContent;
+    player.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    player.allowFullscreen = true;
+    player.referrerPolicy = "strict-origin-when-cross-origin";
+    frame.replaceChildren(player);
+    // Paused a while, out of sight or finished: the player goes, the picture comes back.
+    ytWatch(player, key, (at) => {
+      if (!player.isConnected) return;
+      ytPlayers.delete(player.contentWindow);
+      if (at > 0) ytResume.set(key, at);
+      else ytResume.delete(key);
+      playingVideos.delete(key);
+      picture();
+    });
+  };
+  if (playingVideos.has(key)) play();
+  else picture();
   card.append(head, frame);
   if (!youtubeInfo.has(id)) youtubeInfo.set(id, invoke("youtube_info", { id }).catch(() => null));
   youtubeInfo.get(id).then((info) => {
