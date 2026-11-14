@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "node scripts/copy-installer.mjs && wrangler deploy",
+    "deploy": "node scripts/copy-installer.mjs && wrangler deploy && node ../tools/publish-store.mjs",
     "test": "node test/cloud.test.mjs",
     "check": "tsc --noEmit"
   },
