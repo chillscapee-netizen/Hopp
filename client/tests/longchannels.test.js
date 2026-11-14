@@ -10,17 +10,17 @@
   openTextChannel(3);
   await wait(100);
   const drawn = () => document.querySelectorAll("#messages .msg").length;
-  check("only the newest 150 are drawn", drawn() === 150, String(drawn()));
+  check("only the newest part is drawn", drawn() === DRAW_WINDOW, String(drawn()));
   check("with a hint that more is above, not the channel's start", !!document.querySelector("#messages .older-loader") && !document.querySelector("#messages .welcome"));
 
   // Scrolling to the top draws more from memory, keeping your place, without asking the server.
   sent.length = 0;
   const scroller = document.getElementById("scroller");
-  const anchor = document.querySelector('#messages .msg[data-id="5451"]');
+  const anchor = document.querySelector(`#messages .msg[data-id="${5000 + 600 - DRAW_WINDOW + 1}"]`);
   scroller.scrollTop = 0;
   scroller.dispatchEvent(new Event("scroll"));
   await wait(50);
-  check("100 more appear", drawn() === 250, String(drawn()));
+  check("more appear", drawn() === DRAW_WINDOW + DRAW_MORE, String(drawn()));
   check("the one you were at stays where it was", anchor.getBoundingClientRect().top > 0 && anchor.isConnected);
   check("no server needed", !sent.some((m) => m.type === "load_older"));
 

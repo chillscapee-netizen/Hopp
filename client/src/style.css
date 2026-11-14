@@ -4013,3 +4013,4 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .skin-choice:hover, .skin-choice.on { background: var(--active); }
 .skin-choice img.emoji { width: 22px; height: 22px; }
 .settings-credits { padding: 2px 10px 0; color: var(--faint); font-size: 11px; }
+.member-later { list-style: none; }

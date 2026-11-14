@@ -2098,6 +2098,7 @@ listen("invites", (e) => renderInviteList(e.payload));
 listen("bans", (e) => renderBanList(e.payload));
 listen("members", (e) => {
   state.members = e.payload ?? [];
+  memberStatusMap.from = null;
   renderMemberList();
   if (online()) renderMembers();
 });
@@ -2135,8 +2136,13 @@ function memberStatus(key) {
   const friend = state.friends?.get(key);
   if (friend?.state === "friend" && friend.status) return friend.status === "offline" ? null : friend.status;
   if (membersAsked.server !== state.activeId) return null;
-  return state.members.find((m) => m.public_key === key)?.status ?? null;
+  if (memberStatusMap.from !== state.members) {
+    memberStatusMap = new Map(state.members.filter((m) => m.status).map((m) => [m.public_key, m.status]));
+    memberStatusMap.from = state.members;
+  }
+  return memberStatusMap.get(key) ?? null;
 }
+var memberStatusMap = new Map();
 
 
 function wantMembers() {
@@ -2157,7 +2163,7 @@ function offlineRows(onlineKeys) {
   const away = state.members.filter((m) => !onlineKeys.has(m.public_key));
   if (!away.length) return [];
   const rows = [el("li", "member-group", "Offline — " + away.length)];
-  away.slice(0, OFFLINE_SHOWN).forEach((m, i) => rows.push(personRow(m, i, null)));
+  away.slice(0, OFFLINE_SHOWN).forEach((m, i) => rows.push(() => personRow(m, i, null)));
   if (away.length > OFFLINE_SHOWN) rows.push(el("li", "member-more", "and " + (away.length - OFFLINE_SHOWN) + " more"));
   return rows;
 }
@@ -2834,13 +2840,54 @@ function renderMembers() {
   for (const [label, list] of groups) {
     if (list.length === 0) continue;
     items.push(el("li", "member-group", `${label} — ${list.length}`));
-    items.push(...list.map((u, i) => (u.member ? personRow(u.member, i, u.member.status) : userRow(u, "member", ""))));
+    items.push(...list.map((u, i) => () => (u.member ? personRow(u.member, i, u.member.status) : userRow(u, "member", ""))));
   }
   wantMembers();
   const offline = offlineRows(new Set(users.map((u) => u.public_key ?? keyOf(u)).filter(Boolean)));
   items.push(...offline);
-  $("member-list").replaceChildren(...items);
+  mountMembers(items);
 }
+
+/**
+ * Puts the member list on the page. A big server's list isn't built all at once: the first
+ * rows now, the rest as empty blocks of the right height that fill in as you scroll to them
+ * (with 300 members, every status change used to rebuild all 300 rows).
+ */
+var MEMBERS_AT_ONCE = 50;
+function mountMembers(items) {
+  const out = [];
+  let made = 0;
+  let batch = null;
+  for (const item of items) {
+    if (typeof item !== "function") {
+      batch = null;
+      out.push(item);
+    } else if (made < MEMBERS_AT_ONCE) {
+      out.push(item());
+      made++;
+    } else {
+      if (!batch || batch.rows.length >= 40) {
+        batch = el("li", "member-later");
+        batch.rows = [];
+        out.push(batch);
+      }
+      batch.rows.push(item);
+      batch.style.height = batch.rows.length * 44 + "px";
+    }
+  }
+  $("member-list").replaceChildren(...out);
+  fillMembers();
+}
+
+function fillMembers() {
+  const box = $("members");
+  const bottom = box.getBoundingClientRect().bottom + 400;
+  for (const spot of $("member-list").querySelectorAll(".member-later")) {
+    if (spot.getBoundingClientRect().top > bottom) break;
+    spot.replaceWith(...spot.rows.map((make) => make()));
+  }
+}
+$("members").addEventListener("scroll", fillMembers, { passive: true });
 
 // ---------- messages ----------
 
@@ -3203,6 +3250,10 @@ function renderMessages(keepScrollUnlessAtBottom) {
   }
 
   const items = [state.olderDone.has(state.view) && !hiddenAbove ? welcome : olderLoader()];
+  // What's on screen now, by message: a message that hasn't changed keeps its row as it is,
+  // without building a new one (a new message or reaction used to rebuild all ~150).
+  const shown = new Map();
+  for (const node of $("messages").children) if (node.dataset.key) shown.set(node.dataset.key, node);
   let prev = null;
   for (const m of msgs) {
     const day = dayLabel(m.sent_at);
@@ -3229,6 +3280,15 @@ function renderMessages(keepScrollUnlessAtBottom) {
       line.append(icon("ban", "xs"), "Blocked message · ", show);
       items.push(line);
       prev = null;
+      continue;
+    }
+    const key = `${activeServer()?.address}|${m.id}`;
+    const sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), rawNameStyle(m.author_key), threadFrom(m)?.name ?? null, threadFrom(m)?.last_at ?? null, mentionsMeIn(m)]);
+    const same = shown.get(key);
+    if (same && same.dataset.sig === sig) {
+      same.msg = m;
+      items.push(same);
+      prev = m;
       continue;
     }
     if (mentionsMeIn(m) && m.author_key !== state.account?.publicKey) li.classList.add("mentions-me");
@@ -3290,8 +3350,8 @@ function renderMessages(keepScrollUnlessAtBottom) {
     li.msg = m;
     li.addEventListener("contextmenu", (e) => openMessageMenu(e.currentTarget.msg, e));
     // Kept as is when nothing it shows has changed (a playing video keeps playing).
-    li.dataset.key = `${activeServer()?.address}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, nameHere(m.author_key) ?? m.sender_name, m.text, m.edited_at, m.reactions, m.pinned, m.reply, state.replyTo?.id === m.id, state.editing?.id === m.id, pictureFor(m.author_key), rankOf(me()), state.shownBlocked.has(m.id), prefs.linkPreviews, roleColorByKey(m.author_key), rawNameStyle(m.author_key), threadFrom(m)?.name ?? null, threadFrom(m)?.last_at ?? null]);
+    li.dataset.key = key;
+    li.dataset.sig = sig;
     items.push(li);
     prev = m;
   }
@@ -3804,6 +3864,7 @@ function showServerTab(tab) {
   }
   document.querySelectorAll("[data-stab]").forEach((t) => t.classList.toggle("active", t.dataset.stab === tab));
   document.querySelectorAll("[data-spanel]").forEach((p) => (p.hidden = p.dataset.spanel !== tab));
+  if (tab === "members") renderMemberList();
 }
 document.querySelectorAll("[data-stab]").forEach((t) => t.addEventListener("click", () => showServerTab(t.dataset.stab)));
 
@@ -10180,6 +10241,7 @@ function memberRolesButton(m) {
 /** Server settings → Members: everyone who belongs here, online or not. */
 function renderMemberList() {
   const list = $("server-members");
+  if (!$("server-settings").open || list.closest("[data-spanel]")?.hidden) return;
   const q = $("member-search").value.trim().toLowerCase();
   const online = new Set((state.roster?.users ?? []).map((u) => u.public_key));
   const members = state.members
@@ -13056,7 +13118,7 @@ function freshView() {
 // unread). Scrolling up draws more from memory before asking the server; new messages join
 // the window, and at the bottom it's trimmed back, out of sight.
 
-var DRAW_WINDOW = 150;
+var DRAW_WINDOW = 70;
 var DRAW_MORE = 100;
 /** The oldest message drawn in each channel. */
 state.drawFrom = new Map();
