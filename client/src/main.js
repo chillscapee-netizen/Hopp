@@ -7655,13 +7655,15 @@ function withSkin(emoji) {
 
 function recentEmoji() {
   try {
-    return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string").slice(0, 16);
+    // A vote in a poll travels like a reaction ("poll:0"), but it's no emoji.
+    return JSON.parse(localStorage.getItem("recentEmoji") ?? "[]").filter((e) => typeof e === "string" && !e.startsWith("poll:")).slice(0, 16);
   } catch {
     return [];
   }
 }
 
 function rememberEmoji(emoji) {
+  if (emoji.startsWith("poll:")) return;
   const list = [emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, 16);
   try {
     localStorage.setItem("recentEmoji", JSON.stringify(list));
