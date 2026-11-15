@@ -347,16 +347,22 @@ function parseInvite(input) {
   if (parts[0].toLowerCase() === "cloud" && parts[1]) {
     return { address: `cloud:${parts[1]}`, invite: parts[2]?.toUpperCase() || undefined };
   }
-  return { address: parts[0], invite: parts[1]?.toUpperCase() || undefined };
+  // A self-hosted server's key goes before its address: "hopp://<pin>@host:port/CODE".
+  const pinned = parts[0].match(/^([0-9a-f]{32})@(.+)$/i);
+  return { address: pinned ? pinned[2] : parts[0], pin: pinned ? pinned[1].toLowerCase() : undefined, invite: parts[1]?.toUpperCase() || undefined };
 }
 
 function isCloud(server) {
   return !!server?.address?.startsWith("cloud:");
 }
 
-/** What the backend connects to: a WebSocket URL for cloud servers, host:port otherwise. */
+/**
+ * What the backend connects to: a WebSocket URL for cloud servers; host:port otherwise, with
+ * the server's key in front once it's known ("pin@host:port"), so only that server is accepted.
+ */
 function endpoint(server) {
-  return isCloud(server) ? `${prefs.cloudUrl}/servers/${server.address.slice(6)}/ws` : server.address;
+  if (isCloud(server)) return `${prefs.cloudUrl}/servers/${server.address.slice(6)}/ws`;
+  return (server.pin ? server.pin + "@" : "") + server.address;
 }
 
 function displayAddress(server) {
@@ -2094,6 +2100,13 @@ listen("kicked", (e) => {
 });
 
 listen("invite-created", (e) => showInvite(e.payload));
+// A self-hosted server reached encrypted the first time: remember its key.
+listen("server-pin", (e) => {
+  const s = prefs.servers.find((x) => !isCloud(x) && !x.pin && endpoint(x) === e.payload.address);
+  if (!s) return;
+  s.pin = e.payload.pin;
+  saveServers();
+});
 listen("invites", (e) => renderInviteList(e.payload));
 listen("bans", (e) => renderBanList(e.payload));
 listen("members", (e) => {
@@ -3621,7 +3634,7 @@ $("add-server").addEventListener("click", () => openAddDialog("choose"));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => showStep(b.dataset.goto)));
 
 /** Adds a server to the list (or reuses it) and connects. */
-function addAndConnect(address, invite, label) {
+function addAndConnect(address, invite, label, pin) {
   if (!address) return;
   let server = prefs.servers.find((s) => s.address === address);
   if (!server) {
@@ -3631,6 +3644,8 @@ function addAndConnect(address, invite, label) {
   } else if (invite) {
     server.invite = invite;
   }
+  // The key from the invite: from now on only this server is accepted at that address.
+  if (pin) server.pin = pin;
   saveServers();
   connectTo(server);
 }
@@ -3647,9 +3662,9 @@ async function joinInvite(input) {
       return friendlyError(err);
     }
   }
-  const { address, invite } = parseInvite(input);
+  const { address, invite, pin } = parseInvite(input);
   if (!address) return "Paste an invite link.";
-  addAndConnect(address, invite);
+  addAndConnect(address, invite, undefined, pin);
   return null;
 }
 
@@ -3770,9 +3785,11 @@ async function shareableAddress() {
   const server = activeServer();
   if (isCloud(server)) return { address: null, local: false, cloud: true };
   const [host, port = String(DEFAULT_PORT)] = server.address.split(":");
-  if (!/^(localhost|127\.|::1)/i.test(host)) return { address: `${host}:${port}`, local: false, port };
+  // The server's key goes in the link, so whoever joins reaches this server and no other.
+  const pin = server.pin ? server.pin + "@" : "";
+  if (!/^(localhost|127\.|::1)/i.test(host)) return { address: `${pin}${host}:${port}`, local: false, port };
   lanAddress ??= await call("local_address");
-  return { address: `${lanAddress ?? host}:${port}`, local: true, port };
+  return { address: `${pin}${lanAddress ?? host}:${port}`, local: true, port };
 }
 
 function requestInvite() {

@@ -15,3 +15,6 @@ tracing-subscriber = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 ed25519-dalek = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring"] }

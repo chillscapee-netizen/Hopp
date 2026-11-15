@@ -37,6 +37,8 @@ struct Connection {
     udp_addr: Option<SocketAddr>,
     session_id: SessionId,
     udp_token: u64,
+    /// Encrypted connections: the key voice is sealed with on the way to the server.
+    voice_key: Option<[u8; 32]>,
     /// Running only while we are in a voice channel, so the microphone is closed otherwise.
     engine: Option<VoiceEngine>,
     /// Cloud servers: how to reach the others in our voice channel, kept even
@@ -505,6 +507,7 @@ async fn connect(
     }
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
     let session = strom_voice::connect(&address, &identity, invite.as_deref(), create.as_deref()).await.map_err(|e| e.to_string())?;
+    remember_pin(&app, &address, &session);
     if *state.generation.lock().unwrap() != generation {
         return Err("superseded".into());
     }
@@ -674,6 +677,7 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
         udp_addr: session.udp_addr,
         session_id: me,
         udp_token: session.udp_token,
+        voice_key: session.voice_key,
         engine: None,
         voice_peers: HashMap::new(),
         voice_attempt: 0,
@@ -736,6 +740,16 @@ fn park_current(state: &AppState) {
 }
 
 /// Connects to a server in the background, so the first visit is instant too.
+/// A self-hosted server reached encrypted without a known key yet: the window remembers the key
+/// it has, and from then on only that key is accepted (and it goes in invite links).
+fn remember_pin(app: &AppHandle, address: &str, session: &strom_voice::Session) {
+    if let Some(pin) = &session.server_pin {
+        if strom_shared::split_pin(address).0.is_none() {
+            let _ = app.emit("server-pin", serde_json::json!({ "address": address, "pin": pin }));
+        }
+    }
+}
+
 #[tauri::command]
 async fn warm(app: AppHandle, state: State<'_, AppState>, address: String) -> CmdResult {
     let known = |state: &AppState| {
@@ -746,6 +760,7 @@ async fn warm(app: AppHandle, state: State<'_, AppState>, address: String) -> Cm
     }
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
     let session = strom_voice::connect(&address, &identity, None, None).await.map_err(|e| e.to_string())?;
+    remember_pin(&app, &address, &session);
     // Older servers can't resend their channels; and maybe you opened it meanwhile.
     if !session.roster.features.iter().any(|f| f == "resync") || known(&state) {
         return Ok(());
@@ -803,7 +818,7 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
         return Ok(());
     };
     if c.engine.is_none() {
-        let (engine, events) = VoiceEngine::start(udp_addr, c.session_id, c.udp_token, &devices, state.audio.clone())
+        let (engine, events) = VoiceEngine::start(udp_addr, c.session_id, c.udp_token, c.voice_key, &devices, state.audio.clone())
             .map_err(|e| format!("audio: {e:#}"))?;
         // Engine events come from realtime threads; relay them until the engine stops.
         let ui = app.clone();

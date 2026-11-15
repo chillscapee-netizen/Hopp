@@ -1,6 +1,6 @@
 //! Wire protocol shared by the Hopp server and client.
 //!
-//! Control traffic is newline-delimited JSON over TCP. Voice is sent over UDP
+//! Control traffic is newline-delimited JSON over TCP, inside TLS 1.3 (see `cert_pin`). Voice is sent over UDP
 //! as small binary packets carrying one Opus frame each; the server only
 //! relays them and never decodes audio.
 
@@ -10,6 +10,62 @@ pub const PROTOCOL_VERSION: u32 = 5;
 /// The most messages one search returns, newest first.
 pub const SEARCH_RESULTS: usize = 25;
 pub const DEFAULT_PORT: u16 = 7777;
+
+/// A self-hosted server is known by its key: this many hex characters of the SHA-256 of its
+/// TLS certificate (128 bits), written before its address in invite links:
+/// `hopp://<pin>@host:port/CODE`. The app refuses a server whose key doesn't match.
+pub const PIN_LEN: usize = 32;
+
+/// The pin of a server's TLS certificate (DER).
+pub fn cert_pin(cert_der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(cert_der);
+    digest.iter().map(|b| format!("{b:02x}")).collect::<String>()[..PIN_LEN].to_string()
+}
+
+/// The 32-byte key both ends of an encrypted connection derive for voice (TLS exporter).
+pub const VOICE_KEY_LABEL: &[u8] = b"EXPORTER-hopp-voice";
+
+/// A voice frame sealed for one hop over UDP (app to server, or server to app) with the key
+/// that hop shares: a fresh random nonce, then the frame encrypted and authenticated, tied to
+/// who sent it and its number so a frame can't be passed off as another.
+pub fn seal_voice(key: &[u8; 32], sender: SessionId, seq: u32, opus: &[u8]) -> Vec<u8> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    let cipher = chacha20poly1305::ChaCha20Poly1305::new(key.into());
+    let nonce: [u8; 12] = rand::random();
+    let aad = voice_aad(sender, seq);
+    let sealed = cipher.encrypt((&nonce).into(), Payload { msg: opus, aad: &aad }).expect("encrypting a frame can't fail");
+    let mut out = Vec::with_capacity(12 + sealed.len());
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&sealed);
+    out
+}
+
+/// Opens a frame from `seal_voice`; `None` when it wasn't sealed with this key for this sender and number.
+pub fn open_voice(key: &[u8; 32], sender: SessionId, seq: u32, sealed: &[u8]) -> Option<Vec<u8>> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    if sealed.len() < 12 + 16 {
+        return None;
+    }
+    let cipher = chacha20poly1305::ChaCha20Poly1305::new(key.into());
+    let (nonce, body) = sealed.split_at(12);
+    cipher.decrypt(nonce.into(), Payload { msg: body, aad: &voice_aad(sender, seq) }).ok()
+}
+
+fn voice_aad(sender: SessionId, seq: u32) -> [u8; 8] {
+    let mut aad = [0u8; 8];
+    aad[..4].copy_from_slice(&sender.to_be_bytes());
+    aad[4..].copy_from_slice(&seq.to_be_bytes());
+    aad
+}
+
+/// Splits "pin@host:port" into the pin (when there is a well-formed one) and the address.
+pub fn split_pin(address: &str) -> (Option<String>, &str) {
+    match address.split_once('@') {
+        Some((pin, rest)) if pin.len() == PIN_LEN && pin.bytes().all(|b| b.is_ascii_hexdigit()) => (Some(pin.to_ascii_lowercase()), rest),
+        _ => (None, address),
+    }
+}
 
 /// Audio is always 48 kHz mono, sent in 10 ms frames.
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -704,5 +760,34 @@ mod tests {
     fn control_messages_are_tagged_json() {
         let line = encode_line(&ClientMsg::JoinVoice { channel: 2 });
         assert_eq!(line, b"{\"type\":\"join_voice\",\"channel\":2}\n");
+    }
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn pins_split_off_addresses() {
+        let pin = "0123456789abcdef0123456789abcdef";
+        assert_eq!(split_pin(&format!("{pin}@example.com:7777")), (Some(pin.to_string()), "example.com:7777"));
+        assert_eq!(split_pin("example.com:7777"), (None, "example.com:7777"));
+        // Not a pin: wrong length or not hex.
+        assert_eq!(split_pin("abc@example.com:7777"), (None, "abc@example.com:7777"));
+        assert_eq!(cert_pin(b"x").len(), PIN_LEN);
+    }
+
+    #[test]
+    fn voice_frames_are_sealed_per_hop() {
+        let key = [7u8; 32];
+        let sealed = seal_voice(&key, 3, 41, b"opus frame");
+        assert_ne!(&sealed[12..22], b"opus frame");
+        assert_eq!(open_voice(&key, 3, 41, &sealed).as_deref(), Some(&b"opus frame"[..]));
+        // Another key, sender or number: refused.
+        assert!(open_voice(&[8u8; 32], 3, 41, &sealed).is_none());
+        assert!(open_voice(&key, 4, 41, &sealed).is_none());
+        assert!(open_voice(&key, 3, 42, &sealed).is_none());
+        // A fresh nonce every time.
+        assert_ne!(seal_voice(&key, 3, 41, b"x"), seal_voice(&key, 3, 41, b"x"));
     }
 }

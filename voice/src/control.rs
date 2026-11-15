@@ -2,6 +2,7 @@
 //! login, presence, channels and chat.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -9,7 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use strom_shared::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -32,6 +33,11 @@ pub struct Session {
     pub udp_token: u64,
     /// Where to send voice; `None` for cloud servers, which have no UDP relay.
     pub udp_addr: Option<SocketAddr>,
+    /// A self-hosted server reached encrypted: its key's pin, for the app to remember (and
+    /// put in invite links). `None` for cloud servers (they use ordinary HTTPS certificates).
+    pub server_pin: Option<String>,
+    /// Encrypted connections: the key voice is sealed with on its way to and from the server.
+    pub voice_key: Option<[u8; 32]>,
     /// Server messages after the welcome. Yields `None` when the connection drops.
     pub events: mpsc::UnboundedReceiver<ServerMsg>,
 }
@@ -110,8 +116,11 @@ pub fn parse_invite(input: &str) -> anyhow::Result<(String, Option<String>)> {
 type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 /// Reads server messages from either transport. `None` means the connection closed.
+type ByteReader = Box<dyn AsyncRead + Unpin + Send>;
+type ByteWriter = Box<dyn AsyncWrite + Unpin + Send>;
+
 enum Reader {
-    Tcp(BufReader<OwnedReadHalf>),
+    Tcp(BufReader<ByteReader>),
     Ws(SplitStream<WsStream>),
 }
 
@@ -146,7 +155,7 @@ impl Reader {
 
 /// Sends client messages: JSON lines over TCP, one JSON text frame per message over WebSocket.
 enum Writer {
-    Tcp(OwnedWriteHalf),
+    Tcp(ByteWriter),
     Ws(SplitSink<WsStream, WsMessage>),
 }
 
@@ -178,22 +187,108 @@ fn is_websocket(address: &str) -> bool {
     address.starts_with("ws://") || address.starts_with("wss://")
 }
 
-async fn open_tcp(address: &str) -> anyhow::Result<(Reader, Writer, SocketAddr)> {
-    let (addr, _) = parse_invite(address)?;
+async fn dial(addr: &str) -> anyhow::Result<(TcpStream, SocketAddr)> {
     // "localhost" resolves to both ::1 and 127.0.0.1; use whichever the server listens on.
     let mut last_err = anyhow::anyhow!("could not resolve {addr}");
-    for candidate in tokio::net::lookup_host(&addr).await? {
+    for candidate in tokio::net::lookup_host(addr).await? {
         match tokio::time::timeout(ANSWER_TIMEOUT, TcpStream::connect(candidate)).await {
             Ok(Ok(stream)) => {
                 stream.set_nodelay(true)?;
-                let (rd, wr) = stream.into_split();
-                return Ok((Reader::Tcp(BufReader::new(rd)), Writer::Tcp(wr), candidate));
+                return Ok((stream, candidate));
             }
             Ok(Err(e)) => last_err = e.into(),
             Err(_) => last_err = anyhow::anyhow!("timed out connecting to {addr}"),
         }
     }
     Err(last_err)
+}
+
+/// A self-hosted server, always encrypted (TLS 1.3) and known by its key: with a pin (from the
+/// invite link or remembered), only that key is accepted; without one, the key seen now is
+/// returned to be remembered from then on. Only an older server on this very computer is
+/// reached unencrypted (nothing leaves the computer).
+async fn open_tcp(address: &str) -> anyhow::Result<(Reader, Writer, SocketAddr, Option<String>, Option<[u8; 32]>)> {
+    let (addr, _) = parse_invite(address)?;
+    let (pin, host) = strom_shared::split_pin(&addr);
+    let (stream, at) = dial(host).await?;
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let verifier = Arc::new(PinVerifier { pin: pin.clone(), seen: seen.clone(), provider: Arc::new(rustls::crypto::ring::default_provider()) });
+    let config = rustls::ClientConfig::builder_with_provider(verifier.provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    let name = rustls::pki_types::ServerName::try_from("hopp-server")?;
+    match tokio::time::timeout(ANSWER_TIMEOUT, tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, stream)).await {
+        Ok(Ok(tls)) => {
+            let key = tls.get_ref().1.export_keying_material([0u8; 32], strom_shared::VOICE_KEY_LABEL, None)?;
+            let (rd, wr) = tokio::io::split(tls);
+            let pin = seen.lock().unwrap().clone();
+            Ok((Reader::Tcp(BufReader::new(Box::new(rd))), Writer::Tcp(Box::new(wr)), at, pin, Some(key)))
+        }
+        Ok(Err(e)) => {
+            if pin.is_some() && seen.lock().unwrap().as_ref().is_some_and(|s| Some(s) != pin.as_ref()) {
+                anyhow::bail!("This server's key doesn't match the one in your invite. If the owner didn't set the server up again, someone may be in between: don't connect.");
+            }
+            // An older server that doesn't encrypt yet: only on this computer.
+            if pin.is_none() && at.ip().is_loopback() {
+                let (stream, at) = dial(host).await?;
+                let (rd, wr) = stream.into_split();
+                return Ok((Reader::Tcp(BufReader::new(Box::new(rd))), Writer::Tcp(Box::new(wr)), at, None, None));
+            }
+            Err(anyhow::anyhow!("Couldn't connect securely to this server ({e}). It may need updating to a version that encrypts connections."))
+        }
+        Err(_) => anyhow::bail!("timed out connecting to {host}"),
+    }
+}
+
+/// Accepts exactly the server's own key (by its pin), or any key when there's no pin yet, and
+/// notes the key it saw. Signatures are still checked properly.
+#[derive(Debug)]
+struct PinVerifier {
+    pin: Option<String>,
+    seen: Arc<std::sync::Mutex<Option<String>>>,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let pin = strom_shared::cert_pin(end_entity.as_ref());
+        *self.seen.lock().unwrap() = Some(pin.clone());
+        match &self.pin {
+            Some(expected) if *expected != pin => Err(rustls::Error::General("server key mismatch".into())),
+            _ => Ok(rustls::client::danger::ServerCertVerified::assertion()),
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 async fn open_websocket(url: &str) -> anyhow::Result<(Reader, Writer)> {
@@ -210,12 +305,12 @@ async fn open_websocket(url: &str) -> anyhow::Result<(Reader, Writer)> {
 /// URL. `invite` is needed the first time; `create` creates a new cloud server
 /// with that name, owned by this identity.
 pub async fn connect(address: &str, identity: &Identity, invite: Option<&str>, create: Option<&str>) -> anyhow::Result<Session> {
-    let (mut reader, mut writer, server) = if is_websocket(address) {
+    let (mut reader, mut writer, server, server_pin, voice_key) = if is_websocket(address) {
         let (r, w) = open_websocket(address).await?;
-        (r, w, None)
+        (r, w, None, None, None)
     } else {
-        let (r, w, addr) = open_tcp(address).await?;
-        (r, w, Some(addr))
+        let (r, w, addr, pin, key) = open_tcp(address).await?;
+        (r, w, Some(addr), pin, key)
     };
 
     let hello = ClientMsg::Hello {
@@ -284,6 +379,8 @@ pub async fn connect(address: &str, identity: &Identity, invite: Option<&str>, c
         udp_token,
         // Cloud servers have no UDP relay; they report port 0.
         udp_addr: server.filter(|_| udp_port != 0).map(|s| SocketAddr::new(s.ip(), udp_port)),
+        server_pin,
+        voice_key,
         events,
     })
 }

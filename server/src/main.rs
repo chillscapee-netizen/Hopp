@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let tcp = TcpListener::bind(addr).await?;
     let udp = UdpSocket::bind(addr).await?;
-    tracing::info!("Strom server listening on {addr} (TCP control + UDP voice), data in {data}");
-    strom_server::run(tcp, udp, ServerConfig::default_named(&name), storage).await
+    let tls = strom_server::tls::load_or_create(std::path::Path::new(&data))?;
+    tracing::info!("Hopp server listening on {addr} (TCP control + UDP voice), data in {data}");
+    strom_server::run(tcp, udp, ServerConfig::default_named(&name), storage, Some(tls)).await
 }

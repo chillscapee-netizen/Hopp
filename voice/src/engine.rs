@@ -153,7 +153,8 @@ impl Drop for Running {
 #[derive(Clone)]
 enum Route {
     /// Through the server's UDP relay (self-hosted servers); the socket is connected to it.
-    Relay { token: u64 },
+    /// With `key` (an encrypted connection), voice is sealed on its way to and from the server.
+    Relay { token: u64, key: Option<[u8; 32]> },
     /// Straight to everyone in the channel (cloud servers).
     Mesh(Arc<Mesh>),
 }
@@ -184,12 +185,13 @@ impl VoiceEngine {
         server: SocketAddr,
         session_id: SessionId,
         token: u64,
+        key: Option<[u8; 32]>,
         devices: &DeviceChoice,
         settings: Arc<AudioSettings>,
     ) -> anyhow::Result<(Self, Receiver<EngineEvent>)> {
         let socket = UdpSocket::bind(if server.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" })?;
         socket.connect(server)?;
-        Self::start_with(socket, session_id, Route::Relay { token }, None, devices, settings)
+        Self::start_with(socket, session_id, Route::Relay { token, key }, None, devices, settings)
     }
 
     /// Starts peer-to-peer voice with the channel's `key`. Looks up our public
@@ -817,7 +819,7 @@ impl Net {
     fn tick(&mut self) {
         let nonce = self.now_ms();
         match &self.route {
-            Route::Relay { token } => {
+            Route::Relay { token, .. } => {
                 if self.last_relay_ping.is_some_and(|t| t.elapsed() < PING_INTERVAL) {
                     return;
                 }
@@ -843,8 +845,14 @@ impl Net {
 
     fn send_voice(&mut self, seq: u32, opus: &[u8]) {
         match &self.route {
-            Route::Relay { token } => {
-                ClientPacket::Voice { session_id: self.session_id, token: *token, seq, opus }.write(&mut self.packet);
+            Route::Relay { token, key } => {
+                match key {
+                    Some(key) => {
+                        let sealed = strom_shared::seal_voice(key, self.session_id, seq, opus);
+                        ClientPacket::Voice { session_id: self.session_id, token: *token, seq, opus: &sealed }.write(&mut self.packet);
+                    }
+                    None => ClientPacket::Voice { session_id: self.session_id, token: *token, seq, opus }.write(&mut self.packet),
+                }
                 let _ = self.socket.send(&self.packet);
             }
             Route::Mesh(m) => {
@@ -1266,9 +1274,16 @@ fn run_receiver(mut net: Net, mixer: Arc<Mutex<Mixer>>, events: &Sender<EngineEv
         let packet = &buf[..len];
         let mesh = match &net.route {
             Route::Mesh(m) => m.clone(),
-            Route::Relay { .. } => {
+            Route::Relay { key, .. } => {
                 if let Some(v) = ServerVoice::parse(packet) {
-                    mixer.lock().unwrap().push(v.sender, v.seq, v.opus.to_vec());
+                    // Sealed for us on the way: a frame that doesn't open isn't ours, and is dropped.
+                    let frame = match key {
+                        Some(key) => strom_shared::open_voice(key, v.sender, v.seq, v.opus),
+                        None => Some(v.opus.to_vec()),
+                    };
+                    if let Some(frame) = frame {
+                        mixer.lock().unwrap().push(v.sender, v.seq, frame);
+                    }
                 } else if let Some(ClientPacket::Ping { nonce, .. }) = ClientPacket::parse(packet) {
                     let _ = events.send(EngineEvent::Latency { ms: net.now_ms().wrapping_sub(nonce) });
                 }
@@ -2055,7 +2070,9 @@ mod live_audio {
             let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
             let port = tcp.local_addr().unwrap().port();
-            tokio::spawn(strom_server::run(tcp, udp, ServerConfig::default_named("Test"), Storage::memory()));
+            // Encrypted, as for real: voice is sealed on its way to and from the server.
+            let tls = strom_server::tls::load_or_create(&std::env::temp_dir().join(format!("hopp-live-{}", rand::random::<u32>()))).unwrap();
+            tokio::spawn(strom_server::run(tcp, udp, ServerConfig::default_named("Test"), Storage::memory(), Some(tls)));
             port
         });
         let address = format!("127.0.0.1:{port}");
@@ -2078,8 +2095,8 @@ mod live_audio {
 
         let devices = DeviceChoice::default();
         let a_set = always_talking();
-        let (mut a, _ae) = VoiceEngine::start(owner.udp_addr.unwrap(), owner.roster.me, owner.udp_token, &devices, a_set.clone()).unwrap();
-        let (_b, b_events) = VoiceEngine::start(guest.udp_addr.unwrap(), guest.roster.me, guest.udp_token, &devices, listener()).unwrap();
+        let (mut a, _ae) = VoiceEngine::start(owner.udp_addr.unwrap(), owner.roster.me, owner.udp_token, owner.voice_key, &devices, a_set.clone()).unwrap();
+        let (_b, b_events) = VoiceEngine::start(guest.udp_addr.unwrap(), guest.roster.me, guest.udp_token, guest.voice_key, &devices, listener()).unwrap();
         exercise(&mut a, &a_set, owner.roster.me, &b_events, "relay");
         drop((owner, guest));
     }

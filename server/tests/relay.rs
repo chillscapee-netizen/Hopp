@@ -33,7 +33,7 @@ async fn bind_server(storage: Storage) -> SocketAddr {
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
     let udp = UdpSocket::bind(addr).await.unwrap();
-    tokio::spawn(strom_server::run(tcp, udp, test_config(), storage));
+    tokio::spawn(strom_server::run(tcp, udp, test_config(), storage, None));
     addr
 }
 

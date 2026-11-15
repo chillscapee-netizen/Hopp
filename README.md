@@ -16,7 +16,7 @@ npm run dev
 
 In the app, create your Hopp ID, then **+ → Run your own server → Connect to my server**.
 The first person to connect from the server's own computer becomes the owner. Everyone
-else needs an invite link (`strom://host:port/CODE`) from the owner.
+else needs an invite link (`hopp://<key>@host:port/CODE`) from the owner.
 
 To claim ownership from another computer, use the setup link the server prints when it
 starts without an owner.
@@ -24,6 +24,14 @@ starts without an owner.
 Headless test client: `cargo run -p strom-voice --example cli -- localhost name [seconds] [--raw] [--mic-test]`
 
 ## Security model
+
+- **Encrypted connections to self-hosted servers**: TLS 1.3. The server makes its own key the
+  first time it starts (kept in its data folder) and is known by it: the key's fingerprint is in
+  every invite link, the app accepts only that key, and remembers a server's key after the first
+  encrypted connection. No certificate authority is involved. Voice through the server's relay
+  is sealed (ChaCha20-Poly1305) with a key both ends derive from that connection, so nothing
+  can be read on the way; the server itself (yours) handles the audio. Unencrypted connections
+  are only accepted from the server's own computer.
 
 - **Hopp ID**: an Ed25519 key pair, encrypted on disk with your password (Argon2id +
   ChaCha20-Poly1305). Servers verify a signed challenge; passwords never leave the computer.

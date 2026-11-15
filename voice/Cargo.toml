@@ -5,6 +5,8 @@ edition = "2021"
 license = "GPL-3.0-only"
 
 [dependencies]
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
 strom-shared = { path = "../shared" }
 serde = { workspace = true }
 serde_json = { workspace = true }

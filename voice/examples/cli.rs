@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "--raw") {
         settings.set_noise_suppression(false);
     }
-    let (mut engine, events) = VoiceEngine::start(relay, session.roster.me, session.udp_token, &Default::default(), settings)?;
+    let (mut engine, events) = VoiceEngine::start(relay, session.roster.me, session.udp_token, session.voice_key, &Default::default(), settings)?;
     if args.iter().any(|a| a == "--switch") {
         let input = devices.inputs.last().cloned();
         println!("switching microphone to {input:?}");

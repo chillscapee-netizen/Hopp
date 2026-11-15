@@ -2,6 +2,7 @@
 //! never decodes audio.
 
 mod storage;
+pub mod tls;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -11,9 +12,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 pub use storage::{Account, ServerConfig, Storage};
 use strom_shared::*;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::tcp::OwnedWriteHalf;
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -70,6 +70,8 @@ struct Client {
     chat: Bucket,
     last_typing: Option<Instant>,
     voice_window: (Instant, u32),
+    /// Encrypted connections: the key their voice is sealed with on the way (both directions).
+    voice_key: Option<[u8; 32]>,
 }
 
 struct State {
@@ -167,7 +169,10 @@ fn normalize_channel_name(name: &str, kind: ChannelKind) -> String {
 /// Runs the server on already-bound sockets until the TCP listener fails.
 ///
 /// `default_config` is used, and saved, only when `storage` holds no server yet.
-pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig, storage: Storage) -> anyhow::Result<()> {
+///
+/// With `tls`, connections from other computers must be encrypted (TLS 1.3, the server known by
+/// its key); plain ones are only taken from this computer itself (and in tests, without `tls`).
+pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig, storage: Storage, tls: Option<tls::Tls>) -> anyhow::Result<()> {
     let udp_port = udp.local_addr()?.port();
     let config = match storage.load_config() {
         Some(c) => c,
@@ -186,10 +191,16 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
         history.insert(c.id, messages);
     }
     let setup_code = config.owner.is_none().then(new_code);
+    let pin = tls.as_ref().map(|t| t.pin.clone());
+    if let Some(pin) = &pin {
+        info!("connections are encrypted; this server's key: {pin}");
+    }
+    let at = pin.as_ref().map(|p| format!("{p}@")).unwrap_or_default();
     if let Some(code) = &setup_code {
         info!("this server has no owner yet. Connect from this computer to become the owner,");
-        info!("or from another computer with the invite link strom://<address>/{code}");
+        info!("or from another computer with the invite link hopp://{at}<address>/{code}");
     }
+    let acceptor = tls.map(|t| t.acceptor);
     let state: Shared = Arc::new(Mutex::new(State {
         accounts: storage.load_accounts(),
         invites: storage.load_invites(),
@@ -213,8 +224,30 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
             continue;
         }
         let state = state.clone();
+        let acceptor = acceptor.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, addr, state, udp_port).await {
+            let result = async {
+                stream.set_nodelay(true)?;
+                // A TLS hello starts with 0x16; anything else is the old plain protocol.
+                let mut first = [0u8; 1];
+                let n = tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.peek(&mut first)).await??;
+                anyhow::ensure!(n == 1, "client disconnected");
+                match &acceptor {
+                    Some(acceptor) if first[0] == 0x16 => {
+                        let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await??;
+                        let key = stream.get_ref().1.export_keying_material([0u8; 32], VOICE_KEY_LABEL, None)?;
+                        handle_client(stream, addr, state, udp_port, Some(key)).await
+                    }
+                    // Unencrypted: only from this computer (or when the server has no key, in tests).
+                    _ if acceptor.is_none() || addr.ip().is_loopback() => handle_client(stream, addr, state, udp_port, None).await,
+                    _ => {
+                        let mut stream = stream;
+                        Err(reject(&mut stream, "This server only takes encrypted connections. Update Hopp to join.").await)
+                    }
+                }
+            }
+            .await;
+            if let Err(e) = result {
                 info!(%addr, "connection closed: {e}");
             }
         });
@@ -224,7 +257,8 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
 async fn relay_voice(udp: UdpSocket, state: Shared) {
     let mut buf = vec![0u8; 1500];
     let mut out = Vec::with_capacity(1500);
-    let mut targets = Vec::new();
+    let mut targets: Vec<(SocketAddr, Option<[u8; 32]>)> = Vec::new();
+    let mut plain = Vec::new();
     loop {
         let (len, from) = match udp.recv_from(&mut buf).await {
             Ok(r) => r,
@@ -237,6 +271,7 @@ async fn relay_voice(udp: UdpSocket, state: Shared) {
         };
 
         targets.clear();
+        let mut voice: Option<(SessionId, u32)> = None;
         {
             let mut st = state.lock().unwrap();
             let Some(sender) = st.clients.get_mut(&session_id) else { continue };
@@ -250,7 +285,7 @@ async fn relay_voice(udp: UdpSocket, state: Shared) {
                     // Echo pings so the client can measure round-trip time.
                     out.clear();
                     out.extend_from_slice(&buf[..len]);
-                    targets.push(from);
+                    targets.push((from, None));
                 }
                 ClientPacket::Voice { seq, opus, .. } => {
                     let (window, count) = &mut sender.voice_window;
@@ -266,17 +301,33 @@ async fn relay_voice(udp: UdpSocket, state: Shared) {
                     if sender.user.muted || sender.user.deafened || sender.user.server_muted || sender.user.server_deafened {
                         continue;
                     }
-                    ServerVoice { sender: session_id, seq, opus }.write(&mut out);
+                    // Sealed on the way here: opened with the sender's key (a frame that doesn't open is dropped).
+                    plain.clear();
+                    match &sender.voice_key {
+                        Some(key) => match open_voice(key, session_id, seq, opus) {
+                            Some(frame) => plain.extend_from_slice(&frame),
+                            None => continue,
+                        },
+                        None => plain.extend_from_slice(opus),
+                    }
+                    voice = Some((session_id, seq));
                     targets.extend(st.clients.values().filter_map(|c| {
                         let is_sender = c.user.session_id == session_id;
                         let listening =
                             (!is_sender || c.loopback) && c.user.voice_channel == Some(channel) && !c.user.deafened && !c.user.server_deafened;
-                        if listening { c.udp_addr } else { None }
+                        if listening { c.udp_addr.map(|a| (a, c.voice_key)) } else { None }
                     }));
                 }
             }
         }
-        for addr in &targets {
+        for (addr, key) in &targets {
+            // Voice goes to each listener sealed with that listener's own key.
+            if let Some((sender, seq)) = voice {
+                match key {
+                    Some(key) => ServerVoice { sender, seq, opus: &seal_voice(key, sender, seq, &plain) }.write(&mut out),
+                    None => ServerVoice { sender, seq, opus: &plain }.write(&mut out),
+                }
+            }
             let _ = udp.send_to(&out, addr).await;
         }
     }
@@ -290,7 +341,7 @@ async fn read_msg<R: AsyncBufRead + Unpin>(reader: &mut R, line: &mut String, ti
     Ok(serde_json::from_str(line)?)
 }
 
-async fn reject(wr: &mut OwnedWriteHalf, message: impl Into<String>) -> anyhow::Error {
+async fn reject<W: AsyncWrite + Unpin>(wr: &mut W, message: impl Into<String>) -> anyhow::Error {
     let message = message.into();
     let _ = wr.write_all(&encode_line(&ServerMsg::Error { message: message.clone() })).await;
     anyhow::anyhow!(message)
@@ -355,9 +406,11 @@ fn admit(st: &mut State, name: &str, public_key: &str, invite: Option<&str>, pee
     Ok(())
 }
 
-async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_port: u16) -> anyhow::Result<()> {
-    stream.set_nodelay(true)?;
-    let (rd, mut wr) = stream.into_split();
+async fn handle_client<S>(stream: S, peer: SocketAddr, state: Shared, udp_port: u16, voice_key: Option<[u8; 32]>) -> anyhow::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (rd, mut wr) = tokio::io::split(stream);
     let mut reader = BufReader::new(rd);
     let mut line = String::new();
 
@@ -411,6 +464,7 @@ async fn handle_client(stream: TcpStream, peer: SocketAddr, state: Shared, udp_p
                 chat: Bucket::new(),
                 last_typing: None,
                 voice_window: (Instant::now(), 0),
+                voice_key,
             };
             st.clients.insert(session_id, client);
             let _ = tx.send(ServerMsg::Welcome {
