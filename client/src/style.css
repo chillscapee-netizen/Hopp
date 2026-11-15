@@ -4024,3 +4024,8 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 /* The group row sticks to the very top of the list (the list has 4 px of room above): no strip of emojis shows above it. */
 .emoji-nav { top: -4px; }
 .yt-resume { position: absolute; left: 10px; bottom: 10px; padding: 3px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.7); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
+.host-on { display: grid; gap: 6px; margin-bottom: 14px; }
+.host-state { display: flex; align-items: center; gap: 10px; margin: 0; }
+.host-state .status-dot { position: static; flex: none; }
+#add-dialog details.advanced { margin-top: 14px; }
+#add-dialog details.advanced .btn { margin-top: 8px; }

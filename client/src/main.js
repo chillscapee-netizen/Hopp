@@ -3628,6 +3628,7 @@ function openAddDialog(step) {
   $("join-address").value = "";
   updateJoinPreview();
   showStep(step);
+  renderHost();
   openModal($("add-dialog"));
 }
 $("add-server").addEventListener("click", () => openAddDialog("choose"));
@@ -3733,6 +3734,68 @@ $("host-connect").addEventListener("click", () => {
   $("add-dialog").close();
   addAndConnect("localhost");
 });
+
+/**
+ * A server hosted on this computer, inside Hopp. It starts with Hopp once you've started it,
+ * keeps its data and key in Hopp's folder, and asks the router to let friends in (UPnP).
+ */
+state.host = { running: false };
+function hostWords(h) {
+  if (!h?.running) return "";
+  if (h.reach === "open") return "Friends anywhere can join with your invite links.";
+  if (h.reach === "checking") return "Checking whether friends outside your home can reach it…";
+  return "Only people on your home network can join for now: your router didn't let Hopp open the way in. Turning on UPnP in the router's settings fixes it.";
+}
+function renderHost() {
+  const on = !!state.host?.running;
+  $("host-off").hidden = on;
+  $("host-on").hidden = !on;
+  $("host-start").hidden = on;
+  $("host-stop").hidden = !on;
+  $("host-on-name").textContent = state.host?.name ?? "";
+  $("host-reach").textContent = hostWords(state.host);
+  const reach = $("invite-reach");
+  const hosted = on && activeServer()?.address === "localhost:" + state.host.port;
+  reach.hidden = !hosted;
+  reach.textContent = hosted ? hostWords(state.host) : "";
+}
+async function startHosting(name, quiet) {
+  try {
+    state.host = await invoke("host_start", { name });
+  } catch (err) {
+    if (!quiet) toast(friendlyError(err), true);
+    return null;
+  }
+  save("hosting", JSON.stringify({ name: state.host.name }));
+  renderHost();
+  return state.host;
+}
+$("host-start").addEventListener("click", async () => {
+  const h = await startHosting($("host-name").value);
+  if (!h) return;
+  $("add-dialog").close();
+  // You're the owner: the first to connect from this computer.
+  addAndConnect("localhost:" + h.port, undefined, h.name, h.pin);
+});
+$("host-stop").addEventListener("click", async () => {
+  const ok = await confirmDialog({ title: "Stop your server?", text: "Nobody can reach it until you start it again. Its channels and messages stay on this computer.", ok: "Stop server" });
+  if (!ok) return;
+  await invoke("host_stop").catch(() => {});
+  state.host = { running: false };
+  save("hosting", "");
+  renderHost();
+});
+listen("host-status", (e) => {
+  state.host = e.payload;
+  renderHost();
+});
+// Started before: it starts with Hopp again.
+try {
+  const was = JSON.parse(load("hosting", "") || "null");
+  if (was?.name) startHosting(was.name, true);
+} catch {
+  // Nothing hosted.
+}
 document.querySelectorAll(".close-dialog").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 
 // ---------- server menu & channels ----------
@@ -3787,6 +3850,10 @@ async function shareableAddress() {
   const [host, port = String(DEFAULT_PORT)] = server.address.split(":");
   // The server's key goes in the link, so whoever joins reaches this server and no other.
   const pin = server.pin ? server.pin + "@" : "";
+  // Hosted here, with the router's way in open: the home's public address.
+  if (state.host?.running && server.address === "localhost:" + state.host.port && state.host.reach === "open" && state.host.public) {
+    return { address: `${pin}${state.host.public}:${port}`, local: false, port };
+  }
   if (!/^(localhost|127\.|::1)/i.test(host)) return { address: `${pin}${host}:${port}`, local: false, port };
   lanAddress ??= await call("local_address");
   return { address: `${pin}${lanAddress ?? host}:${port}`, local: true, port };
@@ -3808,6 +3875,7 @@ function inviteSummary(invite) {
 
 async function showInvite(invite) {
   if (!$("invite-dialog").open) return;
+  renderHost();
   const { address } = await shareableAddress();
   // Cloud: strom://CODE. Self-hosted: strom://host:port/CODE.
   // Cloud invites are web links anyone can click; they open Hopp, or help install it.

@@ -444,31 +444,37 @@
       <div class="modal-body">
         <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
         <h2 class="center-text">Run your own server</h2>
-        <p class="modal-sub center-text">Hopp has no central server that someone has to pay for. Each community is run by someone in it.</p>
-        <ol class="steps">
-          <li>
-            <strong>Start the server</strong>
-            <span>On a computer that's on when you hang out, or on a free cloud server if it should be up around the clock.</span>
-            <code class="code">strom-server --name "My server"</code>
-          </li>
-          <li>
-            <strong>Connect and become the owner</strong>
-            <span>The first person to connect from the same computer becomes the owner. Nobody else can get in without an invite.</span>
-          </li>
-          <li>
-            <strong>Invite people</strong>
-            <span>Open the server menu and choose <em>Invite people</em>. You decide how long each link works and how many can use it. Each link carries your server's key, so whoever uses it reaches your server and no one else's.</span>
-          </li>
-        </ol>
+        <p class="modal-sub center-text">On this computer: your chats and voice stay with you, and nobody else stores them. It's up while Hopp is open.</p>
+        <div id="host-off">
+          <label class="field">
+            <span class="field-label">Server name</span>
+            <input id="host-name" maxlength="40" placeholder="My server" autocomplete="off">
+          </label>
+          <p class="hint left">Hopp opens the way in on your router by itself, so friends outside your home can join. Everything between Hopp and your server is encrypted.</p>
+        </div>
+        <div id="host-on" class="host-on" hidden>
+          <p class="host-state"><span class="status-dot online"></span><span><strong id="host-on-name"></strong> is running on this computer</span></p>
+          <p id="host-reach" class="hint left"></p>
+        </div>
         <div class="callout-warn">
           <svg class="i"><use href="#i-shield"/></svg>
-          <span>Everything between Hopp and your server is encrypted: messages and voice can't be read on the way. People who join can only chat and talk, and can't reach your files. They will see your IP address, though, so if you're inviting strangers, run the server on a cloud server instead of your home computer.</span>
+          <span>People who join can only chat and talk, and can't reach your files. They will see your IP address, though, so if you're inviting strangers, run the server somewhere else instead of your home computer.</span>
         </div>
+        <details class="advanced">
+          <summary>Run the server program on another computer instead</summary>
+          <ol class="steps">
+            <li><strong>Start the server</strong><span>On a computer that's on when you hang out, or a cloud server that's always up.</span><code class="code">strom-server --name "My server"</code></li>
+            <li><strong>Connect and become the owner</strong><span>The first person to connect from that computer becomes the owner.</span></li>
+          </ol>
+          <button type="button" id="host-connect" class="btn sm">Connect to the server on this computer</button>
+        </details>
       </div>
       <div class="modal-foot spread">
         <button type="button" class="btn-link" data-goto="choose">Back</button>
-        <button type="button" id="host-connect" class="btn primary">Connect to my server</button>
+        <button type="button" id="host-stop" class="btn danger" hidden>Stop server</button>
+        <button type="button" id="host-start" class="btn primary">Start my server</button>
       </div>
+    </div>
     </div>
   </dialog>
 
@@ -704,6 +710,7 @@
           <button id="invite-copy" type="button" class="btn primary sm">Copy</button>
         </div>
         <p class="invite-foot"><span id="invite-summary"></span> <button id="invite-edit" type="button" class="link">Edit invite link</button></p>
+        <p id="invite-reach" class="hint left" hidden></p>
         <div id="invite-options" class="invite-options" hidden>
           <div class="grid-2">
             <label class="field">

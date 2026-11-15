@@ -17,6 +17,7 @@ mod attenuate;
 mod ptt;
 mod shell;
 mod store;
+mod host;
 
 const HELLO_VALID_FOR: Duration = Duration::from_secs(180);
 use strom_shared::{ChannelId, ChannelKind, ClientMsg, PeerEndpoint, ServerMsg, SessionId};
@@ -1596,6 +1597,10 @@ async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Valu
 /// This computer's address on the local network, for invite links.
 #[tauri::command]
 fn local_address() -> Option<String> {
+    lan_ip()
+}
+
+pub fn lan_ip() -> Option<String> {
     // Connecting a UDP socket sends nothing; it only picks the outgoing interface.
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
@@ -1861,6 +1866,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState::default())
+        .manage(host::Host::default())
         .manage(shell::PendingLink::default())
         .manage(account::Account::default())
         .manage(downloads::Downloads::default())
@@ -1969,6 +1975,9 @@ fn main() {
             check_update,
             store_install,
             set_level_meter,
+            host::host_start,
+            host::host_stop,
+            host::host_status,
             set_memory_low,
             install_update,
             set_role,
@@ -2045,6 +2054,7 @@ fn main() {
         .run(|app, event| {
             // Quitting: other apps get their own volume back.
             if let tauri::RunEvent::Exit = event {
+                host::stop_on_exit(app);
                 if let Some(a) = app.state::<AppState>().attenuator.get() {
                     a.restore_now();
                 }
