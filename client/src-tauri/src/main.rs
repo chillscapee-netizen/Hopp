@@ -697,6 +697,13 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
     }
 }
 
+/// One HTTP client for Hopp Cloud, kept for the whole run: its connection stays open, so a
+/// picture or a profile doesn't start a new encrypted connection every time.
+fn cloud_http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
 /// A picture, voice message or emoji picture for the server in view, when it runs on someone's
 /// computer (it stores it itself). Its id when stored.
 #[tauri::command]
@@ -1459,7 +1466,7 @@ async fn invite_preview(cloud: String, code: String) -> CmdResult<serde_json::Va
         return Err("That doesn't look like an invite code.".into());
     }
     let url = format!("{}/invite/{}", cloud.trim_end_matches('/'), code.to_uppercase());
-    let response = reqwest::Client::new()
+    let response = cloud_http()
         .get(url)
         .timeout(Duration::from_secs(8))
         .send()
@@ -1586,7 +1593,7 @@ fn set_autostart(app: AppHandle, on: bool) -> CmdResult {
 async fn gif_search(cloud: String, q: String, pos: Option<String>) -> CmdResult<serde_json::Value> {
     let mut url = reqwest::Url::parse(&format!("{}/gifs", cloud.trim_end_matches('/'))).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("q", &q).append_pair("pos", pos.as_deref().unwrap_or(""));
-    let response = reqwest::Client::new()
+    let response = cloud_http()
         .get(url)
         .timeout(Duration::from_secs(10))
         .send()
@@ -1610,7 +1617,7 @@ async fn upload_image(state: State<'_, AppState>, cloud: String, server_id: Stri
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     let signature = identity.sign_image(&server_id, &data, time);
     let url = format!("{}/servers/{}/images", cloud.trim_end_matches('/'), server_id);
-    let response = reqwest::Client::new()
+    let response = cloud_http()
         .post(url)
         .header("content-type", kind)
         .header("X-Hopp-Key", identity.public_key())
@@ -1637,7 +1644,7 @@ async fn upload_dm_image(state: State<'_, AppState>, cloud: String, data: Vec<u8
     let key = identity.public_key();
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     let signature = identity.sign_image(&format!("account:{key}"), &data, time);
-    let response = reqwest::Client::new()
+    let response = cloud_http()
         .post(format!("{}/accounts/{}/images", cloud.trim_end_matches('/'), key))
         .header("content-type", "application/octet-stream")
         .header("X-Hopp-Key", &key)
@@ -1664,7 +1671,7 @@ async fn youtube_info(id: String) -> CmdResult<serde_json::Value> {
     }
     let mut url = reqwest::Url::parse("https://www.youtube.com/oembed").map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("url", &format!("https://www.youtube.com/watch?v={id}")).append_pair("format", "json");
-    let response = reqwest::Client::new().get(url).timeout(Duration::from_secs(8)).send().await.map_err(|e| e.to_string())?;
+    let response = cloud_http().get(url).timeout(Duration::from_secs(8)).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err("That video isn't available.".into());
     }
@@ -1679,7 +1686,7 @@ async fn fetch_profile(cloud: String, key: String) -> CmdResult<serde_json::Valu
         return Err("Not a Hopp ID.".into());
     }
     let url = format!("{}/profiles/{}", cloud.trim_end_matches('/'), key.to_lowercase());
-    let response = reqwest::Client::new()
+    let response = cloud_http()
         .get(url)
         .timeout(Duration::from_secs(8))
         .send()

@@ -3,6 +3,9 @@
 
 (async () => {
   await inServer();
+  // Virtual time doesn't wait for encoding on another thread: the ordinary canvas here (the
+  // OffscreenCanvas path is measured in real Edge with liveshot).
+  window.OffscreenCanvas = undefined;
   check("picture button on a cloud server", !$("attach-btn").hidden);
 
   // A big picture, as if pasted.

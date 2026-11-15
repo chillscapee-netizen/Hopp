@@ -10700,31 +10700,41 @@ function storePicture(bytes, kind) {
 }
 
 /** Shrinks a picture until it's light enough to send. */
+function dataBlob(url) {
+  return new Blob([Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0))], { type: url.slice(5, url.indexOf(";")) });
+}
+
 async function shrinkChatPicture(file) {
-  const source = URL.createObjectURL(file);
-  const bitmap = await new Promise((ok, fail) => {
-    const img = new Image();
-    img.onload = () => ok(img);
-    img.onerror = () => fail(new Error("That file isn't a picture Hopp can read."));
-    img.src = source;
-  }).finally(() => setTimeout(() => URL.revokeObjectURL(source), 0));
-  const natural = { width: bitmap.naturalWidth, height: bitmap.naturalHeight };
+  // Decoded off the main thread, and every try encoded without blocking: the app stays smooth
+  // while a big photo is made light enough to send.
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error("That file isn't a picture Hopp can read.");
+  }
+  const natural = { width: bitmap.width, height: bitmap.height };
   let scale = Math.min(1, PICTURE_MAX_SIDE / Math.max(natural.width, natural.height));
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const width = Math.max(1, Math.round(natural.width * scale));
-    const height = Math.max(1, Math.round(natural.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
-    for (const quality of [0.86, 0.76, 0.64]) {
-      let url = canvas.toDataURL("image/webp", quality);
-      if (!url.startsWith("data:image/webp")) url = canvas.toDataURL("image/jpeg", quality);
-      const type = url.slice(5, url.indexOf(";"));
-      const bytes = Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0));
-      if (bytes.length <= PICTURE_MAX_BYTES) return { blob: new Blob([bytes], { type }), type, width, height };
+  try {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const width = Math.max(1, Math.round(natural.width * scale));
+      const height = Math.max(1, Math.round(natural.height * scale));
+      const offscreen = typeof OffscreenCanvas === "function";
+      const canvas = offscreen ? new OffscreenCanvas(width, height) : Object.assign(document.createElement("canvas"), { width, height });
+      const g = canvas.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(bitmap, 0, 0, width, height);
+      // Without OffscreenCanvas (only in odd browsers): an ordinary canvas.
+      const encode = (type, quality) => (offscreen ? canvas.convertToBlob({ type, quality }) : new Promise((done) => done(dataBlob(canvas.toDataURL(type, quality)))));
+      for (const quality of [0.82, 0.68]) {
+        let blob = await encode("image/webp", quality);
+        if (blob.type !== "image/webp") blob = await encode("image/jpeg", quality);
+        if (blob.size <= PICTURE_MAX_BYTES) return { blob, type: blob.type, width, height };
+      }
+      scale *= 0.75;
     }
-    scale *= 0.75;
+  } finally {
+    bitmap.close();
   }
   throw new Error("That picture is too big to send.");
 }
