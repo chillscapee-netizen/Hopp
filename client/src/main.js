@@ -126,6 +126,12 @@ function newServer(address, label, invite) {
     invite: invite || undefined,
   };
 }
+/** The channel last read in each server (kept between runs). */
+var lastViews = new Map(Object.entries(loadJson("lastViews", {})).filter(([, v]) => Number.isInteger(v)));
+function saveLastViews() {
+  save("lastViews", JSON.stringify(Object.fromEntries([...lastViews].filter(([id]) => prefs.servers.some((s) => s.id === id)))));
+}
+
 function saveServers() {
   save("servers", JSON.stringify(prefs.servers));
   if (typeof tellAccountServers === "function") tellAccountServers();
@@ -1677,6 +1683,13 @@ async function connectTo(server, create, reconnecting) {
   if (!reconnecting) cancelReconnect();
   const attempt = ++state.attempt;
   rememberServerView();
+  // Each server opens on the channel you last read there. Channel numbers are the server's
+  // own, so the one you read elsewhere means nothing here (its 1 may be a voice channel).
+  if (!reconnecting && state.activeId !== server.id) {
+    if (state.activeId) lastViews.set(state.activeId, state.view);
+    state.view = lastViews.get(server.id) ?? null;
+    saveLastViews();
+  }
   // In voice here: you stay in the channel while you look at the other server (video ends,
   // it belongs to the view). Older servers can't wait in the background, so voice ends there.
   if (connected() && myVoice() !== null && state.activeId !== server.id) {
@@ -2547,6 +2560,10 @@ function openTextChannel(id) {
   }
   const changed = state.view !== id;
   state.view = id;
+  if (state.activeId && lastViews.get(state.activeId) !== id) {
+    lastViews.set(state.activeId, id);
+    saveLastViews();
+  }
   restoreDraft();
   renderSidebar();
   renderChannelView();
