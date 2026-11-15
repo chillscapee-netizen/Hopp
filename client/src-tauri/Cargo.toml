@@ -10,6 +10,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 strom-shared = { path = "../../shared" }
 strom-voice = { path = "../../voice" }
+base64 = "0.22"
 strom-server = { path = "../../server" }
 rand = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }

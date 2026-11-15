@@ -531,6 +531,13 @@ pub enum ClientMsg {
     /// recent messages again (answered with `ChatHistory` for each channel you can see).
     Resync,
     Ping,
+    /// Servers on someone's computer: a picture, voice message or emoji picture (base64), stored
+    /// by the server itself. Answered with `ImageUploaded` carrying the same `req`.
+    UploadImage { req: u32, kind: String, data: String },
+    /// Servers on someone's computer: answered with `Image`.
+    GetImage { id: String },
+    /// Servers on someone's computer: "online", "idle" or "dnd", for the member list.
+    SetStatus { status: String },
 }
 
 /// How to reach someone in our voice channel directly (cloud servers have no voice relay).
@@ -619,6 +626,22 @@ pub enum ServerMsg {
     Members { members: Vec<Member> },
     Error { message: String },
     Pong,
+    /// The stored picture's id, or why it wasn't stored.
+    ImageUploaded {
+        req: u32,
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// A stored picture (base64), or nothing when it's gone.
+    Image {
+        id: String,
+        #[serde(default)]
+        kind: Option<String>,
+        #[serde(default)]
+        data: Option<String>,
+    },
 }
 
 pub fn encode_line<T: Serialize>(msg: &T) -> Vec<u8> {

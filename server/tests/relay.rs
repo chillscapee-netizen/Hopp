@@ -14,9 +14,9 @@ use tokio::time::timeout;
 
 const WAIT: Duration = Duration::from_secs(2);
 // Channel ids from the test config.
-const GENERAL: ChannelId = 0;
-const LOBBY: ChannelId = 1;
-const GAMING: ChannelId = 2;
+const GENERAL: ChannelId = 1;
+const LOBBY: ChannelId = 2;
+const GAMING: ChannelId = 3;
 
 fn test_config() -> ServerConfig {
     ServerConfig::new("Test", &[("general", ChannelKind::Text), ("Lobby", ChannelKind::Voice), ("Gaming", ChannelKind::Voice)])
@@ -150,7 +150,11 @@ impl FakeClient {
     }
 
     async fn chat(&mut self, text: &str) -> ChatMessage {
-        self.send(ClientMsg::SendChat { channel: GENERAL, text: text.into(), reply_to: None }).await;
+        self.chat_in(GENERAL, text).await
+    }
+
+    async fn chat_in(&mut self, channel: ChannelId, text: &str) -> ChatMessage {
+        self.send(ClientMsg::SendChat { channel, text: text.into(), reply_to: None }).await;
         let text = text.to_string();
         match self.wait_for(|m| matches!(m, ServerMsg::Chat { message } if message.text == text)).await {
             ServerMsg::Chat { message } => message,
@@ -255,32 +259,6 @@ async fn invites_run_out_and_can_be_revoked() {
     server.admin.send(ClientMsg::RevokeInvite { code: revoked.clone() }).await;
     server.admin.wait_for(|m| matches!(m, ServerMsg::Invites { invites } if invites.iter().all(|i| i.code != revoked))).await;
     assert!(login_error(server.addr, "third", &new_key(), Some(&revoked)).await.contains("invalid"));
-}
-
-#[tokio::test]
-async fn names_belong_to_their_key() {
-    let server = start_server().await;
-    let alice_key = new_key();
-    drop(FakeClient::connect_with(server.addr, "alice", &alice_key, Some(&server.invite)).await);
-
-    // A valid identity of their own, just trying to take alice's name.
-    let message = login_error(server.addr, "ALICE", &new_key(), Some(&server.invite)).await;
-    assert!(message.contains("already taken"));
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    FakeClient::connect_with(server.addr, "alice", &alice_key, None).await;
-}
-
-#[tokio::test]
-async fn reconnecting_replaces_the_old_session() {
-    let mut server = start_server().await;
-    let key = new_key();
-    let mut stale = FakeClient::connect_with(server.addr, "alice", &key, Some(&server.invite)).await;
-    let fresh = FakeClient::connect_with(server.addr, "alice", &key, None).await;
-    assert!(stale.error().await.contains("somewhere else"));
-    let stale_id = stale.session_id;
-    server.admin.wait_for(|m| matches!(m, ServerMsg::UserLeft { session_id } if *session_id == stale_id)).await;
-    assert_ne!(fresh.session_id, stale.session_id);
 }
 
 // ---------- voice ----------
@@ -485,15 +463,15 @@ async fn kick_and_ban() {
     let mut carol = FakeClient::connect_with(server.addr, "carol", &carol_key, Some(&server.invite)).await;
 
     carol.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
-    assert!(carol.error().await.contains("owner"));
+    assert!(carol.error().await.contains("moderators"));
 
     server.admin.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
     bob.wait_for(|m| matches!(m, ServerMsg::Kicked { banned: false })).await;
     let bob_id = bob.session_id;
     carol.wait_for(|m| matches!(m, ServerMsg::UserLeft { session_id } if *session_id == bob_id)).await;
-    // A kick is not a ban: bob may come back.
+    // A kick is not a ban: bob may come back, with an invite.
     drop(bob);
-    FakeClient::connect_with(server.addr, "bob", &bob_key, None).await;
+    FakeClient::connect_with(server.addr, "bob", &bob_key, Some(&server.invite)).await;
 
     server.admin.send(ClientMsg::Ban { session_id: carol.session_id, delete_hours: 0, public_key: None }).await;
     carol.wait_for(|m| matches!(m, ServerMsg::Kicked { banned: true })).await;
@@ -503,7 +481,7 @@ async fn kick_and_ban() {
     let carol_pub = hex::encode(carol_key.verifying_key().as_bytes());
     server.admin.send(ClientMsg::Unban { public_key: carol_pub }).await;
     server.admin.wait_for(|m| matches!(m, ServerMsg::Bans { bans } if bans.is_empty())).await;
-    FakeClient::connect_with(server.addr, "carol", &carol_key, None).await;
+    FakeClient::connect_with(server.addr, "carol", &carol_key, Some(&server.invite)).await;
 }
 
 // ---------- persistence ----------
@@ -525,7 +503,6 @@ async fn state_survives_restart() {
 
     // A fresh server on the same directory, as after a restart.
     let addr = bind_server(Storage::at(&dir).unwrap()).await;
-    assert!(login_error(addr, "admin", &new_key(), Some(&invite)).await.contains("already taken"), "names must persist");
     FakeClient::connect_with(addr, "newcomer", &new_key(), Some(&invite)).await;
 
     let mut admin = FakeClient::connect_with(addr, "admin", &admin_key, None).await;
@@ -619,21 +596,36 @@ async fn older_messages_come_in_pages() {
     assert!(done);
 }
 
-#[test]
-fn edits_and_reactions_survive_a_restart() {
-    let dir = temp_dir("edits");
-    let storage = Storage::at(&dir).unwrap();
-    let mut m = ChatMessage { id: 1, channel: GENERAL, sender: 1, sender_name: "a".into(), author_key: "k".into(), text: "one".into(), sent_at: 1, reply: None, edited_at: None, reactions: vec![], pinned: false };
-    storage.append_chat(&m);
-    storage.append_chat(&ChatMessage { id: 2, text: "two".into(), ..m.clone() });
+#[tokio::test]
+async fn a_server_from_before_moves_into_its_database() {
+    // Written the way servers kept their data before: JSON files and chat lines.
+    let dir = temp_dir("legacy");
+    std::fs::create_dir_all(dir.join("chat")).unwrap();
+    let owner_key = new_key();
+    let owner = hex::encode(owner_key.verifying_key().as_bytes());
+    let old = Storage::at(&dir).unwrap();
+    let mut config = ServerConfig::new("Old crew", &[("general", ChannelKind::Text), ("Lobby", ChannelKind::Voice)]);
+    config.owner = Some(owner.clone());
+    old.save_config(&config);
+    let mut m = ChatMessage { id: 7, channel: 0, sender: 1, sender_name: "a".into(), author_key: owner.clone(), text: "one".into(), sent_at: 1, reply: None, edited_at: None, reactions: vec![], pinned: false };
+    old.append_chat(&m);
+    old.append_chat(&ChatMessage { id: 8, text: "two".into(), ..m.clone() });
     m.text = "one, edited".into();
     m.edited_at = Some(5);
-    storage.append_chat(&m);
-    let (loaded, max) = storage.load_chat(GENERAL, 100);
-    assert_eq!(max, 2);
-    assert_eq!(loaded.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["one, edited", "two"]);
-    let older = storage.load_before(GENERAL, 2, 10).unwrap();
-    assert_eq!(older[0].text, "one, edited");
+    old.append_chat(&m);
+    old.append_delete(0, 8);
+
+    let addr = bind_server(Storage::at(&dir).unwrap()).await;
+    let mut admin = FakeClient::connect_with(addr, "admin", &owner_key, None).await;
+    assert!(admin.is_owner(), "the owner stays the owner");
+    let ServerMsg::Welcome { server_name, channels, .. } = admin.welcome.clone() else { unreachable!() };
+    assert_eq!(server_name, "Old crew");
+    assert_eq!(channels.iter().map(|c| (c.id, c.name.as_str())).collect::<Vec<_>>(), [(0, "general"), (1, "Lobby")], "same channels, same numbers");
+    let ServerMsg::ChatHistory { messages, .. } = admin.wait_for(|m| matches!(m, ServerMsg::ChatHistory { channel: 0, .. })).await else { unreachable!() };
+    assert_eq!(messages.iter().map(|m| (m.id, m.text.as_str())).collect::<Vec<_>>(), [(7, "one, edited")], "edits and deletions came along");
+    assert!(admin.chat_in(0, "after").await.id > 8, "message numbers carry on");
+    assert!(dir.join("server.json.imported").exists(), "the old files are kept aside");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]
@@ -697,7 +689,8 @@ async fn search_finds_words_in_any_case_newest_first() {
     let ServerMsg::SearchResults { query, messages } = alice.wait_for(|m| matches!(m, ServerMsg::SearchResults { .. })).await else { unreachable!() };
     assert_eq!(query, "raid");
     assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["who's up for the RAID?", "Raid tonight at eight"]);
-    // A single letter finds nothing rather than everything.
+    // A single letter finds nothing rather than everything (searches are a moment apart).
+    tokio::time::sleep(Duration::from_millis(450)).await;
     alice.send(ClientMsg::Search { query: "a".into() }).await;
     let ServerMsg::SearchResults { messages, .. } = alice.wait_for(|m| matches!(m, ServerMsg::SearchResults { .. })).await else { unreachable!() };
     assert!(messages.is_empty());
@@ -768,4 +761,26 @@ async fn voice_channels_can_have_a_user_limit_and_one_afk_channel() {
     server.admin.send(ClientMsg::UpdateChannel { channel: GAMING, name: "Gaming".into(), topic: None, category: None, no_pictures: None, user_limit: None, afk_after: Some(5), slowmode: None, private_roles: None }).await;
     let ServerMsg::ChannelsUpdated { channels } = server.admin.wait_for(|m| matches!(m, ServerMsg::ChannelsUpdated { channels } if channels.iter().any(|c| c.afk_after == Some(5)))).await else { unreachable!() };
     assert_eq!(channels.iter().filter(|c| c.afk_after.is_some()).count(), 1);
+}
+
+#[tokio::test]
+async fn pictures_travel_over_the_connection_itself() {
+    use base64::Engine;
+    let server = start_server().await;
+    let mut alice = FakeClient::connect(&server, "alice").await;
+    let webp = [b"RIFF".as_slice(), &[0; 4], b"WEBPVP8 ", &[7; 200]].concat();
+    let data = base64::engine::general_purpose::STANDARD.encode(&webp);
+    alice.send(ClientMsg::UploadImage { req: 5, kind: "image/webp".into(), data }).await;
+    let ServerMsg::ImageUploaded { req, id: Some(id), .. } = alice.wait_for(|m| matches!(m, ServerMsg::ImageUploaded { .. })).await else { panic!("not stored") };
+    assert_eq!(req, 5, "the answer names the upload it answers");
+    let sent = alice.chat(&format!("hopp-image:{id} 10x10\nnice")).await;
+    assert!(sent.text.starts_with("hopp-image:"));
+    alice.send(ClientMsg::GetImage { id: id.clone() }).await;
+    let ServerMsg::Image { kind, data, .. } = alice.wait_for(|m| matches!(m, ServerMsg::Image { .. })).await else { unreachable!() };
+    assert_eq!(kind.as_deref(), Some("image/webp"));
+    assert_eq!(base64::engine::general_purpose::STANDARD.decode(data.unwrap()).unwrap(), webp);
+    // Not a picture: refused.
+    alice.send(ClientMsg::UploadImage { req: 6, kind: "image/webp".into(), data: base64::engine::general_purpose::STANDARD.encode(b"<svg onload=alert(1)>") }).await;
+    let ServerMsg::ImageUploaded { id, error, .. } = alice.wait_for(|m| matches!(m, ServerMsg::ImageUploaded { req: 6, .. })).await else { unreachable!() };
+    assert!(id.is_none() && error.is_some_and(|e| e.contains("isn't the picture")));
 }

@@ -363,6 +363,20 @@ function isCloud(server) {
 }
 
 /**
+ * A server with everything Hopp Cloud has: Hopp Cloud's own, and servers on people's computers
+ * from now on (they say so with their features). Older ones on a computer have only the basics.
+ */
+function cloudLike(server = activeServer()) {
+  if (isCloud(server)) return true;
+  return !!server && server.id === state.activeId && !!state.roster?.features?.includes("roles");
+}
+
+/** Voice goes between the members (Hopp Cloud, and servers hosted in Hopp), not through a server. */
+function meshVoice() {
+  return isCloud(activeServer()) || !!state.roster?.mesh;
+}
+
+/**
  * What the backend connects to: a WebSocket URL for cloud servers; host:port otherwise, with
  * the server's key in front once it's known ("pin@host:port"), so only that server is accepted.
  */
@@ -1609,7 +1623,7 @@ function openServerMenu(server, x, y) {
         : { label: "Connect", icon: "link", action: () => connectTo(server) },
       ...(folder ? [{ label: "Remove from folder", icon: "folder", action: () => removeFromFolder(server.id, folder) }] : []),
       ...(server.owner || (active && isOwner())
-        ? isCloud(server)
+        ? isCloud(server) || (active && cloudLike(server))
           ? [{ label: "Delete server", icon: "trash", danger: true, action: () => deleteServer(server) }]
           : [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
         : [{ label: "Leave server", icon: "logout", danger: true, action: () => leaveServer(server) }]),
@@ -1746,6 +1760,7 @@ async function connectTo(server, create, reconnecting) {
     }
     freshView();
     rememberServerLook(server, roster);
+    if (!isCloud(server)) tellServersMyStatus();
     // We're a member now; the invite has done its job.
     delete server.invite;
     saveServers();
@@ -2713,7 +2728,7 @@ function renderVoicePanel() {
   // one way: how long your voice takes to reach them (half of it). That's the number shown,
   // the one comparable to an app's "ping" to its server, and coloured by what people notice
   // (ITU-T G.114: under about 150 ms one way is hardly noticed).
-  const oneWay = !away && !isCloud(activeServer()) ? null : state.latency === null ? null : Math.round(state.latency / 2);
+  const oneWay = !away && !meshVoice() ? null : state.latency === null ? null : Math.round(state.latency / 2);
   const ms = oneWay ?? state.latency;
   const { ready, error } = state.voiceState;
   if (away) {
@@ -2735,7 +2750,7 @@ function renderVoicePanel() {
   status.classList.toggle("bad", !!error || (ms !== null && ms >= limits[1]));
   $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
   const latency = ms === null ? null : ms < 1 ? "<1 ms" : `${ms} ms`;
-  const direct = isCloud(activeServer());
+  const direct = meshVoice();
   const alone = !state.roster.users.some((u) => u.session_id !== state.roster.me && u.voice_channel === voice);
   // Cloud voice is peer to peer: the number is the slowest round trip to the others.
   status.dataset.tip = error ? friendlyError(error) : !ready ? "Opening your microphone and finding the others…" : direct
@@ -3969,7 +3984,7 @@ function openServerSettings() {
   $("ban-list").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("server-members").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("member-search").value = "";
-  document.querySelector('[data-stab="members"]').hidden = !isCloud(activeServer());
+  document.querySelector('[data-stab="members"]').hidden = !cloudLike();
   document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
   document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
   document.querySelector('[data-stab="emojis"]').hidden = !state.roster?.features?.includes("emojis") || !can("manage");
@@ -4069,7 +4084,7 @@ $("emoji-new-save").addEventListener("click", async () => {
   if (serverEmojis().some((x) => x.name === name)) return toast("There's already an emoji called :" + name + ":.", true);
   $("emoji-new-save").disabled = true;
   try {
-    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(emojiDraft.bytes), kind: "image/webp" });
+    const id = await storePicture(emojiDraft.bytes, "image/webp");
     await invoke("create_emoji", { name, image: id });
     $("emoji-new").hidden = true;
     emojiDraft = null;
@@ -4087,7 +4102,7 @@ function resetOverview() {
   overview.icon = state.roster?.server_icon ?? null;
   $("overview-name").value = state.roster?.server_name ?? "";
   $("overview-pictures").checked = !state.roster?.pictures_off;
-  $("overview-pictures-row").hidden = !isCloud(activeServer());
+  $("overview-pictures-row").hidden = !cloudLike();
   $("overview-error").hidden = true;
   renderOverview();
 }
@@ -4162,7 +4177,7 @@ $("overview-form").addEventListener("submit", async (e) => {
   const btn = $("overview-save");
   setBusy(btn, true, "Saving…");
   try {
-    await invoke("update_server", { name, icon: overview.icon, picturesOff: isCloud(activeServer()) ? !$("overview-pictures").checked : null });
+    await invoke("update_server", { name, icon: overview.icon, picturesOff: cloudLike() ? !$("overview-pictures").checked : null });
     $("overview-error").hidden = true;
   } catch (err) {
     $("overview-error").textContent = friendlyError(err);
@@ -5650,6 +5665,7 @@ listen("account", (e) => {
       break;
     case "status":
       state.me.status = m.status;
+      tellServersMyStatus();
       if (online()) renderMembers();
       break;
     case "privacy":
@@ -8328,7 +8344,7 @@ async function leaveServer(server) {
   }
   // Your own server: owners delete instead of leaving.
   if (isOwner()) {
-    if (isCloud(server)) deleteServer(server);
+    if (cloudLike(server)) deleteServer(server);
     else toast("You host this server, so you can't leave it. You can remove it from your list.", true);
     return;
   }
@@ -8369,7 +8385,7 @@ function openChannelEdit(ch) {
   $("channel-edit-topic").value = ch.topic ?? "";
   $("channel-edit-topic-field").hidden = !text;
   $("channel-edit-pictures").checked = !ch.no_pictures;
-  $("channel-edit-pictures-row").hidden = !text || !isCloud(activeServer());
+  $("channel-edit-pictures-row").hidden = !text || !cloudLike();
   $("channel-edit-pictures-sub").textContent = state.roster?.pictures_off
     ? "Pictures are off for the whole server (Server settings → Overview)."
     : "Members can share pictures in this channel.";
@@ -8417,7 +8433,7 @@ $("channel-edit-form").addEventListener("submit", () => {
   const topic = $("channel-edit-topic").value.trim();
   const category = $("channel-edit-category").value.trim();
   if (!editingChannel || !name) return;
-  const noPictures = editingChannel.kind === "text" && isCloud(activeServer()) ? !$("channel-edit-pictures").checked : null;
+  const noPictures = editingChannel.kind === "text" && cloudLike() ? !$("channel-edit-pictures").checked : null;
   const picturesSame = noPictures === null || noPictures === !!editingChannel.no_pictures;
   const voiceSettings = !$("channel-edit-voice").hidden;
   const userLimit = voiceSettings ? Number($("channel-edit-limit").value) : null;
@@ -9736,7 +9752,7 @@ async function finishRecording(r) {
   if (bytes.length < 200) return toast("Nothing was recorded. Check your microphone in Windows sound settings.", true);
   if (bytes.length > 320_000) return toast("That voice message is too long to send.", true);
   try {
-    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(bytes), kind: "audio/webm" });
+    const id = await storePicture(bytes, "audio/webm");
     sendChat(r.channel, `hopp-voice:${id} ${Math.round(r.length)}`, null);
   } catch (err) {
     toast(friendlyError(err), true);
@@ -10068,6 +10084,12 @@ listen("server-deleted", () => {
   if (!server) return;
   state.justLeft = true;
   setTimeout(() => (state.justLeft = false), 3000);
+  // Hosted on this computer: it stops, and its data goes.
+  if (mine && state.host?.running && server.address === "localhost:" + state.host.port) {
+    invoke("host_delete").catch(() => {});
+    state.host = { running: false };
+    save("hosting", "");
+  }
   removeServer(server);
   if (!mine) toast(`${server.label} was deleted by its owner.`);
   renderAll();
@@ -10423,7 +10445,7 @@ state.members = [];
 
 /** Which roles I may give someone: the owner names admins, admins name moderators. */
 function rolesICanGive(target) {
-  if (!isCloud(activeServer()) || !target || roleOf(target) === "owner") return [];
+  if (!cloudLike() || !target || roleOf(target) === "owner") return [];
   if (target.public_key === state.account?.publicKey) return [];
   if (isOwner()) return [null, "mod", "admin"];
   if (can("manage") && rankOf(target) < ROLE_RANK.admin) return [null, "mod"];
@@ -10646,7 +10668,7 @@ state.attachment = null; // { channel, blob, type, width, height, url, sending }
 
 /** Pictures need a cloud server whose owner hasn't turned them off, here or everywhere. */
 function picturesAllowed() {
-  return isCloud(activeServer()) && !state.roster?.pictures_off && !channel(state.view)?.no_pictures;
+  return cloudLike() && !state.roster?.pictures_off && !channel(state.view)?.no_pictures;
 }
 
 function cloudHttp() {
@@ -10654,8 +10676,25 @@ function cloudHttp() {
 }
 
 function pictureUrl(id) {
-  const server = activeServer()?.address.slice("cloud:".length);
-  return `${cloudHttp()}/servers/${server}/images/${id}`;
+  const server = activeServer();
+  // On someone's computer: fetched over the app's own connection to it.
+  if (server && !isCloud(server)) return `http://hoppimg.localhost/${encodeURIComponent(endpoint(server))}/${id}`;
+  return `${cloudHttp()}/servers/${server?.address.slice("cloud:".length)}/images/${id}`;
+}
+
+/** Servers on people's computers show your status (online, idle, busy) in their member lists. */
+function tellServersMyStatus() {
+  const status = state.me?.status ?? "online";
+  // Invisible: nothing more than being there.
+  if (status === "invisible") return;
+  invoke("set_server_status", { status }).catch(() => {});
+}
+
+/** Stores a picture, voice message or emoji picture in the server in view; its id. */
+function storePicture(bytes, kind) {
+  const server = activeServer();
+  if (!isCloud(server)) return invoke("server_upload", { data: Array.from(bytes), kind });
+  return invoke("upload_image", { cloud: cloudHttp(), serverId: server.address.slice("cloud:".length), data: Array.from(bytes), kind });
 }
 
 /** Shrinks a picture until it's light enough to send. */
@@ -10691,7 +10730,7 @@ async function shrinkChatPicture(file) {
 async function attachPicture(file) {
   if (!file || !/^image\//.test(file.type)) return;
   if (!online() || state.view === null) return;
-  if (!isCloud(activeServer())) return toast("Pictures work on Hopp Cloud servers.", true);
+  if (!cloudLike()) return toast("This server can't take pictures yet: its owner needs to update it.", true);
   if (!picturesAllowed()) return toast("Pictures are turned off in this channel.", true);
   try {
     const shrunk = await shrinkChatPicture(file);
@@ -10750,7 +10789,7 @@ async function sendPicture() {
   renderAttachment();
   try {
     const bytes = new Uint8Array(await a.blob.arrayBuffer());
-    const id = await invoke("upload_image", { cloud: cloudHttp(), serverId: activeServer().address.slice("cloud:".length), data: Array.from(bytes), kind: a.type });
+    const id = await storePicture(bytes, a.type);
     chatInput.value = "";
     autosize();
     clearDraft();
@@ -11866,7 +11905,7 @@ function openUserMenu(u, row, e) {
         removeUser(true);
       } });
     }
-    if (isOwner() && isCloud(activeServer()) && key) hard.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership({ public_key: u.public_key, name: u.name }) });
+    if (isOwner() && cloudLike() && key) hard.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership({ public_key: u.public_key, name: u.name }) });
     const groups = [...(mod ? roleItems(u) : []), ...(mod ? voiceModItems(u) : [])];
     if (hard.length) groups.push({ label: "Moderation", submenu: hard[0] === "sep" ? hard.slice(1) : hard });
     if (groups.length) items.push("sep", ...groups);

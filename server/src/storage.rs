@@ -1,7 +1,6 @@
-//! On-disk state: server settings, accounts and chat history.
-//!
-//! Everything is plain JSON in one directory so a server owner can read, back
-//! up or edit it by hand. Chat is append-only JSON lines, one file per channel.
+//! Where a server keeps its data: one SQLite database (server.db) in its folder, laid out like
+//! Hopp Cloud's. Servers from before kept plain JSON files; those are read once, moved into the
+//! database, and kept aside (renamed `.imported`).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
@@ -78,8 +77,76 @@ impl Storage {
 
     pub fn at(dir: impl Into<PathBuf>) -> std::io::Result<Self> {
         let dir = dir.into();
-        fs::create_dir_all(dir.join("chat"))?;
+        fs::create_dir_all(&dir)?;
         Ok(Storage { dir: Some(dir) })
+    }
+
+    /// The server's database (in memory for tests).
+    pub(crate) fn open_db(&self) -> anyhow::Result<rusqlite::Connection> {
+        Ok(match &self.dir {
+            Some(dir) => rusqlite::Connection::open(dir.join("server.db"))?,
+            None => rusqlite::Connection::open_in_memory()?,
+        })
+    }
+
+    /// A server from before the database: its settings, people, invites, bans and chat move in
+    /// (same channel and message numbers), and the old files are kept aside. True if it did.
+    pub(crate) fn import_legacy(&self, core: &mut crate::core::Core) -> anyhow::Result<bool> {
+        let Some(dir) = &self.dir else { return Ok(false) };
+        let Some(config) = self.load_config() else { return Ok(false) };
+        let db = core.db();
+        let fresh: i64 = db.query_row("SELECT count(*) FROM meta WHERE key = 'name'", [], |r| r.get(0))?;
+        if fresh == 0 {
+            let tx = db.unchecked_transaction()?;
+            let meta = |k: &str, v: &str| tx.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [k, v]);
+            meta("name", &config.name)?;
+            if let Some(icon) = &config.icon {
+                meta("icon", icon)?;
+            }
+            if let Some(owner) = &config.owner {
+                meta("owner", owner)?;
+            }
+            for (i, c) in config.channels.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO channels (id, name, kind, position, topic, category, user_limit, afk_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![c.id, c.name, if c.kind == ChannelKind::Voice { "voice" } else { "text" }, i as i64, c.topic, c.category, c.user_limit, c.afk_after],
+                )?;
+                for m in self.load_before(c.id, u64::MAX, 1000).unwrap_or_default() {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO messages (id, channel, sender, sender_name, author_key, text, sent_at, pinned, reply_id, reply_name, reply_key, reply_text, edited_at, reactions)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            m.id as i64, m.channel, m.sender, m.sender_name, m.author_key, m.text, m.sent_at as i64, m.pinned.then_some(1),
+                            m.reply.as_ref().map(|r| r.id as i64), m.reply.as_ref().map(|r| r.sender_name.clone()), m.reply.as_ref().map(|r| r.author_key.clone()), m.reply.as_ref().map(|r| r.text.clone()),
+                            m.edited_at.map(|t| t as i64), (!m.reactions.is_empty()).then(|| serde_json::to_string(&m.reactions).unwrap_or_default()),
+                        ],
+                    )?;
+                }
+            }
+            // Numbers carry on after the highest ever used, deleted messages too.
+            let highest = config.channels.iter().map(|c| self.load_chat(c.id, 1).1).max().unwrap_or(0) as i64;
+            tx.execute("INSERT OR IGNORE INTO messages (id, channel, sender, sender_name, author_key, text, sent_at) VALUES (?, -1, 0, '', '', '', 0)", [highest])?;
+            tx.execute("DELETE FROM messages WHERE channel = -1", [])?;
+            for (key, a) in self.load_accounts() {
+                tx.execute("INSERT OR IGNORE INTO accounts (key, name, created_at) VALUES (?, ?, ?)", rusqlite::params![key, a.name, a.created_at as i64])?;
+            }
+            for i in self.load_invites() {
+                tx.execute(
+                    "INSERT OR IGNORE INTO invites (code, created_at, expires_at, max_uses, uses) VALUES (?, ?, ?, ?, ?)",
+                    rusqlite::params![i.code, i.created_at as i64, i.expires_at.map(|t| t as i64), i.max_uses, i.uses],
+                )?;
+            }
+            for b in self.load_bans() {
+                tx.execute("INSERT OR IGNORE INTO bans (key, name, banned_at) VALUES (?, ?, ?)", rusqlite::params![b.public_key, b.name, b.banned_at as i64])?;
+            }
+            tx.commit()?;
+            core.after_import();
+        }
+        for file in [CONFIG_FILE, ACCOUNTS_FILE, INVITES_FILE, BANS_FILE] {
+            let _ = fs::rename(dir.join(file), dir.join(format!("{file}.imported")));
+        }
+        let _ = fs::rename(dir.join("chat"), dir.join("chat.imported"));
+        Ok(fresh == 0)
     }
 
     pub fn load_config(&self) -> Option<ServerConfig> {

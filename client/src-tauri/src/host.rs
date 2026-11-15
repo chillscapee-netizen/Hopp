@@ -35,6 +35,7 @@ pub struct HostStatus {
 #[derive(Default)]
 pub struct Host {
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    server: Mutex<Option<Arc<strom_server::Server>>>,
     status: Mutex<HostStatus>,
 }
 
@@ -110,6 +111,7 @@ pub async fn host_start(app: AppHandle, host: State<'_, Host>, name: String) -> 
         ))
     };
     *host.tasks.lock().unwrap() = vec![local, through_tunnel];
+    *host.server.lock().unwrap() = Some(server);
     let status = HostStatus { running: true, name, port, pin, tunnel: tunnel.id, online: false };
     *host.status.lock().unwrap() = status.clone();
     Ok(status)
@@ -122,7 +124,27 @@ pub async fn host_stop(host: State<'_, Host>) -> CmdResult {
     for t in host.tasks.lock().unwrap().drain(..) {
         t.abort();
     }
+    // Everyone still connected is let go too.
+    if let Some(server) = host.server.lock().unwrap().take() {
+        server.shutdown();
+    }
     Ok(())
+}
+
+/// The owner deleted the server: it stops, and its channels, messages, pictures and key go.
+/// (A new server made later gets a new key and a new tunnel.)
+#[tauri::command]
+pub async fn host_delete(app: AppHandle, host: State<'_, Host>) -> CmdResult {
+    host_stop(host).await?;
+    let dir = folder(&app)?;
+    // The database may still be closing.
+    for _ in 0..20 {
+        if !dir.exists() || std::fs::remove_dir_all(&dir).is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err("Couldn't remove the server's data. It will go when Hopp restarts.".into())
 }
 
 #[tauri::command]

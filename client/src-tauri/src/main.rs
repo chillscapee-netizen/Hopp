@@ -18,6 +18,7 @@ mod ptt;
 mod shell;
 mod store;
 mod host;
+mod server_images;
 
 const HELLO_VALID_FOR: Duration = Duration::from_secs(180);
 use strom_shared::{ChannelId, ChannelKind, ClientMsg, PeerEndpoint, ServerMsg, SessionId};
@@ -48,6 +49,8 @@ struct Connection {
     /// Bumped whenever peer-to-peer voice starts or stops, so a slow start that
     /// was overtaken doesn't install its engine.
     voice_attempt: u64,
+    /// Servers on a computer: pictures being sent or fetched over this connection.
+    images: server_images::Shared,
 }
 
 #[derive(Default)]
@@ -65,6 +68,8 @@ pub struct AppState {
     attenuator: OnceLock<Arc<attenuate::Attenuator>>,
     /// The audio devices, looked up ahead of time so device menus open at once.
     device_list: Mutex<Option<DeviceList>>,
+    /// Pictures from servers on someone's computer, once fetched.
+    image_cache: Mutex<server_images::Cache>,
     mic_test: Mutex<Option<MicTest>>,
     /// A call with a friend: its own peer-to-peer voice, apart from any server.
     call: Mutex<Option<Call>>,
@@ -535,8 +540,14 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
     let roster = shared.clone();
     let ui = app.clone();
     let here = address.clone();
+    let images = server_images::Shared::default();
+    let waits = images.clone();
     let task = tauri::async_runtime::spawn(async move {
         while let Some(msg) = session.events.recv().await {
+            // A picture sent or asked for: whoever waits for it gets it.
+            if server_images::answered(&waits, &msg) {
+                continue;
+            }
             // Voice follows its connection, whether its server is the one in view or not.
             match &msg {
                 ServerMsg::VoiceSession { channel, key, peers } => {
@@ -682,7 +693,93 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
         engine: None,
         voice_peers: HashMap::new(),
         voice_attempt: 0,
+        images,
     }
+}
+
+/// A picture, voice message or emoji picture for the server in view, when it runs on someone's
+/// computer (it stores it itself). Its id when stored.
+#[tauri::command]
+async fn server_upload(state: State<'_, AppState>, data: Vec<u8>, kind: String) -> CmdResult<String> {
+    if !matches!(kind.as_str(), "image/webp" | "image/jpeg" | "image/png" | "audio/webm") {
+        return Err("That picture can't be sent.".into());
+    }
+    let (control, images) = with_conn(&state, |c| (c.control.clone(), c.images.clone()))?;
+    server_images::upload(&images, &control, &kind, &data).await
+}
+
+/// Your status (online, idle, do not disturb) for the member lists of servers on people's
+/// computers; Hopp Cloud's servers hear it from your account.
+#[tauri::command]
+fn set_server_status(state: State<'_, AppState>, status: String) {
+    let tell = |c: &Connection| {
+        if !c.address.starts_with("ws") {
+            c.control.send(ClientMsg::SetStatus { status: status.clone() });
+        }
+    };
+    if let Some(c) = state.conn.lock().unwrap().as_ref() {
+        tell(c);
+    }
+    for c in state.parked.lock().unwrap().values() {
+        tell(c);
+    }
+}
+
+/// `http://hoppimg.localhost/<server address>/<picture id>`: a picture from that server.
+async fn server_picture(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let gone = || tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
+    let mut parts = path.trim_start_matches('/').splitn(2, '/');
+    let (Some(address), Some(id)) = (parts.next().map(percent_decode), parts.next()) else { return gone() };
+    if !server_images::valid_id(id) {
+        return gone();
+    }
+    let state = app.state::<AppState>();
+    let key = format!("{address}/{id}");
+    let cached = state.image_cache.lock().unwrap().get(&key);
+    let picture = match cached {
+        Some(p) => Some(p),
+        None => {
+            let link = {
+                let conn = state.conn.lock().unwrap();
+                let parked = state.parked.lock().unwrap();
+                conn.iter().chain(parked.values()).find(|c| c.address == address).map(|c| (c.control.clone(), c.images.clone()))
+            };
+            let Some((control, images)) = link else { return gone() };
+            let found = server_images::fetch(&images, &control, id).await;
+            if let Some(p) = &found {
+                state.image_cache.lock().unwrap().put(key, p.clone());
+            }
+            found
+        }
+    };
+    match picture {
+        Some((kind, bytes)) => tauri::http::Response::builder()
+            .status(200)
+            .header("content-type", kind)
+            .header("cache-control", "private, max-age=31536000, immutable")
+            .header("x-content-type-options", "nosniff")
+            .body(bytes.to_vec())
+            .unwrap(),
+        None => gone(),
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// A server waiting in the background: its roster stays current, and new messages still
@@ -1871,6 +1968,13 @@ fn main() {
         .manage(account::Account::default())
         .manage(downloads::Downloads::default())
         .on_window_event(shell::on_window_event)
+        .register_asynchronous_uri_scheme_protocol("hoppimg", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(server_picture(&app, &path).await);
+            });
+        })
         .setup(|app| {
             init_logging(app);
             // The window, from the settings; the second account's with web storage of its own.
@@ -1910,6 +2014,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             warm,
+            server_upload,
+            set_server_status,
             forget_server,
             account_status,
             create_account,
@@ -1977,6 +2083,7 @@ fn main() {
             set_level_meter,
             host::host_start,
             host::host_stop,
+            host::host_delete,
             host::host_status,
             set_memory_low,
             install_update,
