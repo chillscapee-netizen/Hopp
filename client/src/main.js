@@ -2813,8 +2813,11 @@ function renderChannelView() {
     back.addEventListener("click", () => openTextChannel(parentId));
     $("chat-topic").replaceChildren(back);
   }
+  const composerWasHidden = $("composer").hidden;
   $("composer").hidden = view === null;
   $("chat-input").placeholder = composerHint(view);
+  // In sight again: its height can be measured now (a draft may span several lines).
+  if (composerWasHidden && view !== null) autosize();
   $("chat-input").disabled = !!timedOutUntil(meUser());
   $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : channel(view)?.parent != null ? '<use href="#i-message"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
@@ -4295,8 +4298,17 @@ chatInput.addEventListener("keydown", async (e) => {
   }
 });
 function autosize() {
+  // Out of sight (while a server connects) nothing can be measured: its own one-line height,
+  // and measured again once it shows. A height taken then was too low and showed a scrollbar.
+  if (!chatInput.offsetWidth) {
+    chatInput.style.height = "";
+    chatInput.style.overflowY = "hidden";
+    return;
+  }
   chatInput.style.height = "auto";
   chatInput.style.height = `${chatInput.scrollHeight}px`;
+  // A scrollbar only once the text is taller than the box can grow.
+  chatInput.style.overflowY = chatInput.scrollHeight > chatInput.clientHeight + 1 ? "auto" : "hidden";
 }
 chatInput.addEventListener("input", () => {
   autosize();
