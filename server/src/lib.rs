@@ -72,6 +72,8 @@ struct Client {
     voice_window: (Instant, u32),
     /// Encrypted connections: the key their voice is sealed with on the way (both directions).
     voice_key: Option<[u8; 32]>,
+    /// Mesh voice: where this member can be reached for voice (often only a relay address).
+    endpoint: Option<(Option<String>, Vec<String>)>,
 }
 
 struct State {
@@ -87,6 +89,10 @@ struct State {
     setup_code: Option<String>,
     attempts: HashMap<IpAddr, (Instant, u32)>,
     storage: Storage,
+    /// Voice goes between the members (Hopp Cloud style), not through this server's relay.
+    mesh_voice: bool,
+    /// Mesh voice: each voice channel's key, made new when the channel fills up again.
+    voice_keys: HashMap<ChannelId, String>,
 }
 
 impl State {
@@ -115,6 +121,41 @@ impl State {
         f(&mut client.user);
         let msg = ServerMsg::UserUpdated { user: client.user.clone() };
         self.broadcast(&msg);
+    }
+
+    /// Mesh voice: someone joined `channel`. They get its key (a new one when they're the first,
+    /// so people who left can't listen in later) and how to reach those already there.
+    fn introduce_voice(&mut self, session_id: SessionId, channel: ChannelId) {
+        let others: Vec<PeerEndpoint> = self
+            .clients
+            .values()
+            .filter(|c| c.user.session_id != session_id && c.user.voice_channel == Some(channel))
+            .filter_map(|c| c.endpoint.clone().map(|(public, local)| PeerEndpoint { session_id: c.user.session_id, public, local }))
+            .collect();
+        let alone = !self.clients.values().any(|c| c.user.session_id != session_id && c.user.voice_channel == Some(channel));
+        if alone || !self.voice_keys.contains_key(&channel) {
+            self.voice_keys.insert(channel, hex::encode(rand::random::<[u8; 32]>()));
+        }
+        let key = self.voice_keys[&channel].clone();
+        if let Some(c) = self.clients.get_mut(&session_id) {
+            c.endpoint = None;
+            let _ = c.tx.send(ServerMsg::VoiceSession { channel, key, peers: others });
+        }
+    }
+
+    /// Mesh voice: where a member can be reached; passed on to the others in their channel.
+    fn voice_endpoint(&mut self, session_id: SessionId, public: Option<String>, local: Vec<String>) {
+        let valid = |a: &String| a.len() <= 64 && a.parse::<SocketAddr>().is_ok();
+        let public = public.filter(valid);
+        let local: Vec<String> = local.into_iter().filter(valid).take(8).collect();
+        let Some(channel) = self.clients.get(&session_id).and_then(|c| c.user.voice_channel) else { return };
+        if let Some(c) = self.clients.get_mut(&session_id) {
+            c.endpoint = Some((public.clone(), local.clone()));
+        }
+        let peer = PeerEndpoint { session_id, public, local };
+        for c in self.clients.values().filter(|c| c.user.session_id != session_id && c.user.voice_channel == Some(channel)) {
+            let _ = c.tx.send(ServerMsg::VoicePeer { peer: peer.clone() });
+        }
     }
 
     fn channels_changed(&self) {
@@ -173,58 +214,87 @@ fn normalize_channel_name(name: &str, kind: ChannelKind) -> String {
 /// With `tls`, connections from other computers must be encrypted (TLS 1.3, the server known by
 /// its key); plain ones are only taken from this computer itself (and in tests, without `tls`).
 pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig, storage: Storage, tls: Option<tls::Tls>) -> anyhow::Result<()> {
-    let udp_port = udp.local_addr()?.port();
-    let config = match storage.load_config() {
-        Some(c) => c,
-        None => {
-            storage.save_config(&default_config);
-            default_config
-        }
-    };
-    let mut history = HashMap::new();
-    let mut next_message_id = 1;
-    // Text channels, and voice channels' own chat.
-    for c in &config.channels {
-        storage.compact_chat(c.id);
-        let (messages, max_id) = storage.load_chat(c.id, CHAT_HISTORY);
-        next_message_id = next_message_id.max(max_id + 1);
-        history.insert(c.id, messages);
-    }
-    let setup_code = config.owner.is_none().then(new_code);
-    let pin = tls.as_ref().map(|t| t.pin.clone());
-    if let Some(pin) = &pin {
-        info!("connections are encrypted; this server's key: {pin}");
-    }
-    let at = pin.as_ref().map(|p| format!("{p}@")).unwrap_or_default();
-    if let Some(code) = &setup_code {
-        info!("this server has no owner yet. Connect from this computer to become the owner,");
-        info!("or from another computer with the invite link hopp://{at}<address>/{code}");
-    }
-    let acceptor = tls.map(|t| t.acceptor);
-    let state: Shared = Arc::new(Mutex::new(State {
-        accounts: storage.load_accounts(),
-        invites: storage.load_invites(),
-        bans: storage.load_bans(),
-        config,
-        clients: HashMap::new(),
-        history,
-        next_id: 1,
-        next_message_id,
-        setup_code,
-        attempts: HashMap::new(),
-        storage,
-    }));
-
-    tokio::spawn(relay_voice(udp, state.clone()));
-
+    let server = Server::start(Some(udp), default_config, storage, tls, false)?;
     loop {
         let (stream, addr) = tcp.accept().await?;
-        if state.lock().unwrap().throttled(addr.ip()) {
-            warn!(%addr, "too many connection attempts, dropping");
-            continue;
+        server.serve_tcp(stream, addr);
+    }
+}
+
+/// A running server. Connections reach it over TCP (`serve_tcp`), or through Hopp Cloud's
+/// tunnel (`serve_tunneled`) when it's hosted out of sight: then nobody connects to the
+/// computer it runs on, and its address stays private.
+pub struct Server {
+    state: Shared,
+    acceptor: Option<tokio_rustls::TlsAcceptor>,
+    udp_port: u16,
+}
+
+impl Server {
+    /// Loads the server from `storage` (`default_config` only when it holds none yet) and starts
+    /// it. With `udp`, voice goes through the server's own relay; with `mesh_voice` (and no
+    /// UDP), voice goes between the members (through Hopp's relay when their addresses are
+    /// hidden), as on Hopp Cloud, and the server only introduces them.
+    pub fn start(udp: Option<UdpSocket>, default_config: ServerConfig, storage: Storage, tls: Option<tls::Tls>, mesh_voice: bool) -> anyhow::Result<Arc<Server>> {
+        let udp_port = match &udp {
+            Some(u) if !mesh_voice => u.local_addr()?.port(),
+            _ => 0,
+        };
+        let config = match storage.load_config() {
+            Some(c) => c,
+            None => {
+                storage.save_config(&default_config);
+                default_config
+            }
+        };
+        let mut history = HashMap::new();
+        let mut next_message_id = 1;
+        // Text channels, and voice channels' own chat.
+        for c in &config.channels {
+            storage.compact_chat(c.id);
+            let (messages, max_id) = storage.load_chat(c.id, CHAT_HISTORY);
+            next_message_id = next_message_id.max(max_id + 1);
+            history.insert(c.id, messages);
         }
-        let state = state.clone();
-        let acceptor = acceptor.clone();
+        let setup_code = config.owner.is_none().then(new_code);
+        let pin = tls.as_ref().map(|t| t.pin.clone());
+        if let Some(pin) = &pin {
+            info!("connections are encrypted; this server's key: {pin}");
+        }
+        let at = pin.as_ref().map(|p| format!("{p}@")).unwrap_or_default();
+        if let Some(code) = &setup_code {
+            info!("this server has no owner yet. Connect from this computer to become the owner,");
+            info!("or from another computer with the invite link hopp://{at}<address>/{code}");
+        }
+        let acceptor = tls.map(|t| t.acceptor);
+        let state: Shared = Arc::new(Mutex::new(State {
+            accounts: storage.load_accounts(),
+            invites: storage.load_invites(),
+            bans: storage.load_bans(),
+            config,
+            clients: HashMap::new(),
+            history,
+            next_id: 1,
+            next_message_id,
+            setup_code,
+            attempts: HashMap::new(),
+            storage,
+            mesh_voice,
+            voice_keys: HashMap::new(),
+        }));
+        if let (Some(udp), false) = (udp, mesh_voice) {
+            tokio::spawn(relay_voice(udp, state.clone()));
+        }
+        Ok(Arc::new(Server { state, acceptor, udp_port }))
+    }
+
+    /// A connection over TCP: encrypted, or plain only from this computer.
+    pub fn serve_tcp(self: &Arc<Self>, stream: tokio::net::TcpStream, addr: SocketAddr) {
+        if self.state.lock().unwrap().throttled(addr.ip()) {
+            warn!(%addr, "too many connection attempts, dropping");
+            return;
+        }
+        let server = self.clone();
         tokio::spawn(async move {
             let result = async {
                 stream.set_nodelay(true)?;
@@ -232,14 +302,14 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
                 let mut first = [0u8; 1];
                 let n = tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.peek(&mut first)).await??;
                 anyhow::ensure!(n == 1, "client disconnected");
-                match &acceptor {
+                match &server.acceptor {
                     Some(acceptor) if first[0] == 0x16 => {
                         let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await??;
                         let key = stream.get_ref().1.export_keying_material([0u8; 32], VOICE_KEY_LABEL, None)?;
-                        handle_client(stream, addr, state, udp_port, Some(key)).await
+                        handle_client(stream, addr, server.state.clone(), server.udp_port, Some(key)).await
                     }
                     // Unencrypted: only from this computer (or when the server has no key, in tests).
-                    _ if acceptor.is_none() || addr.ip().is_loopback() => handle_client(stream, addr, state, udp_port, None).await,
+                    _ if server.acceptor.is_none() || addr.ip().is_loopback() => handle_client(stream, addr, server.state.clone(), server.udp_port, None).await,
                     _ => {
                         let mut stream = stream;
                         Err(reject(&mut stream, "This server only takes encrypted connections. Update Hopp to join.").await)
@@ -249,6 +319,29 @@ pub async fn run(tcp: TcpListener, udp: UdpSocket, default_config: ServerConfig,
             .await;
             if let Err(e) = result {
                 info!(%addr, "connection closed: {e}");
+            }
+        });
+    }
+
+    /// A connection that came through the tunnel (`conn` numbers it). Always encrypted, end to
+    /// end: the tunnel only passes sealed bytes. Its address is a stand-in (198.18.x.x), never
+    /// this computer's, so nobody becomes owner this way.
+    pub fn serve_tunneled<S>(self: &Arc<Self>, stream: S, conn: u32)
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let addr = SocketAddr::from(([198, 18, (conn >> 8) as u8, conn as u8], 0));
+        let server = self.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let acceptor = server.acceptor.as_ref().ok_or_else(|| anyhow::anyhow!("a tunneled server needs its key"))?;
+                let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await??;
+                let key = stream.get_ref().1.export_keying_material([0u8; 32], VOICE_KEY_LABEL, None)?;
+                handle_client(stream, addr, server.state.clone(), server.udp_port, Some(key)).await
+            }
+            .await;
+            if let Err(e) = result {
+                info!(conn, "tunneled connection closed: {e}");
             }
         });
     }
@@ -465,6 +558,7 @@ where
                 last_typing: None,
                 voice_window: (Instant::now(), 0),
                 voice_key,
+                endpoint: None,
             };
             st.clients.insert(session_id, client);
             let _ = tx.send(ServerMsg::Welcome {
@@ -517,10 +611,15 @@ where
                     Some(c) if c.kind == ChannelKind::Voice && c.user_limit.is_some_and(|l| st.clients.values().filter(|o| o.user.voice_channel == Some(channel) && o.user.session_id != session_id).count() >= l as usize) => {
                         error(&format!("{} is full.", c.name));
                     }
-                    Some(c) if c.kind == ChannelKind::Voice => st.update_user(session_id, |u| {
-                        u.voice_channel = Some(channel);
-                        u.sharing = false;
-                    }),
+                    Some(c) if c.kind == ChannelKind::Voice => {
+                        st.update_user(session_id, |u| {
+                            u.voice_channel = Some(channel);
+                            u.sharing = false;
+                        });
+                        if st.mesh_voice {
+                            st.introduce_voice(session_id, channel);
+                        }
+                    }
                     _ => error("That voice channel doesn't exist."),
                 },
                 ClientMsg::LeaveVoice => st.update_user(session_id, |u| {
@@ -921,7 +1020,11 @@ where
                     }
                 }
                 // Voice goes through our UDP relay; direct endpoints are for cloud servers.
-                ClientMsg::VoiceEndpoint { .. } => {}
+                ClientMsg::VoiceEndpoint { public, local } => {
+                    if st.mesh_voice {
+                        st.voice_endpoint(session_id, public, local);
+                    }
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Auth { .. } => {}
             }
         }

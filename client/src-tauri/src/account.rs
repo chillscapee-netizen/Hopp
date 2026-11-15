@@ -65,6 +65,8 @@ pub fn start_account(app: AppHandle, state: State<'_, AppState>, account: State<
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
     // For development: point the account at a local Worker (`npx wrangler dev`).
     let cloud = std::env::var("STROM_ACCOUNT_URL").unwrap_or(cloud);
+    // Servers hosted on people's own computers are reached through this cloud's tunnel.
+    strom_voice::tunnel::set_cloud(&cloud);
     account.stop();
     let handle = app.clone();
     let task = tauri::async_runtime::spawn(async move { run(handle, identity, cloud).await });

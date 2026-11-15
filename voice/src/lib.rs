@@ -10,6 +10,7 @@ pub mod jitter;
 pub mod loopback;
 pub mod mesh;
 pub mod turn;
+pub mod tunnel;
 pub mod settings;
 pub mod soundboard;
 

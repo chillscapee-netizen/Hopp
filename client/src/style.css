@@ -4029,3 +4029,4 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .host-state .status-dot { position: static; flex: none; }
 #add-dialog details.advanced { margin-top: 14px; }
 #add-dialog details.advanced .btn { margin-top: 8px; }
+#host-reach.ok { color: var(--green); }

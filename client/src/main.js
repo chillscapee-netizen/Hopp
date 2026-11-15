@@ -366,7 +366,10 @@ function endpoint(server) {
 }
 
 function displayAddress(server) {
-  return isCloud(server) ? "Hopp Cloud" : server.address;
+  if (isCloud(server)) return "Hopp Cloud";
+  // Hosted on someone's computer, reached through the tunnel: no address to show.
+  if (server.address.startsWith("tunnel:")) return "Private server";
+  return server.address;
 }
 
 function newCloudId() {
@@ -3737,14 +3740,15 @@ $("host-connect").addEventListener("click", () => {
 
 /**
  * A server hosted on this computer, inside Hopp. It starts with Hopp once you've started it,
- * keeps its data and key in Hopp's folder, and asks the router to let friends in (UPnP).
+ * keeps its data and key in Hopp's folder, and friends reach it through Hopp Cloud's tunnel:
+ * nobody connects to this computer, so its address stays private, and nothing on the router
+ * changes. Everything in the tunnel is encrypted end to end.
  */
 state.host = { running: false };
 function hostWords(h) {
   if (!h?.running) return "";
-  if (h.reach === "open") return "Friends anywhere can join with your invite links.";
-  if (h.reach === "checking") return "Checking whether friends outside your home can reach it…";
-  return "Only people on your home network can join for now: your router didn't let Hopp open the way in. Turning on UPnP in the router's settings fixes it.";
+  if (h.online) return "Friends can join from anywhere with your invite links. They reach it through Hopp Cloud, so nobody sees your address.";
+  return "Connecting to Hopp Cloud, which friends reach it through…";
 }
 function renderHost() {
   const on = !!state.host?.running;
@@ -3756,6 +3760,7 @@ function renderHost() {
   $("host-reach").textContent = hostWords(state.host);
   const reach = $("invite-reach");
   const hosted = on && activeServer()?.address === "localhost:" + state.host.port;
+  $("host-reach").classList.toggle("ok", !!state.host?.online);
   reach.hidden = !hosted;
   reach.textContent = hosted ? hostWords(state.host) : "";
 }
@@ -3850,9 +3855,9 @@ async function shareableAddress() {
   const [host, port = String(DEFAULT_PORT)] = server.address.split(":");
   // The server's key goes in the link, so whoever joins reaches this server and no other.
   const pin = server.pin ? server.pin + "@" : "";
-  // Hosted here, with the router's way in open: the home's public address.
-  if (state.host?.running && server.address === "localhost:" + state.host.port && state.host.reach === "open" && state.host.public) {
-    return { address: `${pin}${state.host.public}:${port}`, local: false, port };
+  // Hosted here: friends come through the tunnel, never to this computer's address.
+  if (state.host?.running && server.address === "localhost:" + state.host.port && state.host.tunnel) {
+    return { address: `${pin}tunnel:${state.host.tunnel}`, local: false, port };
   }
   if (!/^(localhost|127\.|::1)/i.test(host)) return { address: `${pin}${host}:${port}`, local: false, port };
   lanAddress ??= await call("local_address");

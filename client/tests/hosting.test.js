@@ -1,12 +1,13 @@
 // Hosting a server on this computer from inside Hopp: a name and a button; you're the owner,
-// invite links carry the server's key and, once the router let Hopp open the way in, the
-// home's public address; it says plainly when only the home network can reach it.
+// invite links carry the server's key and its tunnel through Hopp Cloud (never an address);
+// it says whether friends can reach it right now.
 
 (async () => {
   await inServer();
   const pin = "a".repeat(32);
   const calls = [];
-  commands.host_start = ({ name }) => { calls.push("start " + name); return { running: true, name, port: 7777, pin, lan: "192.168.1.20", public: null, reach: "checking" }; };
+  const tunnel = "b".repeat(32);
+  commands.host_start = ({ name }) => { calls.push("start " + name); return { running: true, name, port: 7777, pin, tunnel, online: false }; };
   commands.host_stop = () => { calls.push("stop"); return null; };
   const asked = [];
   const realConnect = commands.connect;
@@ -15,6 +16,7 @@
   openAddDialog("host");
   await wait(20);
   check("a name and a start button", !$("host-off").hidden && !$("host-start").hidden && $("host-stop").hidden);
+  check("no warning about your address: it stays hidden", !$("add-dialog").textContent.includes("see your IP"));
   $("host-name").value = "Movie night";
   $("host-start").click();
   await wait(120);
@@ -25,16 +27,19 @@
   check("it starts again with Hopp", JSON.parse(load("hosting", "null"))?.name === "Movie night");
 
   state.activeId = server.id;
-  emit("host-status", { running: true, name: "Movie night", port: 7777, pin, lan: "192.168.1.20", public: null, reach: "home" });
+  const share = await shareableAddress();
+  check("invite links lead through the tunnel, with no address in them", share.address === `${pin}@tunnel:${tunnel}`, share.address);
+  emit("host-status", { running: true, name: "Movie night", port: 7777, pin, tunnel, online: false });
   await wait(20);
-  let share = await shareableAddress();
-  check("router said no: links use the home network address", share.address === `${pin}@192.168.1.20:7777` || share.address.startsWith(`${pin}@`), share.address);
-  check("and the invite says only the home network can join", /home network/.test($("invite-reach").textContent) && !$("invite-reach").hidden);
-  emit("host-status", { running: true, name: "Movie night", port: 7777, pin, lan: "192.168.1.20", public: "81.229.10.20", reach: "open" });
+  check("while the tunnel connects, it says so", /Connecting/.test($("invite-reach").textContent));
+  emit("host-status", { running: true, name: "Movie night", port: 7777, pin, tunnel, online: true });
   await wait(20);
-  share = await shareableAddress();
-  check("router opened the way: links use the home's public address", share.address === `${pin}@81.229.10.20:7777`, share.address);
-  check("and say friends anywhere can join", /anywhere/.test($("invite-reach").textContent));
+  check("connected: friends anywhere can join, and nobody sees your address", /anywhere/.test($("invite-reach").textContent) && /nobody sees your address/.test($("invite-reach").textContent));
+
+  // A friend's side: the link opens the tunnel, and the server shows no address.
+  const p = parseInvite(`hopp://${pin}@tunnel:${tunnel}/ABCD1234`);
+  check("a friend's link reads as the tunnel and the key", p.address === "tunnel:" + tunnel && p.pin === pin && p.invite === "ABCD1234", JSON.stringify(p));
+  check("and the server shows as private, not an address", displayAddress({ address: "tunnel:" + tunnel }) === "Private server");
 
   openAddDialog("host");
   await wait(20);

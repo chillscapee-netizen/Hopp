@@ -4,6 +4,7 @@
 export { StromServer } from "./server";
 export { InviteIndex } from "./invites";
 export { StromAccount, UserDirectory } from "./account";
+export { HoppTunnel } from "./tunnel";
 
 import { inviteIndex, type InviteIndex } from "./invites";
 import type { StromServer } from "./server";
@@ -14,6 +15,7 @@ export interface Env {
   INVITES: DurableObjectNamespace<InviteIndex>;
   ACCOUNTS: DurableObjectNamespace<StromAccount>;
   DIRECTORY: DurableObjectNamespace<UserDirectory>;
+  TUNNELS: DurableObjectNamespace<import("./tunnel").HoppTunnel>;
   /** KLIPY API key for GIF search (`npx wrangler secret put KLIPY_KEY`); GIFs are off without it. */
   KLIPY_KEY?: string;
   /**
@@ -43,6 +45,8 @@ export interface Env {
 
 /** Server ids are long and random, so they can't be guessed. */
 const SERVER_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/ws$/;
+/** A server hosted on someone's computer, reached without its address: by its host, or a friend. */
+const TUNNEL_PATH = /^\/tunnels\/([0-9a-f]{32})\/(host|join)$/;
 const ACCOUNT_IMAGE_PATH = /^\/accounts\/([0-9a-f]{64})\/images(?:\/([0-9a-f]{32}))?$/;
 const IMAGE_PATH = /^\/servers\/([A-Za-z0-9]{12,40})\/images(?:\/([0-9a-f]{32}))?$/;
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
@@ -77,6 +81,9 @@ export default {
       // its own copy, so each person fetches a picture only once.
       return stub.fetch(forwarded);
     }
+
+    const tunnel = url.pathname.match(TUNNEL_PATH);
+    if (tunnel) return env.TUNNELS.get(env.TUNNELS.idFromName(tunnel[1])).fetch(request);
 
     const server = url.pathname.match(SERVER_PATH);
     if (server) {

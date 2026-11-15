@@ -450,16 +450,13 @@
             <span class="field-label">Server name</span>
             <input id="host-name" maxlength="40" placeholder="My server" autocomplete="off">
           </label>
-          <p class="hint left">Hopp opens the way in on your router by itself, so friends outside your home can join. Everything between Hopp and your server is encrypted.</p>
+          <p class="hint left">Friends reach it through Hopp Cloud, so nobody ever sees your address and nothing changes on your router. Everything between their Hopp and your server is encrypted: Hopp Cloud only passes sealed bytes along.</p>
         </div>
         <div id="host-on" class="host-on" hidden>
           <p class="host-state"><span class="status-dot online"></span><span><strong id="host-on-name"></strong> is running on this computer</span></p>
           <p id="host-reach" class="hint left"></p>
         </div>
-        <div class="callout-warn">
-          <svg class="i"><use href="#i-shield"/></svg>
-          <span>People who join can only chat and talk, and can't reach your files. They will see your IP address, though, so if you're inviting strangers, run the server somewhere else instead of your home computer.</span>
-        </div>
+        <p class="hint left">People who join can only chat and talk. They can't reach your files.</p>
         <details class="advanced">
           <summary>Run the server program on another computer instead</summary>
           <ol class="steps">

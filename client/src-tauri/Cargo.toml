@@ -11,7 +11,7 @@ tauri-build = { version = "2", features = [] }
 strom-shared = { path = "../../shared" }
 strom-voice = { path = "../../voice" }
 strom-server = { path = "../../server" }
-igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
+rand = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 keyring = { version = "3", features = ["windows-native"] }

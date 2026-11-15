@@ -110,12 +110,17 @@ pub fn parse_invite(input: &str) -> anyhow::Result<(String, Option<String>)> {
     };
     anyhow::ensure!(!host.is_empty() && !s.contains(char::is_whitespace), "That doesn't look like a server address.");
     let host = if host.contains(':') { host.to_string() } else { format!("{host}:{DEFAULT_PORT}") };
+    // (A tunnel, "pin@tunnel:<id>", already has its colon and no port.)
     Ok((host, code.map(str::to_uppercase)))
 }
 
 type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 /// Reads server messages from either transport. `None` means the connection closed.
+/// Bytes both ways: a TCP connection, or a tunnel through Hopp Cloud.
+trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+
 type ByteReader = Box<dyn AsyncRead + Unpin + Send>;
 type ByteWriter = Box<dyn AsyncWrite + Unpin + Send>;
 
@@ -210,7 +215,15 @@ async fn dial(addr: &str) -> anyhow::Result<(TcpStream, SocketAddr)> {
 async fn open_tcp(address: &str) -> anyhow::Result<(Reader, Writer, SocketAddr, Option<String>, Option<[u8; 32]>)> {
     let (addr, _) = parse_invite(address)?;
     let (pin, host) = strom_shared::split_pin(&addr);
-    let (stream, at) = dial(host).await?;
+    // A server hosted out of sight: through Hopp Cloud's tunnel, never to its computer.
+    let tunneled = host.strip_prefix("tunnel:");
+    let (stream, at): (Box<dyn Io>, SocketAddr) = match tunneled {
+        Some(id) => (Box::new(crate::tunnel::join(id).await?), SocketAddr::from(([0, 0, 0, 0], 0))),
+        None => {
+            let (tcp, at) = dial(host).await?;
+            (Box::new(tcp), at)
+        }
+    };
     let seen = Arc::new(std::sync::Mutex::new(None));
     let verifier = Arc::new(PinVerifier { pin: pin.clone(), seen: seen.clone(), provider: Arc::new(rustls::crypto::ring::default_provider()) });
     let config = rustls::ClientConfig::builder_with_provider(verifier.provider.clone())
@@ -231,7 +244,7 @@ async fn open_tcp(address: &str) -> anyhow::Result<(Reader, Writer, SocketAddr, 
                 anyhow::bail!("This server's key doesn't match the one in your invite. If the owner didn't set the server up again, someone may be in between: don't connect.");
             }
             // An older server that doesn't encrypt yet: only on this computer.
-            if pin.is_none() && at.ip().is_loopback() {
+            if pin.is_none() && tunneled.is_none() && at.ip().is_loopback() {
                 let (stream, at) = dial(host).await?;
                 let (rd, wr) = stream.into_split();
                 return Ok((Reader::Tcp(BufReader::new(Box::new(rd))), Writer::Tcp(Box::new(wr)), at, None, None));

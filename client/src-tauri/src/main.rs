@@ -2054,7 +2054,6 @@ fn main() {
         .run(|app, event| {
             // Quitting: other apps get their own volume back.
             if let tauri::RunEvent::Exit = event {
-                host::stop_on_exit(app);
                 if let Some(a) = app.state::<AppState>().attenuator.get() {
                     a.restore_now();
                 }
