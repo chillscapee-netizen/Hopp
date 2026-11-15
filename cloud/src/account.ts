@@ -11,6 +11,8 @@ import { troubleMessage } from "./trouble";
 import { budgetBytes, LOGIN_TTL_S, LOGINS_PER_DAY, monthUsage, newLogin, relayConfigured, revoke, USAGE_FRESH_MS, USAGE_TRUSTED_MS, type TurnLogin } from "./relay";
 import type { Env } from "./index";
 
+/** Past this share of the month's free relay amount, screens shared through it go to 720p. */
+const TIGHT_SHARE = 0.8;
 const ACCOUNT_PROTOCOL = 1;
 const MAX_DISPLAY_NAME = 32;
 /** New servers per account per day, so a script can't fill the cloud. */
@@ -206,7 +208,7 @@ export class UserDirectory extends DurableObject<Env> {
   }
 
   /** A relay login for someone who can't be reached directly, if the month's budget allows. */
-  async relayLogin(): Promise<{ login?: TurnLogin; error?: string }> {
+  async relayLogin(): Promise<{ login?: TurnLogin; error?: string; tight?: boolean }> {
     if (!relayConfigured(this.env)) return { error: "The voice relay isn't set up on this Hopp Cloud." };
     const used = await this.relayUsage();
     if (used === null) return { error: "The voice relay is resting for a moment. Try again soon." };
@@ -220,13 +222,15 @@ export class UserDirectory extends DurableObject<Env> {
     if (count >= LOGINS_PER_DAY) return { error: "The voice relay is busy today. Try again tomorrow." };
     const login = await newLogin(this.env);
     if (!login) return { error: "The voice relay didn't answer. Try again in a moment." };
+    // Most of the month's free amount used: shared screens go smaller until next month.
+    const tight = used >= budgetBytes(this.env) * TIGHT_SHARE;
     this.relaySet("today", `${day} ${count + 1}`);
     const now = Date.now();
     this.sql.exec("DELETE FROM relay_logins WHERE until < ?", now);
     this.sql.exec("INSERT OR REPLACE INTO relay_logins (username, until) VALUES (?, ?)", login.username, now + LOGIN_TTL_S * 1000);
     // While logins are live, the budget is checked again every 15 minutes.
     if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + USAGE_FRESH_MS);
-    return { login };
+    return { login, tight };
   }
 
   async alarm() {
@@ -1282,8 +1286,8 @@ export class StromAccount extends DurableObject<Env> {
     const now = Date.now();
     const kept = this.meta("turn_login");
     if (kept) {
-      const { login, until } = JSON.parse(kept);
-      if (until > now) return this.send(ws, { type: "turn_login", login });
+      const { login, until, tight } = JSON.parse(kept);
+      if (until > now) return this.send(ws, { type: "turn_login", login, tight: !!tight });
     }
     const day = new Date().toISOString().slice(0, 10);
     const [d, n] = (this.meta("turn_today") ?? "").split(" ");
@@ -1293,8 +1297,8 @@ export class StromAccount extends DurableObject<Env> {
     const got = await directory(this.env).relayLogin();
     if (!got.login) return fail(got.error ?? "The voice relay isn't available.");
     // Kept for half its life, so a rejoin doesn't fetch a new one.
-    this.setMeta("turn_login", JSON.stringify({ login: got.login, until: now + (LOGIN_TTL_S / 2) * 1000 }));
-    return this.send(ws, { type: "turn_login", login: got.login });
+    this.setMeta("turn_login", JSON.stringify({ login: got.login, until: now + (LOGIN_TTL_S / 2) * 1000, tight: !!got.tight }));
+    return this.send(ws, { type: "turn_login", login: got.login, tight: !!got.tight });
 
   }
 

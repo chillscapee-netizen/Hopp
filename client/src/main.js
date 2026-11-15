@@ -6151,7 +6151,7 @@ function applySyncedSettings(remote) {
     $("sound-volume-value").textContent = `${prefs.soundVolume}%`;
     prefs.soundEvents = loadJson("soundEvents", {});
     renderSoundEvents();
-    const hideIp = load("hideIp", "0") === "1";
+    const hideIp = load("hideIp", "1") === "1";
     if (hideIp !== prefs.hideIp) invoke("set_private_route", { on: hideIp }).catch(() => {});
     prefs.hideIp = hideIp;
     $("hide-ip").checked = hideIp;
@@ -11762,6 +11762,8 @@ function onRelayLogin(m) {
   for (const done of waiters) done(m.login);
   relayState.login = m.login;
   relayState.unavailable = false;
+  // Most of the month's free relay used: shared screens go smaller until next month.
+  relayState.tight = !!m.tight;
   invoke("set_relay", { login: m.login }).catch(() => {});
   // A day-long login: forget it well before, so a fresh one is fetched next time.
   setTimeout(() => (relayState.login = null), 2 * 3600 * 1000);
@@ -12054,7 +12056,8 @@ function relayLogin() {
 // and so do screens, cameras and files (WebRTC uses relay addresses only). The others see
 // the relay's address, never yours.
 
-prefs.hideIp = load("hideIp", "0") === "1";
+// On unless you turn it off: your address is nobody's business.
+prefs.hideIp = load("hideIp", "1") === "1";
 $("hide-ip").checked = prefs.hideIp;
 invoke("set_private_route", { on: prefs.hideIp }).catch(() => {});
 $("hide-ip").addEventListener("change", (e) => {
@@ -12746,11 +12749,20 @@ prefs.shareQuality = { size: "1080", rate: 30, ...loadJson("shareQuality", {}) }
 if (!SHARE_SIZES.some((x) => x.id === prefs.shareQuality.size)) prefs.shareQuality.size = "1080";
 if (!SHARE_RATES.includes(prefs.shareQuality.rate)) prefs.shareQuality.rate = 30;
 
+/**
+ * The size a screen is shared at: as chosen. With your address hidden, video goes through
+ * Hopp's relay, which is free up to an amount a month; only when most of it is used does a
+ * shared screen go to 720p, until the month turns over.
+ */
+function shareSizeId() {
+  const chosen = prefs.shareQuality.size;
+  return prefs.hideIp && relayState.tight && chosen !== "720" ? "720" : chosen;
+}
 function shareSize() {
-  return SHARE_SIZES.find((x) => x.id === prefs.shareQuality.size) ?? SHARE_SIZES[1];
+  return SHARE_SIZES.find((x) => x.id === shareSizeId()) ?? SHARE_SIZES[1];
 }
 function shareBitrate() {
-  return Math.round(SHARE_MBIT[prefs.shareQuality.size][prefs.shareQuality.rate] * 1_000_000);
+  return Math.round(SHARE_MBIT[shareSizeId()][prefs.shareQuality.rate] * 1_000_000);
 }
 /** What to ask the screen for. */
 function shareConstraints() {
@@ -12880,13 +12892,13 @@ function shareQualityText() {
 function openShareQuality(x, y, above) {
   const q = prefs.shareQuality;
   openMenu([
-    { heading: "Resolution" },
-    ...SHARE_SIZES.map((z) => ({ label: z.label, checked: q.size === z.id, action: () => setShareQuality({ size: z.id }) })),
+    { heading: prefs.hideIp && relayState.tight ? "Resolution (720p until next month: Hopp's free relay is nearly used up)" : "Resolution" },
+    ...SHARE_SIZES.map((z) => ({ label: z.label, checked: shareSizeId() === z.id, action: () => setShareQuality({ size: z.id }) })),
     "sep",
     { heading: "Frame rate" },
     ...SHARE_RATES.map((r) => ({ label: r + " fps" + (r === 60 ? " (games, video)" : r === 30 ? " (sharpest text)" : " (light on your network)"), checked: q.rate === r, action: () => setShareQuality({ rate: r }) })),
     "sep",
-    { heading: "Up to " + SHARE_MBIT[q.size][q.rate] + " Mbit/s to each viewer" },
+    { heading: "Up to " + SHARE_MBIT[shareSizeId()][q.rate] + " Mbit/s to each viewer" },
     "sep",
     { label: "Share my computer's sound", check: prefs.shareSound, action: (on) => setShareSound(on) },
   ], x, y, above);

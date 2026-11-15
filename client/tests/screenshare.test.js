@@ -4,6 +4,8 @@
 
 (async () => {
   await inServer();
+  // Real connections inside this test page: straight across (the relay is for the real app).
+  prefs.hideIp = false;
   // A "screen": a moving picture on a canvas stands in for the real one.
   const canvas = document.createElement("canvas");
   canvas.width = 640;

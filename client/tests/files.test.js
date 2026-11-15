@@ -3,6 +3,8 @@
 
 (async () => {
   await inServer();
+  // Real connections inside this test page: straight across (the relay is for the real app).
+  prefs.hideIp = false;
   openDm(KEYS.elin);
   await wait(300);
   check("the + takes files in a DM", document.querySelector(".dm-composer .attach-btn")?.dataset.tip === "Add a picture or file");
