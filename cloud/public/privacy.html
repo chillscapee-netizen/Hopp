@@ -23,15 +23,33 @@
 <section class="page-head"><span class="kicker">Privacy & safety</span><h1>What stays private</h1><p class="lead">Plain answers about what's encrypted, what Hopp Cloud keeps, and how you stay in control.</p></section>
 <section class="cards-2">
   <div class="card"><h3>End-to-end encrypted</h3><ul class="ticks"><li>Direct messages and group conversations</li><li>Pictures and files between friends</li><li>Calls with friends, voice and video</li></ul><p>Only the people in the conversation can read or hear them. Not even Hopp Cloud.</p></div>
-  <div class="card"><h3>Encrypted on the way</h3><ul class="ticks"><li>Voice and cameras in voice channels</li><li>Screen sharing</li></ul><p>They go straight between the people in the channel whenever possible. When a network blocks that, they pass through a relay that can't read them.</p></div>
+  <div class="card"><h3>Encrypted on the way</h3><ul class="ticks"><li>Voice and cameras in voice channels</li><li>Screen sharing</li><li>Everything to and from a server on someone's own computer</li></ul><p>Nobody in between can read or hear them, the relay included.</p></div>
 </section>
 
 <section class="prose">
+  <h2>Your IP address stays hidden</h2>
+  <p>Your internet address says roughly where you are and lets people target your connection, so Hopp doesn't hand it out. By default voice, calls, cameras, screen sharing and files between friends go through Hopp's relay instead of straight to the others, so nobody you talk to sees your address. The relay only passes on what it can't read.</p>
+  <p>It adds a little delay. If you'd rather go straight to your friends, turn off <b>Hide my IP address</b> in Settings, under Privacy &amp; safety; then the people you talk to can see your address, as in most other apps.</p>
+
+  <h2>A server on your own computer</h2>
+  <p>In Hopp, press <b>+</b> in the server list, choose <b>Run your own server</b>, give it a name and press <b>Start my server</b>. It runs while Hopp is open on that computer.</p>
+  <ul class="ticks">
+    <li>Its messages, pictures, voice messages and members are kept on your computer, not on Hopp Cloud</li>
+    <li>Friends reach it through Hopp Cloud, so you don't open any ports and nobody sees your address</li>
+    <li>The connection is encrypted from your friend's Hopp all the way to your server: Hopp Cloud only passes on sealed bytes it can't read</li>
+    <li>Invite links carry the server's own key, and Hopp refuses any server that doesn't have it, so nobody can pretend to be your server</li>
+    <li>It has everything a server on Hopp Cloud has, and it's held to the same tests</li>
+  </ul>
+  <p>To be honest about the trade-offs: friends can only reach it while your computer is on and Hopp is open, and the way in goes through Hopp Cloud, so if Hopp Cloud pauses on a very busy day, so does the way in. Unread marks and pings from a server on someone's computer reach you while your Hopp is connected to it.</p>
+
   <h2>What Hopp Cloud keeps</h2>
   <p>To work, Hopp Cloud keeps your username, display name, profile picture, banner, About me and your friends list. Your settings and server list are kept too, sealed so only your Hopp ID can read them.</p>
-  <p>Messages in servers are kept on Hopp Cloud so everyone in the server can see them, the newest 1,000 per channel. They aren't end-to-end encrypted, the same as on other chat apps' servers. If you want them on your own computer instead, run your own server.</p>
+  <p>Messages in servers made on Hopp Cloud are kept there so everyone in the server can see them, the newest 1,000 per channel. They aren't end-to-end encrypted, the same as on other chat apps' servers. If you want them on your own computer instead, run your own server: then Hopp Cloud keeps none of it.</p>
   <h2>What it doesn't do</h2>
-  <p>No ads, no tracking, no selling anything about you. Hopp doesn't need your email or phone number.</p>
+  <p>No ads, no tracking, no selling anything about you. Hopp doesn't need your email, your phone number, or a photo of your ID or face.</p>
+
+  <h2>Check it yourself</h2>
+  <p>Hopp is open source. The app, Hopp Cloud and the server program are all on <a href="https://github.com/chillscapee-netizen/Hopp">GitHub</a>, so you don't have to take this page's word for any of it.</p>
 
   <h2>Your Hopp ID</h2>
   <p>You sign in with a key that's made and kept on your own computer, locked with your password. Your recovery phrase is the only way back in if you forget the password, so write it down somewhere safe. Hopp warns you if you're about to send it to anyone. <a href="hopp-id.html">Everything about your Hopp ID</a></p>
