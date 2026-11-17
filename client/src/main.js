@@ -12151,11 +12151,23 @@ $("hide-ip").addEventListener("change", (e) => {
   invoke("set_private_route", { on: prefs.hideIp }).catch(() => {});
 });
 
+/** A line in Hopp's log (it's in Debug info), for what the page runs itself, like screens. */
+function pageLog(...parts) {
+  invoke("page_log", { line: parts.join(" ") }).catch(() => {});
+}
+
+/** Which kinds of addresses a video connection found: "relay" only when hiding your IP. */
+function logCandidate(what, who, candidate) {
+  if (candidate) pageLog(what, who, "found", candidate.type ?? "?", candidate.protocol ?? "");
+  else pageLog(what, who, "has all its addresses");
+}
+
 /** How a video, screen or file connection is made: through the relay only, when hiding your address. */
 async function rtcConfig() {
   const iceServers = await fileIce();
   if (!prefs.hideIp) return { iceServers };
   if (!iceServers.some((x) => String(x.urls).includes("turn:"))) {
+    pageLog("video: the relay isn't available", relayState.unavailable ? "(refused)" : "(no answer)");
     toast("Hopp's relay isn't available right now, so this can't connect without showing your IP address. Turn off Hide my IP address in Privacy & safety, or try again in a moment.", true);
   }
   return { iceServers, iceTransportPolicy: "relay" };
@@ -13054,8 +13066,13 @@ async function serveViewer(viewer) {
   if (!screenShare.stream || screenShare.peers.get(viewer) !== hold) return pc.close();
   pc.pendingIce = [];
   screenShare.peers.set(viewer, pc);
-  pc.onicecandidate = (e) => e.candidate && screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
+  pageLog("screen: sending to", viewer);
+  pc.onicecandidate = (e) => {
+    logCandidate("screen: sending", viewer, e.candidate);
+    if (e.candidate) screenSend(viewer, { k: "ice", s: "viewer", c: e.candidate.toJSON() });
+  };
   pc.onconnectionstatechange = () => {
+    pageLog("screen: sending to", viewer, pc.connectionState);
     if ((pc.connectionState === "failed" || pc.connectionState === "closed") && screenShare.peers.get(viewer) === pc) screenShare.peers.delete(viewer);
     // How many watch shows on your own stream; whoever watches hears its sound.
     if (watching?.local) screenInfo();
@@ -13123,6 +13140,7 @@ function askForScreen(w) {
 /** The stream didn't come through: once more from the start, then give up and say why. */
 function retryScreen(w) {
   if (watching !== w) return;
+  pageLog("screen: retrying", w.from, "try", w.tries);
   w.pc?.close();
   w.pc = null;
   w.pending = [];
@@ -13200,13 +13218,22 @@ listen("screen-signal", async (e) => {
   const w = watching;
   if (!w || w.from !== from) return;
   if (m.k === "offer") {
+    // Anything about the new offer waits for its own connection, never the old (closed) one:
+    // through the relay there are only one or two addresses, and losing them means no picture.
     w.pc?.close();
+    w.pc = null;
+    w.pending = [];
+    pageLog("screen: offer from", from);
     const pc = new RTCPeerConnection(await rtcConfig());
     if (watching !== w) return pc.close();
     w.pc = pc;
     pc.ontrack = (ev) => ($("screen-video").srcObject = ev.streams[0] ?? new MediaStream([ev.track]));
-    pc.onicecandidate = (ev) => ev.candidate && screenSend(from, { k: "ice", s: "sharer", c: ev.candidate.toJSON() });
+    pc.onicecandidate = (ev) => {
+      logCandidate("screen: watching", from, ev.candidate);
+      if (ev.candidate) screenSend(from, { k: "ice", s: "sharer", c: ev.candidate.toJSON() });
+    };
     pc.onconnectionstatechange = () => {
+      pageLog("screen: watching", from, pc.connectionState);
       if (pc.connectionState === "failed" && watching === w && w.pc === pc) retryScreen(w);
     };
     await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });

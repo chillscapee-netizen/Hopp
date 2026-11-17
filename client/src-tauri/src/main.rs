@@ -697,6 +697,12 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
     }
 }
 
+/// A line from the page for the log: what it runs itself, like screen sharing, shows in Debug info.
+#[tauri::command]
+fn page_log(line: String) {
+    tracing::info!("page: {}", line.chars().take(300).collect::<String>());
+}
+
 /// One HTTP client for Hopp Cloud, kept for the whole run: its connection stays open, so a
 /// picture or a profile doesn't start a new encrypted connection every time.
 fn cloud_http() -> &'static reqwest::Client {
@@ -2023,6 +2029,7 @@ fn main() {
             warm,
             server_upload,
             set_server_status,
+            page_log,
             forget_server,
             account_status,
             create_account,
