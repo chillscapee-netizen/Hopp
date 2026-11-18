@@ -1222,7 +1222,9 @@ function toggleFolder(f, head) {
     head.querySelector(".folder-glyph")?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: 80, fill: "forwards" });
     const look = getComputedStyle(box);
     box.animate([{ backgroundColor: look.backgroundColor, boxShadow: look.boxShadow }, { backgroundColor: "transparent", boxShadow: "none" }], { duration: 200, easing: ease, fill: "forwards" });
-    box.animate([{ height: from + "px" }, { height: head.getBoundingClientRect().height + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(() => {
+    // Down to exactly the closed folder's height (a server tile's), so nothing jumps after.
+    const closedHeight = $("home-btn")?.getBoundingClientRect().height || 48;
+    box.animate([{ height: from + "px" }, { height: closedHeight + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(() => {
       railSettling = f;
       done();
     }, done);
