@@ -96,6 +96,30 @@
   size.dispatchEvent(new Event("input"));
   await wait(50);
   check("Mid grey clears every colour", !root.style.getPropertyValue("--main") && !root.style.getPropertyValue("--app-bg") && bodyBg() === midBg);
+
+  // Your own colours, without the system's colour dialog: swatches, a slider, a second colour.
+  document.querySelector('.theme-card[data-theme="custom"]').click();
+  await wait(50);
+  const swatch = document.querySelector('#theme-pick-a .theme-swatch[data-hex="#1f4141"]');
+  swatch.click();
+  await wait(50);
+  check("clicking a colour makes it your theme", prefs.theme === "custom" && prefs.custom.a === "#1f4141" && swatch.classList.contains("active"));
+  const hue = document.querySelector("#theme-pick-a .theme-hue");
+  hue.value = "30";
+  hue.dispatchEvent(new Event("input"));
+  await wait(50);
+  check("the slider moves it to another shade, as calm as before", Math.abs(hexToHsl(prefs.custom.a)[0] - 30) < 3 && hexToHsl(prefs.custom.a)[2] <= 41);
+  check("a grey swatch looks grey", getComputedStyle(document.querySelector('#theme-pick-a .theme-swatch[data-hex="#3c3c42"]')).backgroundColor.match(/\d+/g).slice(0, 3).reduce((a, b, i, all) => Math.max(a, Math.abs(b - all[0])), 0) < 30);
+  check("the second colour is off at first", document.getElementById("theme-pick-b").hidden && !prefs.custom.b);
+  const fade = document.getElementById("theme-fade");
+  fade.checked = true;
+  fade.dispatchEvent(new Event("change"));
+  await wait(50);
+  check("turned on, it fades to a neighbouring shade", !!prefs.custom.b && !document.getElementById("theme-pick-b").hidden && root.style.getPropertyValue("--app-bg").startsWith("linear-gradient"));
+  fade.checked = false;
+  fade.dispatchEvent(new Event("change"));
+  await wait(50);
+  check("turned off, one colour again", !prefs.custom.b && document.getElementById("theme-pick-b").hidden);
   document.getElementById("settings").close();
   report();
 })();

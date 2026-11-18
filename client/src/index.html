@@ -1530,16 +1530,23 @@
           <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Colour themes"></div>
 
           <div id="theme-editor" class="card theme-editor">
-            <div class="row">
-              <span class="row-label">
-                <span class="row-title">Your own theme</span>
-                <span class="row-sub">Pick a colour, and a second one for a gentle fade. Hopp builds the rest and keeps the text readable.</span>
-              </span>
-              <span class="row-control theme-colors">
-                <label class="color-field" aria-label="First colour"><input id="theme-a" type="color"></label>
-                <label class="color-field" aria-label="Second colour"><input id="theme-b" type="color"></label>
-                <button id="theme-b-clear" type="button" class="btn-link sm">One colour</button>
-              </span>
+            <div class="theme-own">
+              <div class="theme-own-head">
+                <span class="row-label">
+                  <span class="row-title">Colour</span>
+                  <span class="row-sub">Pick one, or slide to any shade. Hopp builds the rest from it and keeps the text readable.</span>
+                </span>
+              </div>
+              <div id="theme-pick-a" class="theme-pick" data-which="a"></div>
+              <label class="theme-own-head theme-fade">
+                <span class="row-label">
+                  <span class="row-title">Fade to a second colour</span>
+                  <span class="row-sub">A gentle fade across the whole window.</span>
+                </span>
+                <input id="theme-fade" type="checkbox" class="switch">
+              </label>
+              <div id="theme-pick-b" class="theme-pick" data-which="b"></div>
+              <span class="visually-hidden"><input id="theme-a" type="color" tabindex="-1" aria-hidden="true"><input id="theme-b" type="color" tabindex="-1" aria-hidden="true"><button id="theme-b-clear" type="button" tabindex="-1" aria-hidden="true"></button></span>
             </div>
             <div class="row">
               <span class="row-title">Light or dark</span>

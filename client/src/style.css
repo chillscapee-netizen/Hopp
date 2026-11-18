@@ -4080,3 +4080,19 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 @keyframes show-late { from { opacity: 0; } to { opacity: 1; } }
 #member-list.arriving > * { animation: arrive 180ms ease both; }
 @keyframes arrive { from { opacity: 0; } to { opacity: 1; } }
+
+/* Your own theme: swatches to click and a slider through every shade, no system dialog. */
+.theme-own { display: grid; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.theme-own-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.theme-fade { padding-top: 4px; cursor: pointer; }
+.theme-pick { display: grid; gap: 12px; }
+.theme-pick[hidden] { display: none; }
+.theme-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.theme-swatch { width: 30px; height: 30px; padding: 0; border: none; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14); transition: transform 100ms ease, box-shadow 100ms ease; }
+.theme-swatch:hover { transform: scale(1.08); }
+.theme-swatch.active { box-shadow: 0 0 0 2px var(--app-solid), 0 0 0 4px var(--text); }
+.theme-hue-row { display: flex; align-items: center; gap: 14px; }
+input.theme-hue { flex: 1; height: 12px; margin: 0; border-radius: 6px; -webkit-appearance: none; appearance: none; background: linear-gradient(90deg, hsl(0 55% 48%), hsl(60 55% 48%), hsl(120 55% 48%), hsl(180 55% 48%), hsl(240 55% 48%), hsl(300 55% 48%), hsl(359 55% 48%)); cursor: pointer; }
+input.theme-hue::-webkit-slider-runnable-track { height: 12px; background: transparent; border: none; }
+input.theme-hue::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -5px; border: 3px solid #fff; border-radius: 50%; -webkit-appearance: none; background: var(--hue-now, #888); box-shadow: 0 1px 5px rgb(0 0 0 / 0.45); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

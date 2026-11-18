@@ -12627,6 +12627,65 @@ function themePicture(spec) {
   return pic;
 }
 
+/** A colour as a bright, clear swatch (the theme itself uses its calm shades of it). */
+function swatchColor(hex) {
+  const [h, s, l] = hexToHsl(hex);
+  // A grey stays grey: only a real colour is made brighter.
+  return "hsl(" + h.toFixed(0) + " " + (s < 12 ? s : Math.min(70, s + 25)).toFixed(0) + "% " + (l > 60 ? 82 : 46) + "%)";
+}
+
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, "0");
+  return "#" + f(0) + f(8) + f(4);
+}
+
+/** Colours to start your own theme from: calm, so the text always reads well. */
+var THEME_SWATCHES = ["#3c3c42", "#2b3140", "#23384a", "#1f4141", "#2c3d33", "#3b4632", "#4a442a", "#4a3a2a", "#4a2e36", "#47283f", "#40284a", "#3a2f52"];
+
+/** One colour of your own theme: swatches to click, a slider through every shade, and more. */
+function buildThemePicker(which) {
+  const box = $("theme-pick-" + which);
+  if (!box || box.childElementCount) return;
+  const swatches = el("div", "theme-swatches");
+  for (const hex of THEME_SWATCHES) {
+    const b = el("button", "theme-swatch");
+    b.type = "button";
+    b.dataset.hex = hex;
+    b.style.background = swatchColor(hex);
+    b.setAttribute("aria-label", "Use this colour");
+    b.addEventListener("click", () => saveCustom({ [which]: hex }));
+    swatches.append(b);
+  }
+  const hue = el("input", "theme-hue");
+  hue.type = "range";
+  hue.min = "0";
+  hue.max = "359";
+  hue.setAttribute("aria-label", which === "a" ? "Shade of the colour" : "Shade of the second colour");
+  // Sliding keeps how calm the colour is; only the shade moves.
+  hue.addEventListener("input", () => {
+    const [, s, l] = hexToHsl(prefs.custom[which] ?? prefs.custom.a);
+    saveCustom({ [which]: hslToHex(Number(hue.value), Math.max(22, Math.min(s, 45)), Math.max(18, Math.min(l, 40))) });
+  });
+  const more = el("button", "btn-link sm", "More colours…");
+  more.type = "button";
+  more.addEventListener("click", () => {
+    const input = $("theme-" + which);
+    input.value = prefs.custom[which] ?? prefs.custom.a;
+    try {
+      input.showPicker();
+    } catch {
+      input.click();
+    }
+  });
+  const row = el("div", "theme-hue-row");
+  row.append(hue, more);
+  box.append(swatches, row);
+}
+
 /** Builds the Appearance page once; after that only marks and colours change, so a colour picker stays open while you use it. */
 function renderThemes() {
   const list = $("theme-list");
@@ -12664,10 +12723,18 @@ function syncThemePage() {
   const custom = document.querySelector('.theme-card[data-theme="custom"]');
   if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
   const c = prefs.custom;
-  if (document.activeElement !== $("theme-a")) $("theme-a").value = c.a;
-  if (document.activeElement !== $("theme-b")) $("theme-b").value = c.b ?? c.a;
-  $("theme-b").parentElement.classList.toggle("off", !c.b);
-  $("theme-b-clear").hidden = !c.b;
+  buildThemePicker("a");
+  buildThemePicker("b");
+  for (const which of ["a", "b"]) {
+    const value = (c[which] ?? "").toLowerCase();
+    const box = $("theme-pick-" + which);
+    for (const s of box.querySelectorAll(".theme-swatch")) s.classList.toggle("active", s.dataset.hex === value);
+    const hue = box.querySelector(".theme-hue");
+    if (value && document.activeElement !== hue) hue.value = String(Math.round(hexToHsl(value)[0]));
+    if (value) hue.style.setProperty("--hue-now", swatchColor(value));
+  }
+  $("theme-fade").checked = !!c.b;
+  $("theme-pick-b").hidden = !c.b;
   for (const b of document.querySelectorAll(".theme-mode .segment")) {
     b.classList.toggle("active", b.dataset.look === c.mode);
     b.setAttribute("aria-checked", String(b.dataset.look === c.mode));
@@ -12712,6 +12779,11 @@ $("chat-compact").addEventListener("change", (e) => {
 $("theme-a").addEventListener("input", (e) => saveCustom({ a: e.target.value }));
 $("theme-b").addEventListener("input", (e) => saveCustom({ b: e.target.value }));
 $("theme-b-clear").addEventListener("click", () => saveCustom({ b: null }));
+// A second colour: off is one colour; on starts from a neighbouring shade of the first.
+$("theme-fade").addEventListener("change", (e) => {
+  const [h, s, l] = hexToHsl(prefs.custom.a);
+  saveCustom({ b: e.target.checked ? hslToHex((h + 40) % 360, Math.max(22, s), l) : null });
+});
 $("theme-contrast").addEventListener("input", (e) => saveCustom({ contrast: Number(e.target.value) }));
 $("theme-saturation").addEventListener("input", (e) => saveCustom({ saturation: Number(e.target.value) }));
 $("chat-size").addEventListener("input", (e) => {
