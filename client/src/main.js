@@ -12642,40 +12642,16 @@ function saveCustom(change) {
   }, 16);
 }
 
-/**
- * A little picture of Hopp in a theme, in its own colours: the server rail, the channels (one
- * picked), a few messages with their names and pictures, and the message box.
- */
+/** A theme as a plain swatch: its own background (fading, for colour themes) and its text on it. */
 function themePicture(spec) {
   const t = specTokens(spec);
-  const paint = (node, colour) => ((node.style.background = colour), node);
-  const pic = paint(el("span", "theme-pic"), t["app-bg"] ?? t["app-solid"]);
-  // One background under everything, as in the app: the parts are only lines apart.
-  const rail = el("span", "tp-rail");
-  for (const c of [t.text, t["elev-2"], t["elev-2"], t.green]) rail.append(paint(el("i"), c));
-  const side = el("span", "tp-side");
-  rail.style.boxShadow = side.style.boxShadow = "inset -1px 0 0 " + t.border;
-  for (const [w, on] of [[60, false], [80, true], [50, false], [70, false], [40, false]]) {
-    const line = paint(el("i", on ? "on" : ""), on ? t.active : t.faint);
-    line.style.width = w + "%";
-    side.append(line);
-  }
-  const chat = el("span", "tp-chat");
-  const hues = [200, 30, 140];
-  for (const [i, widths] of [[45, 80], [35, 60], [50, 90]].entries()) {
-    const msg = el("span", "tp-msg");
-    const av = paint(el("span", "tp-av"), "hsl(" + hues[i] + " 35% " + (t.scheme === "light" ? 62 : 46) + "%)");
-    const lines = el("span", "tp-lines");
-    const name = paint(el("i"), t.text);
-    name.style.width = widths[0] + "%";
-    const text = paint(el("i"), t.muted);
-    text.style.width = widths[1] + "%";
-    lines.append(name, text);
-    msg.append(av, lines);
-    chat.append(msg);
-  }
-  chat.append(paint(el("span", "tp-box"), t.layer));
-  pic.append(rail, side, chat);
+  const pic = el("span", "theme-pic");
+  pic.style.background = t["app-bg"] ?? t["app-solid"];
+  const aa = el("span", "tp-aa", "Aa");
+  aa.style.color = t.text;
+  const dot = el("span", "tp-dot");
+  dot.style.background = t.green;
+  pic.append(aa, dot);
   return pic;
 }
 
@@ -12756,11 +12732,16 @@ function renderThemes() {
     return b;
   };
   list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })));
-  // Colour themes fade between two colours; "Your own" is yours to pick, right below.
-  $("gradient-list").replaceChildren(
-    ...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 60 })),
-    card("custom", "Your own", { ...prefs.custom }, "palette"),
-  );
+  // Colour themes fade between two colours.
+  $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 60 })));
+  // Your own: a wide card of its own, so nobody misses it; its colours open right below.
+  const own = card("custom", "Make your own", { ...prefs.custom }, "palette");
+  own.classList.add("own-card");
+  const words = own.querySelector(".theme-name");
+  const text = el("span", "own-card-text");
+  text.append(words, el("span", "own-card-sub", "Any colour you like, or a fade between two. Hopp keeps the text readable."));
+  own.append(text);
+  $("own-theme-card").replaceChildren(own);
   syncThemePage();
 }
 

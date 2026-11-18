@@ -4057,19 +4057,11 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .theme-card.active .theme-check { display: grid; }
 .theme-name { display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 13px; font-weight: 600; }
 .theme-name .i { width: 14px; height: 14px; color: var(--muted); }
-/* The picture: rail, channels, chat with a few messages, and the message box. */
-.theme-pic { display: grid; grid-template-columns: 14% 30% 1fr; aspect-ratio: 16 / 10; border-radius: 9px; overflow: hidden; box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.18); }
-.tp-rail { display: grid; align-content: start; justify-items: center; gap: 4px; padding-top: 6px; }
-.tp-rail i { width: 9px; height: 9px; border-radius: 50%; }
-.tp-side { display: grid; align-content: start; gap: 4px; padding: 7px 5px; }
-.tp-side i { height: 4px; border-radius: 2px; }
-.tp-side i.on { height: 8px; border-radius: 3px; }
-.tp-chat { position: relative; display: grid; align-content: start; gap: 6px; padding: 7px 7px 0; }
-.tp-msg { display: grid; grid-template-columns: 9px 1fr; gap: 4px; align-items: start; }
-.tp-av { width: 9px; height: 9px; border-radius: 50%; }
-.tp-lines { display: grid; gap: 3px; }
-.tp-lines i { height: 3px; border-radius: 2px; }
-.tp-box { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 9px; border-radius: 4px; }
+/* The swatch: the theme's background, and its text on it. */
+.theme-pic { position: relative; display: flex; align-items: flex-end; aspect-ratio: 16 / 9; padding: 10px 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.2); }
+.tp-aa { font-size: 20px; font-weight: 700; line-height: 1; }
+.tp-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; }
+.theme-card.active .tp-dot { display: none; }
 
 /* Alone in a voice channel: a quiet line on your tile, under your picture. */
 .chat.voice-mode .voice-tile .voice-tile-alone { position: absolute; left: 0; right: 0; top: calc(50% + clamp(32px, calc(var(--tile-w, 220px) * 0.1), 60px)); color: var(--muted); font-size: 13.5px; text-align: center; }
@@ -4111,3 +4103,11 @@ html.wallpaper .channel-view, html.wallpaper .home-view, html.wallpaper .news-vi
    to read. */
 .settings-nav .settings-nav-label { margin-top: 12px; padding: 14px 10px 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .settings-nav .settings-me + .settings-nav-label { margin-top: 4px; border-top: none; }
+
+/* Your own theme: a wide card of its own with a rainbow edge, so it's easy to find. */
+.own-card { grid-template-columns: 120px 1fr; align-items: center; gap: 16px; margin-bottom: 14px; padding: 8px 16px 8px 8px; border: 2px solid transparent; background: linear-gradient(var(--elev), var(--elev)) padding-box, conic-gradient(from 200deg, #e85d75, #f0b232, #3ccf8e, #4aa3f0, #9b6cf0, #e85d75) border-box; }
+.own-card:hover { background: linear-gradient(var(--elev-2), var(--elev-2)) padding-box, conic-gradient(from 200deg, #e85d75, #f0b232, #3ccf8e, #4aa3f0, #9b6cf0, #e85d75) border-box; }
+.own-card.active { background: linear-gradient(var(--elev-2), var(--elev-2)) padding-box, linear-gradient(var(--text), var(--text)) border-box; }
+.own-card .theme-name { padding: 0; font-size: 15px; }
+.own-card-text { display: grid; gap: 4px; }
+.own-card-sub { color: var(--muted); font-size: 13px; }

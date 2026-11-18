@@ -13,7 +13,7 @@
   openSettings("appearance");
   await wait(50);
   const cards = [...document.querySelectorAll(".theme-card")];
-  check("a card for each theme, the colour ones, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,dusk,forest,ember,ocean,plum,dawn,custom" && cards.every((c) => c.querySelector(".theme-pic .tp-chat") && c.querySelector(".theme-name").textContent.trim()));
+  check("a card for each theme, the colour ones, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,dusk,forest,ember,ocean,plum,dawn,custom" && cards.every((c) => c.querySelector(".theme-pic .tp-aa") && c.querySelector(".theme-name").textContent.trim()));
   check("the chosen one is marked", document.querySelector(".theme-card.active")?.dataset.theme === "mid");
 
   cards.find((c) => c.dataset.theme === "light").click();
