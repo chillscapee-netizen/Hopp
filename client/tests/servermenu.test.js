@@ -6,7 +6,7 @@
   const items = () => [...$("server-menu").querySelectorAll(".menu-item")].map((b) => b.textContent);
 
   openServerMenu(crew, 10, 10);
-  check("Invite people is first", items()[0] === "Invite people");
+  check("Mark as read, then Mute server, then Invite people (as in Discord)", items()[0] === "Mark as read" && items()[1].startsWith("Mute server") && items()[2] === "Invite people", items().join(", "));
   check("owner gets settings and channels", ["Server settings", "Create channel"].every((t) => items().includes(t)));
   check("notifications fold out from one row", items().includes("Notifications") && !items().includes("All messages"));
   [...$("server-menu").querySelectorAll(".menu-item")].find((b) => b.textContent === "Invite people").click();
@@ -26,7 +26,7 @@
   // Another server: no settings until you're in it, but invite is there.
   const raid = prefs.servers.find((s) => s.address === "192.168.8.35");
   openServerMenu(raid, 10, 10);
-  check("other servers: invite, no settings yet", items()[0] === "Invite people" && !items().includes("Server settings"));
+  check("other servers: invite, no settings yet", items().includes("Invite people") && !items().includes("Server settings"));
   closePopovers();
 
   // Right-click a person.

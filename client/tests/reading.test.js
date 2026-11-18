@@ -50,7 +50,7 @@
   check("server marked read", !serverHasUnread(crew.address) && channelMentions(crew.address, 3) === 0);
   check("read marks reach the account", sent.filter((m) => m.type === "channel_read").length === 2);
   openServerMenu(crew, 10, 10);
-  check("nothing to mark: no menu item", ![...$("server-menu").querySelectorAll(".menu-item")].some((b) => b.textContent.includes("Mark as read")));
+  check("nothing to mark: Mark as read is greyed", [...$("server-menu").querySelectorAll(".menu-item")].some((b) => b.textContent.includes("Mark as read") && b.disabled));
   closePopovers();
 
   state.reads.set(readKey(crew.address, 4), { server: crew.address, channel: 4, read_id: 1, last_id: 7, mentions: 0 });
