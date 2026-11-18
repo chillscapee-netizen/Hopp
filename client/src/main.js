@@ -12498,9 +12498,13 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
   // Light or dark: as asked, or else from the colour. The colour's lightness then moves the
   // theme smoothly within a range where text always reads well.
   const light = mode ? mode === "light" : picked > 60;
-  const l = light ? 86 + (picked / 100) * 11 : 12 + (Math.min(picked, 80) / 80) * 20;
+  // Very colourful dark themes sit a little lighter, so the colour glows instead of going muddy.
+  const glow = !light && saturation > 50 ? ((saturation - 50) / 50) * 8 : 0;
+  const l = light ? 86 + (picked / 100) * 11 : 12 + glow + (Math.min(picked, 80) / 80) * 20;
   // Surfaces stay calm: even a bright pick becomes a tint (more of it with colourfulness up).
-  const s = Math.min(sRaw, 6 + (saturation / 100) * 38);
+  // Up to the middle the surfaces stay calm; past it they may go properly colourful (one colour
+  // under the whole window, like a wallpaper), text still reading well on top.
+  const s = Math.min(sRaw, saturation <= 50 ? 6 + (saturation / 100) * 38 : 25 + ((saturation - 50) / 50) * 45);
   // Contrast spreads the steps between surfaces.
   const k = 0.6 + (contrast / 100) * 0.8;
   const at = (dl, sat = s) => "hsl(" + h.toFixed(1) + " " + sat.toFixed(1) + "% " + Math.max(0, Math.min(100, l + dl * k)).toFixed(1) + "%)";
@@ -12600,9 +12604,11 @@ function themePicture(spec) {
   const t = specTokens(spec);
   const paint = (node, colour) => ((node.style.background = colour), node);
   const pic = paint(el("span", "theme-pic"), t["app-bg"] ?? t["app-solid"]);
-  const rail = paint(el("span", "tp-rail"), t["rail-shade"]);
+  // One background under everything, as in the app: the parts are only lines apart.
+  const rail = el("span", "tp-rail");
   for (const c of [t.text, t["elev-2"], t["elev-2"], t.green]) rail.append(paint(el("i"), c));
-  const side = paint(el("span", "tp-side"), t.sink);
+  const side = el("span", "tp-side");
+  rail.style.boxShadow = side.style.boxShadow = "inset -1px 0 0 " + t.border;
   for (const [w, on] of [[60, false], [80, true], [50, false], [70, false], [40, false]]) {
     const line = paint(el("i", on ? "on" : ""), on ? t.active : t.faint);
     line.style.width = w + "%";
@@ -12668,7 +12674,7 @@ function buildThemePicker(which) {
   // Sliding keeps how calm the colour is; only the shade moves.
   hue.addEventListener("input", () => {
     const [, s, l] = hexToHsl(prefs.custom[which] ?? prefs.custom.a);
-    saveCustom({ [which]: hslToHex(Number(hue.value), Math.max(22, Math.min(s, 45)), Math.max(18, Math.min(l, 40))) });
+    saveCustom({ [which]: hslToHex(Number(hue.value), Math.max(22, Math.min(s, 75)), Math.max(18, Math.min(l, 45))) });
   });
   const more = el("button", "btn-link sm", "More colours…");
   more.type = "button";
