@@ -1565,6 +1565,8 @@ function menuItems(items, inSub = false) {
       return row;
     }
     const b = el("button", "menu-item" + (item.danger ? " danger" : "") + (item.checked ? " checked" : "") + (item.submenu ? " has-sub" : ""));
+    // Nothing to do right now (like Mark as read with nothing unread): shown, but greyed.
+    if (item.disabled) b.disabled = true;
     if (item.swatch) {
       const dot = el("span", "status-swatch");
       dot.style.background = item.swatch;
@@ -1629,8 +1631,15 @@ function openServerMenu(server, x, y) {
   const manage = active && can("manage");
   openMenu(
     [
+      { label: "Mark as read", icon: "check", disabled: !serverHasUnread(server.address), action: () => markServerRead(server.address) },
+      // Like Discord: for a while, or until you unmute it.
+      serverMuted(server)
+        ? { label: "Unmute server", icon: "bell", sub: muteLabel(server), action: () => setServerMuted(server, null) }
+        : { label: "Mute server", icon: "bell-off", submenu: [
+          ...[[15, "For 15 minutes"], [60, "For 1 hour"], [480, "For 8 hours"], [1440, "For 24 hours"], [0, "Until I unmute it"]].map(([minutes, label]) => ({ label, action: () => setServerMuted(server, minutes) })),
+        ] },
+      "sep",
       { label: "Invite people", icon: "user-plus", action: () => onServer(server, openInvite) },
-      ...(serverHasUnread(server.address) ? [{ label: "Mark as read", icon: "check", action: () => markServerRead(server.address) }] : []),
       ...(manage
         ? [
             "sep",
@@ -6287,6 +6296,7 @@ function mergeSync(remote) {
       pinned: { ...remote.notify.pinned },
       friendGroups: { ...remote.notify.friendGroups },
       quiet: { ...remote.notify.quiet },
+      muted: { ...remote.notify.muted },
     };
     save("notify", JSON.stringify(prefs.notify));
   }
@@ -7130,7 +7140,7 @@ function serverRows(s) {
 }
 
 function serverUnread(s) {
-  if (serverLevel(s) === "none") return false;
+  if (serverLevel(s) === "none" || serverMuted(s)) return false;
   return serverRows(s).some((r) => r.last_id > r.read_id && !channelMuted(s.address, r.channel));
 }
 
@@ -7159,7 +7169,7 @@ function notifyMention({ server, channel, author_key, author_name, channel_name,
   const s = prefs.servers.find((x) => x.address === server);
   if (!s || state.me?.status === "dnd") return;
   const level = serverLevel(s);
-  if (level === "none" || channelMuted(server, channel) || (!mention && level !== "all")) return;
+  if (level === "none" || channelMuted(server, channel) || (!mention && (level !== "all" || serverMuted(s)))) return;
   const looking = online() && s.id === state.activeId && state.view === channel && document.hasFocus();
   if (looking) return;
   playSound("message", author_name + (mention ? " mentioned you in #" : " wrote in #") + channel_name + ", " + s.label);
@@ -8529,6 +8539,40 @@ function draggableChannel(row, ch) {
 
 function serverLevel(s) {
   return prefs.notify.servers[s.address] ?? "mentions";
+}
+
+/** A muted server: no unread dot and no notifications, except when someone mentions you. */
+function serverMuted(s) {
+  const until = prefs.notify.muted?.[s.address];
+  return until !== undefined && (until === 0 || until > Date.now());
+}
+
+/** Mutes a server for so many minutes (0: until you unmute it), or unmutes it (null). */
+function setServerMuted(s, minutes) {
+  prefs.notify.muted ??= {};
+  if (minutes === null) delete prefs.notify.muted[s.address];
+  else prefs.notify.muted[s.address] = minutes ? Date.now() + minutes * 60_000 : 0;
+  saveNotify();
+  wakeWhenMuteEnds();
+}
+
+/** When a mute runs out, the unread dot comes back by itself. */
+var muteTimer = 0;
+function wakeWhenMuteEnds() {
+  clearTimeout(muteTimer);
+  const ends = Object.values(prefs.notify.muted ?? {}).filter((t) => t > Date.now());
+  if (!ends.length) return;
+  muteTimer = setTimeout(() => {
+    renderUnread();
+    wakeWhenMuteEnds();
+  }, Math.min(Math.min(...ends) - Date.now() + 500, 2 ** 31 - 1));
+}
+
+function muteLabel(s) {
+  const until = prefs.notify.muted?.[s.address];
+  if (!serverMuted(s)) return null;
+  if (until === 0) return "Muted until you unmute it";
+  return "Muted until " + new Date(until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + (new Date(until).toDateString() !== new Date().toDateString() ? " tomorrow" : "");
 }
 
 function channelMuted(address, channel) {
