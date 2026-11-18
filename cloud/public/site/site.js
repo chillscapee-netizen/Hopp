@@ -124,3 +124,16 @@ if (!calm && msgs && typing) {
     startX = null;
   });
 })();
+
+// A link to a question in Help (help.html#safe) opens that answer.
+(() => {
+  const open = () => {
+    const target = location.hash && document.getElementById(location.hash.slice(1));
+    if (target?.tagName === "DETAILS") {
+      target.open = true;
+      target.scrollIntoView({ block: "center" });
+    }
+  };
+  open();
+  addEventListener("hashchange", open);
+})();
