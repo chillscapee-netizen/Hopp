@@ -2718,6 +2718,7 @@ function userRow(u, className, size, sub) {
 }
 
 function renderVoicePanel() {
+  syncVoiceControls();
   const panel = $("voice-panel");
   const away = awayVoice();
   const voice = away ? null : connected() ? myVoice() : null;
@@ -13712,8 +13713,9 @@ function renderVoiceStage() {
     screen.querySelector("video")?.play?.().catch(() => {});
   } else if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
 
-  // Top right: back to everyone, pop out, full screen.
-  const bar = el("div", "stage-bar");
+  // A camera in the middle: its buttons sit on it, bottom centre, like a screen's. Otherwise
+  // just full screen, top right.
+  const bar = el("div", camFocus ? "screen-bar tile-bar" : "stage-bar");
   const button = (iconName, label, onClick) => {
     const btn = el("button", "stage-btn");
     btn.type = "button";
@@ -13747,21 +13749,74 @@ function renderVoiceStage() {
   } else if (here.length === 1) {
     foot.append(el("span", "voice-stage-hint", "Nobody else is here yet."));
   }
-  if (mine) {
-    const invite = el("button", "btn sm", "Invite friends");
-    invite.type = "button";
-    invite.addEventListener("click", () => openInvite());
-    foot.append(invite);
-  }
+  if (mine) foot.append(voiceControls());
   if (channel(view)?.afk_after) foot.prepend(el("span", "voice-stage-hint", "This is the AFK channel: people away for " + channel(view).afk_after + " minutes end up here."));
   // A screen in the middle brings its own buttons (pop out, full screen, stop watching).
-  stage.replaceChildren(...(screenFocus ? [] : [bar]), ...(main ? [main] : []), here.length ? tiles : el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now."), ...(screenFocus && mine ? [] : [foot]));
+  if (camFocus) main.append(bar);
+  stage.replaceChildren(...(screenFocus || camFocus ? [] : [bar]), ...(main ? [main] : []), here.length ? tiles : el("p", "voice-stage-empty", "Nobody is in " + channelName(view) + " right now."), foot);
   fitTiles();
+}
+
+/**
+ * The buttons for being in voice, in the middle under everyone: microphone, sound, camera,
+ * screen, soundboard, invite and leave. They work like the ones by your name (bottom left).
+ */
+function voiceControls() {
+  const bar = el("div", "voice-controls");
+  const add = (id, iconName, label, onClick, cls = "") => {
+    const b = el("button", "vc-btn" + (cls ? " " + cls : ""));
+    b.type = "button";
+    b.dataset.vc = id;
+    b.dataset.tip = label;
+    b.setAttribute("aria-label", label);
+    b.append(icon(iconName));
+    b.addEventListener("click", onClick);
+    bar.append(b);
+  };
+  add("mute", "mic", "Mute", () => $("mute-btn").click());
+  add("deafen", "headphones", "Deafen", () => $("deafen-btn").click());
+  bar.append(el("span", "vc-sep"));
+  if (canShare()) {
+    add("cam", "video-off", "Turn on camera", () => $("cam-btn").click());
+    add("share", "monitor", "Share your screen", () => $("share-btn").click());
+  }
+  add("soundboard", "music", "Soundboard", (e) => openSoundboard(e.currentTarget));
+  add("invite", "user-plus", "Invite friends", () => openInvite());
+  bar.append(el("span", "vc-sep"));
+  add("leave", "phone-off", "Leave voice", () => $("hangup-btn").click(), "danger");
+  syncVoiceControls(bar);
+  return bar;
+}
+
+/** The middle buttons show what's on, like the ones bottom left. */
+function syncVoiceControls(bar = document.querySelector("#voice-stage .voice-controls")) {
+  if (!bar) return;
+  const set = (id, on, iconName, label) => {
+    const b = bar.querySelector(`[data-vc="${id}"]`);
+    if (!b) return;
+    b.classList.toggle("on", on);
+    b.replaceChildren(icon(iconName));
+    b.dataset.tip = label;
+    b.setAttribute("aria-label", label);
+  };
+  // Deafened also means nobody hears you, so the microphone shows as off too.
+  const silent = state.muted || state.deafened;
+  set("mute", silent, silent ? "mic-off" : "mic", silent ? "Unmute" : "Mute");
+  set("deafen", state.deafened, state.deafened ? "headphones-off" : "headphones", state.deafened ? "Undeafen" : "Deafen");
+  set("cam", !!media.out.cam, media.out.cam ? "video" : "video-off", media.out.cam ? "Turn off camera" : "Turn on camera");
+  set("share", !!screenShare.stream, "monitor", screenShare.stream ? "Stop sharing your screen" : "Share your screen");
 }
 
 /** Sizes the tiles so everyone fits the space as big as possible (16:9 each). */
 function fitTiles(box = document.querySelector("#voice-stage .voice-tiles")) {
-  if (!box || box.classList.contains("strip")) return;
+  if (!box) return;
+  // The row under a screen or a camera: everyone fits side by side when they can.
+  if (box.classList.contains("strip")) {
+    const n = box.children.length;
+    const w = box.clientWidth;
+    if (n && w) box.style.setProperty("--tile-w", Math.floor(Math.max(110, Math.min(176, (w - 8 * (n - 1)) / n))) + "px");
+    return;
+  }
   const n = box.children.length;
   const w = box.clientWidth;
   const h = box.clientHeight;

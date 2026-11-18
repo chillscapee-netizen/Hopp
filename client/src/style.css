@@ -3391,7 +3391,7 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .stage-main .voice-tile.focus video { object-fit: contain !important; }
 .stage-main .screen-stage { width: 100%; height: 100%; max-height: none; padding: 0; }
 .stage-main .screen-frame { width: 100%; height: 100%; aspect-ratio: auto; }
-.chat.voice-mode .voice-tiles.strip { flex: none; flex-wrap: nowrap; align-content: normal; justify-content: center; overflow-x: auto; overflow-y: hidden; --tile-w: 176px; }
+.chat.voice-mode .voice-tiles.strip { flex: none; flex-wrap: nowrap; align-content: normal; justify-content: safe center; overflow-x: auto; overflow-y: hidden; --tile-w: 176px; }
 .chat.voice-mode .voice-tiles.strip .voice-tile { flex: none; }
 .chat.voice-mode .voice-stage-foot { flex: none; justify-content: center; }
 .chat.voice-mode .voice-stage-foot:empty { display: none; }
@@ -3478,7 +3478,7 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .call-stage.live-call .voice-tile.speaking .avatar { box-shadow: none; }
 .call-stage.live-call .stage-main { flex: 1; min-height: 0; display: grid; }
 .call-stage.live-call .stage-main .voice-tile.focus { width: 100%; height: 100%; aspect-ratio: auto; }
-.call-stage.live-call .voice-tiles.strip { flex: none; flex-wrap: nowrap; justify-content: center; overflow-x: auto; overflow-y: hidden; --tile-w: 150px; }
+.call-stage.live-call .voice-tiles.strip { flex: none; flex-wrap: nowrap; justify-content: safe center; overflow-x: auto; overflow-y: hidden; --tile-w: 150px; }
 .call-stage.live-call .voice-tiles.strip .voice-tile { flex: none; }
 .call-controls { position: absolute; left: 50%; bottom: 12px; z-index: 3; display: flex; gap: 10px; padding: 6px; border-radius: 999px; background: rgb(0 0 0 / 0.28); transform: translateX(-50%); }
 .call-controls .call-btn { width: 44px; height: 44px; }
@@ -4033,3 +4033,26 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 
 /* Run your own server: its notes are separate paragraphs, not one block. */
 #host-off > .hint, [data-step="host"] .modal-body > .hint { margin-top: 10px; }
+
+/* Being in voice: the buttons in the middle under everyone, big and easy to hit. */
+.voice-controls { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 16px; background: var(--layer-2); box-shadow: 0 6px 24px rgb(0 0 0 / 0.25); }
+.vc-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: none; border-radius: 12px; background: var(--hover); color: var(--text); cursor: pointer; transition: background-color 120ms ease, color 120ms ease, transform 80ms ease; }
+.vc-btn:hover { background: var(--active); }
+.vc-btn:active { transform: scale(0.96); }
+.vc-btn .i { width: 22px; height: 22px; }
+.vc-btn.on[data-vc="mute"], .vc-btn.on[data-vc="deafen"] { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); }
+.vc-btn.on[data-vc="cam"], .vc-btn.on[data-vc="share"] { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green); }
+.vc-btn.danger { width: 56px; background: var(--red); color: #fff; }
+.vc-btn.danger:hover { background: color-mix(in srgb, var(--red) 85%, #fff); }
+.vc-sep { width: 1px; height: 26px; margin: 0 2px; background: var(--line); }
+.voice-stage:fullscreen .voice-controls { background: rgb(20 20 24 / 0.85); }
+/* The small tiles in the row under a screen: a smaller picture above the name, nothing overlapping. */
+.chat.voice-mode .voice-tiles.strip .voice-tile:not(.video) .avatar { width: 30px; height: 30px; margin-bottom: 22px; font-size: 12px; }
+.chat.voice-mode .voice-tiles.strip .voice-tile .voice-tile-name { left: 6px; bottom: 6px; padding: 1px 6px; font-size: 12px; }
+.chat.voice-mode .voice-tiles.strip .voice-tile .voice-tile-marks { right: 6px; bottom: 6px; padding: 1px 4px; }
+
+/* A camera in the middle: its buttons on it, bottom centre, like a shared screen's. */
+.stage-main { position: relative; }
+.tile-bar { z-index: 3; }
+.tile-bar .stage-btn { width: 38px; height: 38px; border-radius: 10px; background: none; opacity: 1; }
+.tile-bar .stage-btn:hover { background: rgb(255 255 255 / 0.16); }
