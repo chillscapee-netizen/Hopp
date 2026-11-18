@@ -1174,7 +1174,7 @@ function railFolder(f) {
   head.addEventListener("contextmenu", (e) => openFolderMenu(f, e.clientX, e.clientY));
 
   if (!f.open) {
-    const box = el("span", "rail-icon folder-closed");
+    const box = el("span", "rail-icon folder-closed" + (railSettling === f ? " settling" : ""));
     for (const id of f.ids.slice(0, 4)) {
       const s = serverById(id);
       if (s) box.append(serverIcon("folder-mini server-tint", s.label, s.icon));
@@ -1192,6 +1192,8 @@ function railFolder(f) {
 }
 
 var railOpening = null;
+/** A folder just closed: its closed tile grows in instead of popping. */
+var railSettling = null;
 
 /**
  * Opens or closes a folder smoothly: it grows or shrinks to its new height, and the servers
@@ -1206,15 +1208,24 @@ function toggleFolder(f, head) {
     saveRail();
     renderRail();
     railOpening = null;
+    railSettling = null;
   };
   if (f.open) {
-    // Closing: fold it up first, then show the closed folder in its place.
+    // Closing, in two steps: its servers slide up and fade while it folds up (its tint and
+    // folder icon fading too); then the closed folder grows in, in the same place.
     f.open = false;
     if (still) return done();
     head.dataset.moving = "1";
     box.style.overflow = "hidden";
-    for (const s of box.querySelectorAll(":scope > .rail-item:not(.folder-head)")) s.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: "forwards" });
-    box.animate([{ height: from + "px" }, { height: head.getBoundingClientRect().height + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(done, done);
+    const servers = [...box.querySelectorAll(":scope > .rail-item:not(.folder-head)")].reverse();
+    servers.forEach((s, i) => s.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-8px) scale(0.9)" }], { duration: 140, delay: i * 18, easing: "ease-in", fill: "forwards" }));
+    head.querySelector(".folder-glyph")?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: 80, fill: "forwards" });
+    const look = getComputedStyle(box);
+    box.animate([{ backgroundColor: look.backgroundColor, boxShadow: look.boxShadow }, { backgroundColor: "transparent", boxShadow: "none" }], { duration: 200, easing: ease, fill: "forwards" });
+    box.animate([{ height: from + "px" }, { height: head.getBoundingClientRect().height + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(() => {
+      railSettling = f;
+      done();
+    }, done);
     return;
   }
   // Opening: drawn open, then grown from the closed folder's height to its own.

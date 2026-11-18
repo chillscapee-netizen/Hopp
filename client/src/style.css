@@ -4104,12 +4104,19 @@ html.wallpaper .channel-view, html.wallpaper .home-view, html.wallpaper .news-vi
 
 /* Settings in a colour theme: the same fade as the window, a little softer, so they belong to
    it; the cards on it are see-through layers, not grey blocks. */
-html.wallpaper .settings-modal { background: linear-gradient(var(--sink), var(--sink)), var(--app-bg); border-color: var(--hover); }
+html.wallpaper .settings-modal { background: linear-gradient(var(--sink), var(--sink)), var(--app-bg); border: none; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 24px 80px rgb(0 0 0 / 0.6); }
 html.wallpaper .settings-nav { background: var(--sink); border-right-color: var(--hover); }
 html.wallpaper .settings-modal .card { background: var(--layer); }
-html.wallpaper .settings-modal > .settings-close { background: transparent; }
-html.wallpaper .settings-modal > .settings-close:hover { background: var(--layer-2); }
+html.wallpaper #settings .settings-close-wrap, html.wallpaper #server-settings .settings-close-wrap { background: transparent; }
+html.wallpaper #settings .settings-close, html.wallpaper #server-settings .settings-close { border-color: var(--hover); border-radius: 50%; background: transparent; }
+html.wallpaper #settings .settings-close:hover, html.wallpaper #server-settings .settings-close:hover { border-color: var(--muted); background: var(--layer-2); }
 html.wallpaper #settings .settings-layout, html.wallpaper #settings .settings-content, html.wallpaper #server-settings .settings-layout, html.wallpaper #server-settings .settings-content { background: transparent; }
 
 /* A fading theme: a whisper of grain over the fade, so dark gradients show no steps or bands. */
 html.wallpaper body::after { content: ""; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; opacity: 0.035; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+/* The settings scrollbar: a plain, neutral grey whatever the theme. */
+html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpaper #server-settings .settings-content::-webkit-scrollbar-thumb { background: rgb(128 128 128 / 0.4); border-color: transparent; background-clip: padding-box; }
+
+/* A folder just closed: its tile with the little servers grows in, in the same place. */
+.folder-closed.settling { animation: folder-settle 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes folder-settle { from { opacity: 0; transform: scale(0.82); } }
