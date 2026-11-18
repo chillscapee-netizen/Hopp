@@ -1535,22 +1535,11 @@
 
           <div id="theme-editor" class="card theme-editor">
             <div class="theme-own">
-              <div class="theme-own-head">
-                <span class="row-label">
-                  <span class="row-title">Colour</span>
-                  <span class="row-sub">Pick one, or slide to any shade. Hopp builds the rest from it and keeps the text readable.</span>
-                </span>
-              </div>
-              <div id="theme-pick-a" class="theme-pick" data-which="a"></div>
-              <label class="theme-own-head theme-fade">
-                <span class="row-label">
-                  <span class="row-title">Fade to a second colour</span>
-                  <span class="row-sub">A gentle fade across the whole window.</span>
-                </span>
-                <input id="theme-fade" type="checkbox" class="switch">
-              </label>
-              <div id="theme-pick-b" class="theme-pick" data-which="b"></div>
-              <span class="visually-hidden"><input id="theme-a" type="color" tabindex="-1" aria-hidden="true"><input id="theme-b" type="color" tabindex="-1" aria-hidden="true"><button id="theme-b-clear" type="button" tabindex="-1" aria-hidden="true"></button></span>
+              <span class="row-label">
+                <span class="row-title">Your colours</span>
+                <span class="row-sub">Click a colour to change it, + to add another. With two or more, they fade across the whole window.</span>
+              </span>
+              <div id="own-colours" class="own-colours"></div>
             </div>
             <div class="row">
               <span class="row-title">Light or dark</span>
@@ -1559,10 +1548,6 @@
                 <button type="button" class="segment" data-look="light" role="radio">Light</button>
               </div>
             </div>
-            <label class="row">
-              <span class="row-title">Contrast</span>
-              <span class="row-control slider-control"><input id="theme-contrast" type="range" min="0" max="100" step="5"><output id="theme-contrast-value"></output></span>
-            </label>
             <label class="row">
               <span class="row-title">Colourfulness</span>
               <span class="row-control slider-control"><input id="theme-saturation" type="range" min="0" max="100" step="5"><output id="theme-saturation-value"></output></span>

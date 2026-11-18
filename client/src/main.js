@@ -12594,7 +12594,10 @@ var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "app-bg"];
 
 /** What to paint: a preset, a colour theme, or your own. */
 function themeSpec() {
-  if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation, mode: prefs.custom.mode };
+  if (prefs.theme === "custom") {
+    const colors = ownColours();
+    return { a: colors[0], b: colors.length > 1 ? colors.at(-1) : null, own: colors, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation, mode: prefs.custom.mode };
+  }
   const g = GRADIENTS.find((x) => x.id === prefs.theme);
   if (g) return { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 };
   return { a: THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base, b: null, contrast: 50, saturation: 50 };
@@ -12610,7 +12613,8 @@ function specTokens(spec) {
       // One background for the whole window, like a wallpaper under everything: across a little
       // more than down, the shade travelling round the colour wheel at an even lightness
       // (OKLCH), so it glows without going pale in the middle.
-      const colours = spec.stops ?? [t["app-solid"], u["app-solid"]];
+      // Your own: every colour you picked, each made calm enough for text to read on.
+      const colours = spec.stops ?? (spec.own?.length > 1 ? spec.own.map((c) => themeTokens(c, spec)["app-solid"]) : [t["app-solid"], u["app-solid"]]);
       t["app-bg"] = "linear-gradient(in oklch 135deg, " + colours.join(", ") + ")";
     }
   }
@@ -12664,8 +12668,8 @@ function saveCustom(change) {
 /** A theme as a small round swatch: a grey as it is, a colour theme in clear, bright colours. */
 function themePicture(spec) {
   const pic = el("span", "theme-pic");
-  if (spec.stops) {
-    pic.style.background = "linear-gradient(in oklch 135deg, " + spec.stops.map(swatchColor).join(", ") + ")";
+  if (spec.stops || spec.own?.length > 1) {
+    pic.style.background = "linear-gradient(in oklch 135deg, " + (spec.stops ?? spec.own).map(swatchColor).join(", ") + ")";
   } else if (spec.b || spec.saturation > 55) {
     pic.style.background = "linear-gradient(in oklch 135deg, " + swatchColor(spec.a) + ", " + swatchColor(spec.b ?? spec.a) + ")";
   } else {
@@ -12691,47 +12695,83 @@ function hslToHex(h, s, l) {
   return "#" + f(0) + f(8) + f(4);
 }
 
-/** Colours to start your own theme from: calm, so the text always reads well. */
-var THEME_SWATCHES = ["#3c3c42", "#2b3140", "#23384a", "#1f4141", "#2c3d33", "#3b4632", "#4a442a", "#4a3a2a", "#4a2e36", "#47283f", "#40284a", "#3a2f52"];
+/** Your own theme's colours, one or more (older saves had a first and a second). */
+function ownColours() {
+  const c = prefs.custom;
+  return c.colors?.length ? c.colors : [c.a, c.b].filter(Boolean);
+}
 
-/** One colour of your own theme: swatches to click, a slider through every shade, and more. */
-function buildThemePicker(which) {
-  const box = $("theme-pick-" + which);
-  if (!box || box.childElementCount) return;
-  const swatches = el("div", "theme-swatches");
-  for (const hex of THEME_SWATCHES) {
-    const b = el("button", "theme-swatch");
-    b.type = "button";
-    b.dataset.hex = hex;
-    b.style.background = swatchColor(hex);
-    b.setAttribute("aria-label", "Use this colour");
-    b.addEventListener("click", () => saveCustom({ [which]: hex }));
-    swatches.append(b);
+/** Saves your colours; the first and last are kept as before, for older versions. */
+function setOwnColours(colors) {
+  saveCustom({ colors, a: colors[0], b: colors.length > 1 ? colors.at(-1) : null });
+}
+
+var MAX_OWN_COLOURS = 5;
+
+/**
+ * Your colours: each a round colour that opens the colour picker (square, shades, eyedropper
+ * and numbers), + to add one, × to take one away. Built again only when how many changes, so
+ * the picker stays open while you drag.
+ */
+function renderOwnColours() {
+  const box = $("own-colours");
+  if (!box) return;
+  const colors = ownColours();
+  const chips = box.querySelectorAll(".own-colour input");
+  if (chips.length === colors.length) {
+    chips.forEach((input, i) => {
+      if (document.activeElement !== input) input.value = colors[i];
+      input.parentElement.style.background = colors[i];
+    });
+    box.querySelector(".own-colour-add").hidden = colors.length >= MAX_OWN_COLOURS;
+    return;
   }
-  const hue = el("input", "theme-hue");
-  hue.type = "range";
-  hue.min = "0";
-  hue.max = "359";
-  hue.setAttribute("aria-label", which === "a" ? "Shade of the colour" : "Shade of the second colour");
-  // Sliding keeps how calm the colour is; only the shade moves.
-  hue.addEventListener("input", () => {
-    const [, s, l] = hexToHsl(prefs.custom[which] ?? prefs.custom.a);
-    saveCustom({ [which]: hslToHex(Number(hue.value), Math.max(22, Math.min(s, 75)), Math.max(18, Math.min(l, 45))) });
-  });
-  const more = el("button", "btn-link sm", "More colours…");
-  more.type = "button";
-  more.addEventListener("click", () => {
-    const input = $("theme-" + which);
-    input.value = prefs.custom[which] ?? prefs.custom.a;
-    try {
-      input.showPicker();
-    } catch {
-      input.click();
+  const items = colors.map((colour, i) => {
+    const wrap = el("span", "own-colour-wrap");
+    const chip = el("label", "own-colour");
+    chip.style.background = colour;
+    const input = el("input");
+    input.type = "color";
+    input.value = colour;
+    input.setAttribute("aria-label", "Colour " + (i + 1));
+    input.addEventListener("input", () => {
+      const list = [...ownColours()];
+      list[i] = input.value;
+      chip.style.background = input.value;
+      setOwnColours(list);
+    });
+    chip.append(input);
+    wrap.append(chip);
+    if (colors.length > 1) {
+      const remove = el("button", "own-colour-remove");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove this colour");
+      remove.append(icon("x"));
+      remove.addEventListener("click", () => {
+        const list = [...ownColours()];
+        list.splice(i, 1);
+        setOwnColours(list);
+        renderOwnColours();
+      });
+      wrap.append(remove);
     }
+    return wrap;
   });
-  const row = el("div", "theme-hue-row");
-  row.append(hue, more);
-  box.append(swatches, row);
+  const add = el("button", "own-colour-add");
+  add.type = "button";
+  add.setAttribute("aria-label", "Add a colour");
+  add.dataset.tip = "Add a colour";
+  add.append(icon("plus"));
+  add.hidden = colors.length >= MAX_OWN_COLOURS;
+  // A new colour starts as a neighbouring shade of the last, so the fade looks good at once.
+  add.addEventListener("click", () => {
+    const list = [...ownColours()];
+    const [h, s, l] = hexToHsl(list.at(-1));
+    list.push(hslToHex((h + 45) % 360, Math.max(35, s), Math.min(Math.max(l, 25), 55)));
+    setOwnColours(list);
+    renderOwnColours();
+  });
+  box.replaceChildren(...items, add);
 }
 
 /** Builds the Appearance page once; after that only marks and colours change, so a colour picker stays open while you use it. */
@@ -12755,10 +12795,10 @@ function renderThemes() {
   // Colour themes fade between two colours.
   $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 })));
   // Your own: a row of its own with a rainbow edge, so it's never missed; its colours open below.
-  const own = card("custom", "Make your own theme", { ...prefs.custom });
+  const own = card("custom", "Make your own theme", { ...prefs.custom, own: ownColours() });
   own.classList.add("own-card");
   const words = el("span", "own-card-text");
-  words.append(own.querySelector(".theme-name"), el("span", "own-card-sub", "Any colour you like, or a fade between two"));
+  words.append(own.querySelector(".theme-name"), el("span", "own-card-sub", "Any colours you like, fading across the window"));
   own.append(words);
   $("own-theme-card").replaceChildren(own);
   syncThemePage();
@@ -12774,27 +12814,14 @@ function syncThemePage() {
   }
   // Your own shows a rainbow until you've made it yours; then its own colours.
   const custom = document.querySelector('.theme-card[data-theme="custom"]');
-  if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
+  if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom, own: ownColours() }));
   if (custom) custom.classList.toggle("made", prefs.theme === "custom");
   const c = prefs.custom;
-  buildThemePicker("a");
-  buildThemePicker("b");
-  for (const which of ["a", "b"]) {
-    const value = (c[which] ?? "").toLowerCase();
-    const box = $("theme-pick-" + which);
-    for (const s of box.querySelectorAll(".theme-swatch")) s.classList.toggle("active", s.dataset.hex === value);
-    const hue = box.querySelector(".theme-hue");
-    if (value && document.activeElement !== hue) hue.value = String(Math.round(hexToHsl(value)[0]));
-    if (value) hue.style.setProperty("--hue-now", swatchColor(value));
-  }
-  $("theme-fade").checked = !!c.b;
-  $("theme-pick-b").hidden = !c.b;
+  renderOwnColours();
   for (const b of document.querySelectorAll(".theme-mode .segment")) {
     b.classList.toggle("active", b.dataset.look === c.mode);
     b.setAttribute("aria-checked", String(b.dataset.look === c.mode));
   }
-  $("theme-contrast").value = c.contrast;
-  $("theme-contrast-value").textContent = c.contrast + "%";
   $("theme-saturation").value = c.saturation;
   $("theme-saturation-value").textContent = c.saturation + "%";
   $("chat-size").value = prefs.chatSize;
@@ -12830,15 +12857,6 @@ $("chat-compact").addEventListener("change", (e) => {
   if (state.openDm) renderDmView(true);
 });
 
-$("theme-a").addEventListener("input", (e) => saveCustom({ a: e.target.value }));
-$("theme-b").addEventListener("input", (e) => saveCustom({ b: e.target.value }));
-$("theme-b-clear").addEventListener("click", () => saveCustom({ b: null }));
-// A second colour: off is one colour; on starts from a neighbouring shade of the first.
-$("theme-fade").addEventListener("change", (e) => {
-  const [h, s, l] = hexToHsl(prefs.custom.a);
-  saveCustom({ b: e.target.checked ? hslToHex((h + 40) % 360, Math.max(22, s), l) : null });
-});
-$("theme-contrast").addEventListener("input", (e) => saveCustom({ contrast: Number(e.target.value) }));
 $("theme-saturation").addEventListener("input", (e) => saveCustom({ saturation: Number(e.target.value) }));
 $("chat-size").addEventListener("input", (e) => {
   prefs.chatSize = Number(e.target.value);

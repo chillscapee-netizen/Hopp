@@ -26,22 +26,22 @@
   check("kept for next time", localStorage.getItem("theme") === "light");
   check("the card follows", document.querySelector(".theme-card.active")?.dataset.theme === "light");
 
-  // Your own colour: the picker is the same element all along, so it stays open while you drag.
+  // Your own colours: round colours that open the colour picker, + adds one, × takes one away.
   document.querySelector('.theme-card[data-theme="custom"]').click();
   await wait(30);
-  check("your own colours show when you pick Your own", !$("theme-editor").hidden);
-  const picker = document.getElementById("theme-a");
+  check("your own colours show when you pick Your own", !$("theme-editor").hidden && document.querySelectorAll("#own-colours .own-colour input[type=color]").length >= 1);
+  const picker = document.querySelector("#own-colours .own-colour input");
   picker.focus();
   picker.value = "#ff2a6d";
   picker.dispatchEvent(new Event("input"));
   await wait(50);
-  check("the picker isn't rebuilt while you use it", document.getElementById("theme-a") === picker && document.activeElement === picker);
-  check("your own colour is used", prefs.theme === "custom" && JSON.parse(load("themeCustom", "{}")).a === "#ff2a6d");
+  check("the picker isn't rebuilt while you use it", document.querySelector("#own-colours .own-colour input") === picker && document.activeElement === picker);
+  check("your own colour is used", prefs.theme === "custom" && ownColours()[0] === "#ff2a6d" && JSON.parse(load("themeCustom", "{}")).a === "#ff2a6d");
   check("dark colours give a dark theme", css("color-scheme") === "dark");
   const main = css("--main");
   check("tinted, calm and dark enough to read on", /^hsl\(341\.\d 25\.0% 2\d\.\d%\)$/.test(main), main);
 
-  // Light or dark is your choice: dragging through light colours doesn't flip it.
+  // Light or dark is your choice: picking light colours doesn't flip it.
   const modeBefore = prefs.mode;
   for (const c of ["#9a9aa0", "#c8c8d0", "#f0f0f6"]) {
     picker.value = c;
@@ -49,11 +49,6 @@
     await wait(30);
   }
   check("light colours keep a dark theme dark", css("color-scheme") === "dark");
-  const lighter = css("--main");
-  picker.value = "#30303a";
-  picker.dispatchEvent(new Event("input"));
-  await wait(30);
-  check("and still change it, a step at a time", css("--main") !== lighter);
   document.querySelector('.theme-mode .segment[data-look="light"]').click();
   await wait(30);
   check("Light makes it light", css("color-scheme") === "light" && document.querySelector(".theme-mode .segment.active")?.dataset.look === "light");
@@ -63,20 +58,20 @@
   picker.dispatchEvent(new Event("input"));
   await wait(30);
 
-  // A second colour: a fade.
-  const second = document.getElementById("theme-b");
-  second.value = "#2a6dff";
-  second.dispatchEvent(new Event("input"));
+  // More colours: a fade through all of them.
+  document.querySelector("#own-colours .own-colour-add").click();
+  await wait(30);
+  document.querySelector("#own-colours .own-colour-add").click();
   await wait(50);
-  check("a second colour makes a fade", css("--app-bg").startsWith("linear-gradient"));
-  const contrast = document.getElementById("theme-contrast");
-  contrast.value = "100";
-  contrast.dispatchEvent(new Event("input"));
-  await wait(50);
-  check("contrast spreads the shades", css("--frame") !== "" && document.getElementById("theme-contrast-value").textContent === "100%");
-  document.getElementById("theme-b-clear").click();
-  await wait(50);
-  check("one colour again: no fade", !css("--app-bg"));
+  check("+ adds colours, and they fade across the window", ownColours().length === 3 && document.querySelectorAll("#own-colours .own-colour").length === 3 && css("--app-bg").startsWith("linear-gradient") && (css("--app-bg").match(/hsl\(/g) ?? []).length === 3, css("--app-bg"));
+  for (let i = 0; i < 5; i++) document.querySelector("#own-colours .own-colour-add:not([hidden])")?.click();
+  await wait(30);
+  check("five at most", ownColours().length === 5 && document.querySelector("#own-colours .own-colour-add").hidden);
+  while (ownColours().length > 1) {
+    document.querySelector("#own-colours .own-colour-remove").click();
+    await wait(20);
+  }
+  check("× takes them away again, down to one: no fade", ownColours().length === 1 && !document.querySelector("#own-colours .own-colour-remove") && !css("--app-bg"));
 
   // Colour themes.
   document.querySelector('.theme-card[data-theme="dusk"]').click();
@@ -97,29 +92,6 @@
   await wait(50);
   check("Mid grey clears every colour", !root.style.getPropertyValue("--main") && !root.style.getPropertyValue("--app-bg") && bodyBg() === midBg);
 
-  // Your own colours, without the system's colour dialog: swatches, a slider, a second colour.
-  document.querySelector('.theme-card[data-theme="custom"]').click();
-  await wait(50);
-  const swatch = document.querySelector('#theme-pick-a .theme-swatch[data-hex="#1f4141"]');
-  swatch.click();
-  await wait(50);
-  check("clicking a colour makes it your theme", prefs.theme === "custom" && prefs.custom.a === "#1f4141" && swatch.classList.contains("active"));
-  const hue = document.querySelector("#theme-pick-a .theme-hue");
-  hue.value = "30";
-  hue.dispatchEvent(new Event("input"));
-  await wait(50);
-  check("the slider moves it to another shade, as calm as before", Math.abs(hexToHsl(prefs.custom.a)[0] - 30) < 3 && hexToHsl(prefs.custom.a)[2] <= 41);
-  check("a grey swatch looks grey", getComputedStyle(document.querySelector('#theme-pick-a .theme-swatch[data-hex="#3c3c42"]')).backgroundColor.match(/\d+/g).slice(0, 3).reduce((a, b, i, all) => Math.max(a, Math.abs(b - all[0])), 0) < 30);
-  check("the second colour is off at first", document.getElementById("theme-pick-b").hidden && !prefs.custom.b);
-  const fade = document.getElementById("theme-fade");
-  fade.checked = true;
-  fade.dispatchEvent(new Event("change"));
-  await wait(50);
-  check("turned on, it fades to a neighbouring shade", !!prefs.custom.b && !document.getElementById("theme-pick-b").hidden && root.style.getPropertyValue("--app-bg").startsWith("linear-gradient"));
-  fade.checked = false;
-  fade.dispatchEvent(new Event("change"));
-  await wait(50);
-  check("turned off, one colour again", !prefs.custom.b && document.getElementById("theme-pick-b").hidden);
   document.getElementById("settings").close();
   report();
 })();
