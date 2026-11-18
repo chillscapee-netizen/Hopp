@@ -12515,12 +12515,13 @@ var THEMES = [
 
 /** Colour themes: two colours, fading from one to the other. */
 var GRADIENTS = [
-  { id: "dusk", name: "Dusk", a: "#3a2f52", b: "#23384a" },
-  { id: "forest", name: "Forest", a: "#2c3d33", b: "#3b4632" },
-  { id: "ember", name: "Ember", a: "#4a2e36", b: "#4a3a2a" },
-  { id: "ocean", name: "Ocean", a: "#1f3346", b: "#1f4141" },
-  { id: "plum", name: "Plum", a: "#40284a", b: "#2e2a4a" },
-  { id: "dawn", name: "Dawn", a: "#f3e9ef", b: "#e8eef8" },
+  { id: "dusk", name: "Dusk", a: "#3d2a8a", b: "#8a2f6e" },
+  { id: "sunset", name: "Sunset", a: "#5a2a8c", b: "#b5552c" },
+  { id: "ocean", name: "Ocean", a: "#1e3f8a", b: "#1f8a86" },
+  { id: "forest", name: "Forest", a: "#1f5c3e", b: "#5f7a22" },
+  { id: "ember", name: "Ember", a: "#8a2a35", b: "#a8622a" },
+  { id: "aurora", name: "Aurora", a: "#1f6b7a", b: "#6a2f8a" },
+  { id: "dawn", name: "Dawn", a: "#f6dce8", b: "#dbe6fb" },
 ];
 
 function hexToHsl(hex) {
@@ -12543,7 +12544,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
   // theme smoothly within a range where text always reads well.
   const light = mode ? mode === "light" : picked > 60;
   // Very colourful dark themes sit a little lighter, so the colour glows instead of going muddy.
-  const glow = !light && saturation > 50 ? ((saturation - 50) / 50) * 8 : 0;
+  const glow = !light && saturation > 50 ? ((saturation - 50) / 50) * 15 : 0;
   const l = light ? 86 + (picked / 100) * 11 : 12 + glow + (Math.min(picked, 80) / 80) * 20;
   // Surfaces stay calm: even a bright pick becomes a tint (more of it with colourfulness up).
   // Up to the middle the surfaces stay calm; past it they may go properly colourful (one colour
@@ -12580,7 +12581,7 @@ var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "app-bg"];
 function themeSpec() {
   if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation, mode: prefs.custom.mode };
   const g = GRADIENTS.find((x) => x.id === prefs.theme);
-  if (g) return { a: g.a, b: g.b, contrast: 50, saturation: 60 };
+  if (g) return { a: g.a, b: g.b, contrast: 50, saturation: 85 };
   return { a: THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base, b: null, contrast: 50, saturation: 50 };
 }
 
@@ -12642,16 +12643,15 @@ function saveCustom(change) {
   }, 16);
 }
 
-/** A theme as a plain swatch: its own background (fading, for colour themes) and its text on it. */
+/** A theme as a small round swatch: a grey as it is, a colour theme in clear, bright colours. */
 function themePicture(spec) {
-  const t = specTokens(spec);
   const pic = el("span", "theme-pic");
-  pic.style.background = t["app-bg"] ?? t["app-solid"];
-  const aa = el("span", "tp-aa", "Aa");
-  aa.style.color = t.text;
-  const dot = el("span", "tp-dot");
-  dot.style.background = t.green;
-  pic.append(aa, dot);
+  if (spec.b || spec.saturation > 55) {
+    pic.style.background = "linear-gradient(135deg, " + swatchColor(spec.a) + ", " + swatchColor(spec.b ?? spec.a) + ")";
+  } else {
+    const t = specTokens(spec);
+    pic.style.background = t["app-solid"];
+  }
   return pic;
 }
 
@@ -12733,14 +12733,13 @@ function renderThemes() {
   };
   list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })));
   // Colour themes fade between two colours.
-  $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 60 })));
-  // Your own: a wide card of its own, so nobody misses it; its colours open right below.
-  const own = card("custom", "Make your own", { ...prefs.custom }, "palette");
+  $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 85 })));
+  // Your own: a row of its own with a rainbow edge, so it's never missed; its colours open below.
+  const own = card("custom", "Make your own theme", { ...prefs.custom });
   own.classList.add("own-card");
-  const words = own.querySelector(".theme-name");
-  const text = el("span", "own-card-text");
-  text.append(words, el("span", "own-card-sub", "Any colour you like, or a fade between two. Hopp keeps the text readable."));
-  own.append(text);
+  const words = el("span", "own-card-text");
+  words.append(own.querySelector(".theme-name"), el("span", "own-card-sub", "Any colour you like, or a fade between two"));
+  own.append(words);
   $("own-theme-card").replaceChildren(own);
   syncThemePage();
 }
@@ -12753,8 +12752,10 @@ function syncThemePage() {
     n.classList.toggle("active", n.dataset.theme === prefs.theme);
     n.setAttribute("aria-checked", String(n.dataset.theme === prefs.theme));
   }
+  // Your own shows a rainbow until you've made it yours; then its own colours.
   const custom = document.querySelector('.theme-card[data-theme="custom"]');
   if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
+  if (custom) custom.classList.toggle("made", prefs.theme === "custom");
   const c = prefs.custom;
   buildThemePicker("a");
   buildThemePicker("b");
