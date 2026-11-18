@@ -12515,13 +12515,17 @@ var THEMES = [
 
 /** Colour themes: two colours, fading from one to the other. */
 var GRADIENTS = [
-  { id: "dusk", name: "Dusk", a: "#3d2a8a", b: "#8a2f6e" },
-  { id: "sunset", name: "Sunset", a: "#5a2a8c", b: "#b5552c" },
-  { id: "ocean", name: "Ocean", a: "#1e3f8a", b: "#1f8a86" },
-  { id: "forest", name: "Forest", a: "#1f5c3e", b: "#5f7a22" },
-  { id: "ember", name: "Ember", a: "#8a2a35", b: "#a8622a" },
-  { id: "aurora", name: "Aurora", a: "#1f6b7a", b: "#6a2f8a" },
-  { id: "dawn", name: "Dawn", a: "#f6dce8", b: "#dbe6fb" },
+  // Each wanders through neighbouring shades at an even, deep lightness, strongly coloured, so
+  // the window glows without ever going pale or muddy. Twilight is indigo through violet,
+  // magenta and wine to amber.
+  { id: "twilight", name: "Twilight", stops: ["#201d70", "#390c70", "#4b0370", "#57124f", "#5a2238", "#5c2a1c", "#5c3602"] },
+  { id: "sunset", name: "Sunset", stops: ["#122a72", "#1d2272", "#2c1a72", "#3d1170", "#4b0a6a"] },
+  { id: "dusk", name: "Dusk", stops: ["#33116e", "#45096c", "#560f62", "#62164f", "#6a1f40"] },
+  { id: "ocean", name: "Ocean", stops: ["#13226e", "#0f3270", "#0b456a", "#085560", "#075a52"] },
+  { id: "forest", name: "Forest", stops: ["#0a4a26", "#0b5232", "#0c5640", "#0b574c", "#0a5257"] },
+  { id: "ember", name: "Ember", stops: ["#5a0c25", "#5e121b", "#601d12", "#5e290c", "#5a3408"] },
+  { id: "aurora", name: "Aurora", stops: ["#07564c", "#0a4a62", "#123a70", "#22226e", "#38136e"] },
+  { id: "dawn", name: "Dawn", stops: ["#f6dce8", "#ecdcf6", "#e3dcfb"] },
 ];
 
 function hexToHsl(hex) {
@@ -12544,7 +12548,7 @@ function themeTokens(base, { contrast = 50, saturation = 50, mode } = {}) {
   // theme smoothly within a range where text always reads well.
   const light = mode ? mode === "light" : picked > 60;
   // Very colourful dark themes sit a little lighter, so the colour glows instead of going muddy.
-  const glow = !light && saturation > 50 ? ((saturation - 50) / 50) * 15 : 0;
+  const glow = !light && saturation > 50 ? ((saturation - 50) / 50) * 4 : 0;
   const l = light ? 86 + (picked / 100) * 11 : 12 + glow + (Math.min(picked, 80) / 80) * 20;
   // Surfaces stay calm: even a bright pick becomes a tint (more of it with colourfulness up).
   // Up to the middle the surfaces stay calm; past it they may go properly colourful (one colour
@@ -12581,7 +12585,7 @@ var THEME_KEYS = [...Object.keys(themeTokens("#3c3c42")), "app-bg"];
 function themeSpec() {
   if (prefs.theme === "custom") return { a: prefs.custom.a, b: prefs.custom.b, contrast: prefs.custom.contrast, saturation: prefs.custom.saturation, mode: prefs.custom.mode };
   const g = GRADIENTS.find((x) => x.id === prefs.theme);
-  if (g) return { a: g.a, b: g.b, contrast: 50, saturation: 85 };
+  if (g) return { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 };
   return { a: THEMES.find((t) => t.id === prefs.theme)?.base ?? THEMES[0].base, b: null, contrast: 50, saturation: 50 };
 }
 
@@ -12592,8 +12596,11 @@ function specTokens(spec) {
     const u = themeTokens(spec.b, spec);
     // Light and dark don't mix: the second colour follows the first.
     if (u.scheme === t.scheme) {
-      // One background for the whole window: the colours fade across it, under everything.
-      t["app-bg"] = "linear-gradient(135deg, " + t["app-solid"] + " 0%, " + u["app-solid"] + " 100%)";
+      // One background for the whole window, like a wallpaper under everything: across a little
+      // more than down, the shade travelling round the colour wheel at an even lightness
+      // (OKLCH), so it glows without going pale in the middle.
+      const colours = spec.stops ?? [t["app-solid"], u["app-solid"]];
+      t["app-bg"] = "linear-gradient(in oklch 135deg, " + colours.join(", ") + ")";
     }
   }
   return t;
@@ -12646,8 +12653,10 @@ function saveCustom(change) {
 /** A theme as a small round swatch: a grey as it is, a colour theme in clear, bright colours. */
 function themePicture(spec) {
   const pic = el("span", "theme-pic");
-  if (spec.b || spec.saturation > 55) {
-    pic.style.background = "linear-gradient(135deg, " + swatchColor(spec.a) + ", " + swatchColor(spec.b ?? spec.a) + ")";
+  if (spec.stops) {
+    pic.style.background = "linear-gradient(in oklch 135deg, " + spec.stops.map(swatchColor).join(", ") + ")";
+  } else if (spec.b || spec.saturation > 55) {
+    pic.style.background = "linear-gradient(in oklch 135deg, " + swatchColor(spec.a) + ", " + swatchColor(spec.b ?? spec.a) + ")";
   } else {
     const t = specTokens(spec);
     pic.style.background = t["app-solid"];
@@ -12733,7 +12742,7 @@ function renderThemes() {
   };
   list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })));
   // Colour themes fade between two colours.
-  $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 85 })));
+  $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 })));
   // Your own: a row of its own with a rainbow edge, so it's never missed; its colours open below.
   const own = card("custom", "Make your own theme", { ...prefs.custom });
   own.classList.add("own-card");
