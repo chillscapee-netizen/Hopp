@@ -13674,6 +13674,8 @@ function renderVoiceStage() {
     if (u.deafened || u.server_deafened) marks.append(icon("headphones-off", "xs"));
     if (u.sharing) marks.append(el("span", "live-pill" + (watching?.from === u.session_id ? " watching" : ""), "LIVE"));
     tile.append(styleName(el("span", "voice-tile-name ellipsis", u.name), keyOf(u), u.name, false, "tile"), marks);
+    // Alone here: said quietly on your own tile, under your picture.
+    if (isMe && mine && here.length === 1 && !cam && !focused) tile.append(el("span", "voice-tile-alone", "Nobody else is here yet"));
     tile.addEventListener("click", (e) => {
       if (e.target.closest(".live-pill")) return watchScreen(u.session_id, true);
       // A camera: in the middle, big (click it again for everyone).
@@ -13755,9 +13757,8 @@ function renderVoiceStage() {
     join.type = "button";
     join.addEventListener("click", () => joinVoice(view));
     foot.append(join);
-  } else if (here.length === 1) {
-    foot.append(el("span", "voice-stage-hint", "Nobody else is here yet."));
   }
+
   if (mine) foot.append(voiceControls());
   if (channel(view)?.afk_after) foot.prepend(el("span", "voice-stage-hint", "This is the AFK channel: people away for " + channel(view).afk_after + " minutes end up here."));
   // A screen in the middle brings its own buttons (pop out, full screen, stop watching).
@@ -13768,7 +13769,7 @@ function renderVoiceStage() {
 
 /**
  * The buttons for being in voice, in the middle under everyone: microphone, sound, camera,
- * screen, soundboard, invite and leave. They work like the ones by your name (bottom left).
+ * screen, invite and leave (the soundboard stays bottom left). They work like the ones by your name (bottom left).
  */
 function voiceControls() {
   const bar = el("div", "voice-controls");
@@ -13789,7 +13790,6 @@ function voiceControls() {
     add("cam", "video-off", "Turn on camera", () => $("cam-btn").click());
     add("share", "monitor", "Share your screen", () => $("share-btn").click());
   }
-  add("soundboard", "music", "Soundboard", (e) => openSoundboard(e.currentTarget));
   add("invite", "user-plus", "Invite friends", () => openInvite());
   bar.append(el("span", "vc-sep"));
   add("leave", "phone-off", "Leave voice", () => $("hangup-btn").click(), "danger");

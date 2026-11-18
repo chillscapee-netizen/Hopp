@@ -4067,3 +4067,6 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .tp-lines { display: grid; gap: 3px; }
 .tp-lines i { height: 3px; border-radius: 2px; }
 .tp-box { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 9px; border-radius: 4px; }
+
+/* Alone in a voice channel: a quiet line on your tile, under your picture. */
+.chat.voice-mode .voice-tile .voice-tile-alone { position: absolute; left: 0; right: 0; top: calc(50% + clamp(32px, calc(var(--tile-w, 220px) * 0.1), 60px)); color: var(--muted); font-size: 13.5px; text-align: center; }
