@@ -12564,6 +12564,8 @@ function applyTheme() {
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
+  // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
+  document.documentElement.classList.toggle("wallpaper", !!(prefs.theme !== "mid" && prefs.theme && specTokens(themeSpec())["app-bg"]));
   const font = (typeof APP_FONTS !== "undefined" && APP_FONTS[prefs.appFont]) || '"Inter"';
   document.documentElement.style.setProperty("--app-font", font);
   if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
