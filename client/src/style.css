@@ -3060,7 +3060,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .link-card-img { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 8px; align-self: start; }
 
 /* A server you come back to shows what you saw last, quietly, until it answers. */
-.stale { opacity: 0.6; pointer-events: none; transition: opacity 150ms; }
+/* Waiting for a server's answer: still for a quick switch, dimmed gently only when it takes a
+   while, and back without a blink. */
+#messages, #member-list, #sidebar-body { transition: opacity 180ms ease; }
+.stale { opacity: 0.7; pointer-events: none; transition: opacity 220ms ease 450ms !important; }
 
 /* Invite cards: the initials in the middle of the icon, a calm line on top, no outline. */
 .invite-card { border-color: transparent; }
@@ -4070,3 +4073,10 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 
 /* Alone in a voice channel: a quiet line on your tile, under your picture. */
 .chat.voice-mode .voice-tile .voice-tile-alone { position: absolute; left: 0; right: 0; top: calc(50% + clamp(32px, calc(var(--tile-w, 220px) * 0.1), 60px)); color: var(--muted); font-size: 13.5px; text-align: center; }
+
+/* Placeholders show only when a server takes a moment; a quick one goes straight to the real
+   list. What arrives fades in instead of popping. */
+.skeleton-row, .skeleton-msg, .skeleton-member { animation: show-late 200ms ease 300ms both; }
+@keyframes show-late { from { opacity: 0; } to { opacity: 1; } }
+#member-list.arriving > * { animation: arrive 180ms ease both; }
+@keyframes arrive { from { opacity: 0; } to { opacity: 1; } }

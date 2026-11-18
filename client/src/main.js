@@ -1168,13 +1168,8 @@ function railFolder(f) {
     railBadge(head, servers.reduce((n, s) => n + serverMentions(s), 0));
   }
   head.addEventListener("click", () => {
-    if (railDrag.justDropped) return;
-    f.open = !f.open;
-    // Only the opening itself unfolds with motion; later redraws (switching servers) stay still.
-    railOpening = f.open ? f : null;
-    saveRail();
-    renderRail();
-    railOpening = null;
+    if (railDrag.justDropped || head.dataset.moving) return;
+    toggleFolder(f, head);
   });
   head.addEventListener("contextmenu", (e) => openFolderMenu(f, e.clientX, e.clientY));
 
@@ -1197,6 +1192,42 @@ function railFolder(f) {
 }
 
 var railOpening = null;
+
+/**
+ * Opens or closes a folder smoothly: it grows or shrinks to its new height, and the servers
+ * below glide along with it instead of jumping.
+ */
+function toggleFolder(f, head) {
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const box = head.closest(".folder-open") ?? head;
+  const from = box.getBoundingClientRect().height;
+  const ease = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+  const done = () => {
+    saveRail();
+    renderRail();
+    railOpening = null;
+  };
+  if (f.open) {
+    // Closing: fold it up first, then show the closed folder in its place.
+    f.open = false;
+    if (still) return done();
+    head.dataset.moving = "1";
+    box.style.overflow = "hidden";
+    for (const s of box.querySelectorAll(":scope > .rail-item:not(.folder-head)")) s.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: "forwards" });
+    box.animate([{ height: from + "px" }, { height: head.getBoundingClientRect().height + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(done, done);
+    return;
+  }
+  // Opening: drawn open, then grown from the closed folder's height to its own.
+  f.open = true;
+  railOpening = still ? null : f;
+  done();
+  if (still) return;
+  const open = $("server-list").querySelector(`.folder-head[data-folder="${f.folder}"]`)?.closest(".folder-open");
+  if (!open) return;
+  const to = open.getBoundingClientRect().height;
+  open.style.overflow = "hidden";
+  open.animate([{ height: from + "px" }, { height: to + "px" }], { duration: 220, easing: ease }).finished.finally(() => (open.style.overflow = ""));
+}
 
 function renderRail() {
   $("home-btn").classList.toggle("active", !state.atNews && (state.atHome || (!state.activeId && !state.connectingId)));
@@ -2927,7 +2958,13 @@ function mountMembers(items) {
       batch.style.height = batch.rows.length * 44 + "px";
     }
   }
-  $("member-list").replaceChildren(...out);
+  const list = $("member-list");
+  // The real list taking over from placeholders fades in, rather than popping.
+  if (list.querySelector(".skeleton-member, .skeleton-row")) {
+    list.classList.add("arriving");
+    setTimeout(() => list.classList.remove("arriving"), 250);
+  }
+  list.replaceChildren(...out);
   fillMembers();
 }
 
