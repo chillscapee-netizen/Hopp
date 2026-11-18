@@ -13,7 +13,7 @@
   openSettings("appearance");
   await wait(50);
   const cards = [...document.querySelectorAll(".theme-card")];
-  check("a card for each theme, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,custom");
+  check("a card for each theme, the colour ones, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,dusk,forest,ember,ocean,plum,dawn,custom" && cards.every((c) => c.querySelector(".theme-pic .tp-chat") && c.querySelector(".theme-name").textContent.trim()));
   check("the chosen one is marked", document.querySelector(".theme-card.active")?.dataset.theme === "mid");
 
   cards.find((c) => c.dataset.theme === "light").click();
@@ -79,9 +79,9 @@
   check("one colour again: no fade", !css("--app-bg"));
 
   // Colour themes.
-  document.querySelector('.gradient-swatch[data-theme="dusk"]').click();
+  document.querySelector('.theme-card[data-theme="dusk"]').click();
   await wait(50);
-  check("a colour theme fades between its colours", prefs.theme === "dusk" && css("--app-bg").startsWith("linear-gradient") && document.querySelector(".gradient-swatch.active")?.dataset.theme === "dusk");
+  check("a colour theme fades between its colours", prefs.theme === "dusk" && css("--app-bg").startsWith("linear-gradient") && document.querySelector(".theme-card.active")?.dataset.theme === "dusk");
 
   // Chat text size and spacing.
   const size = document.getElementById("chat-size");

@@ -1,4 +1,4 @@
-// real-time: 60000
+// real-time: 90000
 // Camera video in a voice channel and in a call, and screens in calls, over real WebRTC
 // (the handshakes come back to this page, so it plays both sides).
 
@@ -48,13 +48,25 @@
   document.querySelector(`.voice-tile[data-user="${elin.session_id}"]`).click();
   await wait(50);
   check("clicking a camera focuses it", document.querySelector(".stage-main .voice-tile.focus")?.dataset.user === String(elin.session_id) && !!document.querySelector(".voice-tiles.strip"));
-  check("with pop out and back-to-everyone buttons", document.querySelectorAll(".stage-bar .stage-btn").length === 3);
+  check("with pop out and back-to-everyone buttons, on the camera, bottom centre", document.querySelectorAll(".stage-main .tile-bar .stage-btn").length === 3);
   document.querySelector(`.voice-tile[data-user="${elin.session_id}"]`).click();
   await wait(50);
   check("and again shows everyone", !document.querySelector(".stage-main") && !document.querySelector(".voice-tiles.strip"));
   cam.click();
   await wait(300);
   check("turning it off stops it for everyone", !media.out.cam && !document.querySelector(`.voice-tile[data-user="${elin.session_id}"] video`));
+  check("and everyone's picture comes back, yours too", !!document.querySelector(`.voice-tile[data-user="${elin.session_id}"] .avatar`) && !!document.querySelector(`.voice-tile[data-user="${state.roster.me}"] .avatar`) && !document.querySelector(`.voice-tile[data-user="${state.roster.me}"] video`));
+
+  // The "camera off" message gets lost on the way: their picture still comes back, once the
+  // video itself has ended.
+  cam.click();
+  await playing(`.voice-tile[data-user="${elin.session_id}"] video`);
+  const send = voiceRoom.send;
+  voiceRoom.send = (peer, msg) => (msg.k === "stop" ? undefined : send(peer, msg));
+  cam.click();
+  voiceRoom.send = send;
+  for (let i = 0; i < 200 && document.querySelector(`.voice-tile[data-user="${elin.session_id}"] video`); i++) await wait(100);
+  check("without the message, the picture still comes back", !document.querySelector(`.voice-tile[data-user="${elin.session_id}"] video`) && !!document.querySelector(`.voice-tile[data-user="${elin.session_id}"] .avatar`));
 
   // Leaving voice ends your camera.
   cam.click();

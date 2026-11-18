@@ -12555,57 +12555,63 @@ function saveCustom(change) {
   }, 16);
 }
 
-/** A little picture of a theme: the sidebar, the chat and two lines of text. */
+/**
+ * A little picture of Hopp in a theme, in its own colours: the server rail, the channels (one
+ * picked), a few messages with their names and pictures, and the message box.
+ */
 function themePicture(spec) {
   const t = specTokens(spec);
-  const pic = el("span", "theme-pic");
-  pic.style.background = t["app-bg"] ?? t["app-solid"];
-  const side = el("span", "theme-pic-side");
-  side.style.background = "transparent";
-  const main = el("span", "theme-pic-main");
-  main.style.background = t.layer;
-  for (const w of [70, 45]) {
-    const line = el("i");
+  const paint = (node, colour) => ((node.style.background = colour), node);
+  const pic = paint(el("span", "theme-pic"), t["app-bg"] ?? t["app-solid"]);
+  const rail = paint(el("span", "tp-rail"), t["rail-shade"]);
+  for (const c of [t.text, t["elev-2"], t["elev-2"], t.green]) rail.append(paint(el("i"), c));
+  const side = paint(el("span", "tp-side"), t.sink);
+  for (const [w, on] of [[60, false], [80, true], [50, false], [70, false], [40, false]]) {
+    const line = paint(el("i", on ? "on" : ""), on ? t.active : t.faint);
     line.style.width = w + "%";
-    line.style.background = t.faint;
-    main.append(line);
+    side.append(line);
   }
-  pic.append(side, main);
+  const chat = el("span", "tp-chat");
+  const hues = [200, 30, 140];
+  for (const [i, widths] of [[45, 80], [35, 60], [50, 90]].entries()) {
+    const msg = el("span", "tp-msg");
+    const av = paint(el("span", "tp-av"), "hsl(" + hues[i] + " 35% " + (t.scheme === "light" ? 62 : 46) + "%)");
+    const lines = el("span", "tp-lines");
+    const name = paint(el("i"), t.text);
+    name.style.width = widths[0] + "%";
+    const text = paint(el("i"), t.muted);
+    text.style.width = widths[1] + "%";
+    lines.append(name, text);
+    msg.append(av, lines);
+    chat.append(msg);
+  }
+  chat.append(paint(el("span", "tp-box"), t.layer));
+  pic.append(rail, side, chat);
   return pic;
-}
-
-/** A colour as a bright, clear swatch (the theme itself uses its calm, dark shades). */
-function swatchColor(hex) {
-  const [h, s, l] = hexToHsl(hex);
-  return "hsl(" + h.toFixed(0) + " " + Math.min(70, s + 25).toFixed(0) + "% " + (l > 60 ? 82 : 46) + "%)";
 }
 
 /** Builds the Appearance page once; after that only marks and colours change, so a colour picker stays open while you use it. */
 function renderThemes() {
   const list = $("theme-list");
   if (!list || list.childElementCount) return syncThemePage();
-  const card = (id, name, spec) => {
+  const card = (id, name, spec, mark) => {
     const b = el("button", "theme-card");
     b.type = "button";
     b.dataset.theme = id;
-    b.append(themePicture(spec), el("span", "theme-name", name));
+    b.setAttribute("role", "radio");
+    const check = el("span", "theme-check");
+    check.append(icon("check"));
+    const label = el("span", "theme-name", name);
+    if (mark) label.prepend(icon(mark));
+    b.append(themePicture(spec), check, label);
     b.addEventListener("click", () => setTheme(id));
     return b;
   };
-  list.replaceChildren(
-    ...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })),
-    card("custom", "Your own", { ...prefs.custom }),
-  );
+  list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })));
+  // Colour themes fade between two colours; "Your own" is yours to pick, right below.
   $("gradient-list").replaceChildren(
-    ...GRADIENTS.map((g) => {
-      const b = el("button", "gradient-swatch");
-      b.type = "button";
-      b.dataset.theme = g.id;
-      b.dataset.tip = g.name;
-      b.style.background = "linear-gradient(135deg, " + swatchColor(g.a) + ", " + swatchColor(g.b) + ")";
-      b.addEventListener("click", () => setTheme(g.id));
-      return b;
-    }),
+    ...GRADIENTS.map((g) => card(g.id, g.name, { a: g.a, b: g.b, contrast: 50, saturation: 60 })),
+    card("custom", "Your own", { ...prefs.custom }, "palette"),
   );
   syncThemePage();
 }
@@ -12614,7 +12620,10 @@ function renderThemes() {
 function syncThemePage() {
   // Your own colours show when you pick "Your own"; the ready themes need nothing more.
   if ($("theme-editor")) $("theme-editor").hidden = prefs.theme !== "custom";
-  for (const n of document.querySelectorAll(".theme-card, .gradient-swatch")) n.classList.toggle("active", n.dataset.theme === prefs.theme);
+  for (const n of document.querySelectorAll(".theme-card")) {
+    n.classList.toggle("active", n.dataset.theme === prefs.theme);
+    n.setAttribute("aria-checked", String(n.dataset.theme === prefs.theme));
+  }
   const custom = document.querySelector('.theme-card[data-theme="custom"]');
   if (custom) custom.querySelector(".theme-pic").replaceWith(themePicture({ ...prefs.custom }));
   const c = prefs.custom;
@@ -14191,7 +14200,29 @@ async function handleMedia(from, m, room) {
     entry.pc = pc;
     pc.ontrack = (ev) => {
       entry.stream = ev.streams[0] ?? new MediaStream([ev.track]);
+      // Their camera ended without a word (the "stop" got lost): their picture comes back anyway,
+      // once no video has come for a few seconds (a moment's network hiccup doesn't count).
+      ev.track.addEventListener("ended", () => dropIn(key, entry, from));
+      let quiet = 0;
+      ev.track.addEventListener("mute", () => {
+        clearTimeout(quiet);
+        quiet = setTimeout(() => ev.track.muted && dropIn(key, entry, from), 4000);
+      });
+      ev.track.addEventListener("unmute", () => clearTimeout(quiet));
       renderMediaViews();
+    };
+    // Cut off for a while (their camera went off and the word got lost, or the network
+    // dropped): their picture shows again, and we ask once more, so a camera that's still on
+    // comes straight back.
+    let gone = 0;
+    const lost = () => {
+      dropIn(key, entry, from);
+      if (kind === "cam") room.send(from, { v: "m", t: kind, d: "s", k: "want" });
+    };
+    pc.onconnectionstatechange = () => {
+      clearTimeout(gone);
+      if (pc.connectionState === "failed") lost();
+      else if (pc.connectionState === "disconnected") gone = setTimeout(() => pc.connectionState !== "connected" && lost(), 5000);
     };
     pc.onicecandidate = (ev) => ev.candidate && room.send(from, { v: "m", t: kind, d: "s", k: "ice", c: ev.candidate.toJSON() });
     await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
@@ -14203,16 +14234,28 @@ async function handleMedia(from, m, room) {
     if (entry?.pc?.remoteDescription) await entry.pc.addIceCandidate(m.c).catch(() => {});
     else entry?.pending.push(m.c);
   } else if (m.k === "stop") {
-    mediaIn.get(key)?.pc?.close();
-    mediaIn.delete(key);
-    videoEls.delete(key);
+    // A screen they stopped sharing is no longer offered, watched or not.
     if (kind === "screen") {
       liveIn.delete(from);
       wantIn.delete(from);
     }
-    if (focusTile === from) focusTile = null;
-    renderMediaViews();
+    if (mediaIn.has(key)) dropIn(key, mediaIn.get(key), from);
+    else renderMediaViews();
   }
+}
+
+/** Someone's camera or screen ended: their tile shows their picture again. */
+function dropIn(key, entry, from) {
+  if (!entry || mediaIn.get(key) !== entry) return;
+  entry.pc?.close();
+  mediaIn.delete(key);
+  videoEls.delete(key);
+  if (key.startsWith("screen|")) {
+    liveIn.delete(from);
+    wantIn.delete(from);
+  }
+  if (focusTile === from) focusTile = null;
+  renderMediaViews();
 }
 
 /** After every change in who's around: video only for the people still with us. */

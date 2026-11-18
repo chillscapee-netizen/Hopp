@@ -3002,15 +3002,6 @@ body.rail-dragging .rail-item:hover::before { height: 0; }
 .channel-body.searching .members { display: none; }
 
 /* Theme cards: a little picture of each theme. */
-.theme-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 12px; }
-.theme-card { position: relative; display: grid; gap: 8px; padding: 8px; background: var(--side-2); border: 2px solid transparent; border-radius: 12px; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; transition: border-color 120ms; }
-.theme-card:hover { border-color: var(--border-strong); }
-.theme-card.active { border-color: var(--text); color: var(--text); }
-.theme-pic { display: flex; gap: 4px; height: 64px; padding: 6px 0 0 6px; border-radius: 8px; overflow: hidden; }
-.theme-pic-side { width: 28%; border-radius: 6px 6px 0 0; }
-.theme-pic-main { flex: 1; display: grid; align-content: start; gap: 6px; padding: 10px 8px; border-top-left-radius: 8px; }
-.theme-pic-main i { display: block; height: 5px; border-radius: 3px; opacity: 0.7; }
-.theme-name { padding: 0 2px; font-size: 13px; font-weight: 600; }
 .theme-color { position: absolute; right: 10px; bottom: 8px; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
 .theme-color::-webkit-color-swatch-wrapper { padding: 0; }
 .theme-color::-webkit-color-swatch { border: 2px solid var(--border-strong); border-radius: 50%; }
@@ -3077,10 +3068,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .invite-card-kicker { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 
 /* Colour themes: fading backgrounds when a theme has two colours. */
-.gradient-list { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-.gradient-swatch { width: 44px; height: 44px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
-.gradient-swatch:hover { transform: scale(1.06); }
-.gradient-swatch.active { border-color: var(--text); }
 .theme-editor { margin-top: 20px; }
 .theme-colors { display: flex; align-items: center; gap: 8px; }
 .color-field { position: relative; width: 32px; height: 32px; border-radius: 50%; overflow: hidden; box-shadow: inset 0 0 0 2px var(--border-strong); cursor: pointer; }
@@ -3330,7 +3317,6 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .user-card-note { color: var(--faint); font-size: 13px; text-align: center; }
 /* Setting rows in dialogs: soft, no outline. */
 .setting-row { border: none; background: var(--layer-2); }
-.theme-pic-side { background: transparent !important; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .page-head h2 { margin: 0 !important; }
 .user-card-bio { margin: 10px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
@@ -4056,3 +4042,28 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 .tile-bar { z-index: 3; }
 .tile-bar .stage-btn { width: 38px; height: 38px; border-radius: 10px; background: none; opacity: 1; }
 .tile-bar .stage-btn:hover { background: rgb(255 255 255 / 0.16); }
+
+/* ---------- the theme picker: little pictures of Hopp itself, in each theme's own colours ---------- */
+.theme-group { margin: 2px 0 10px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.theme-card { position: relative; display: grid; gap: 8px; padding: 6px 6px 8px; background: var(--layer); border: 2px solid transparent; border-radius: 14px; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; transition: border-color 120ms ease, transform 120ms ease, background-color 120ms ease; }
+.theme-card:hover { background: var(--layer-2); transform: translateY(-1px); }
+.theme-card.active { border-color: var(--text); color: var(--text); }
+.theme-check { position: absolute; top: 10px; right: 10px; display: none; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--text); color: var(--app-solid); box-shadow: 0 1px 4px rgb(0 0 0 / 0.3); }
+.theme-check .i { width: 13px; height: 13px; stroke-width: 3; }
+.theme-card.active .theme-check { display: grid; }
+.theme-name { display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 13px; font-weight: 600; }
+.theme-name .i { width: 14px; height: 14px; color: var(--muted); }
+/* The picture: rail, channels, chat with a few messages, and the message box. */
+.theme-pic { display: grid; grid-template-columns: 14% 30% 1fr; aspect-ratio: 16 / 10; border-radius: 9px; overflow: hidden; box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.18); }
+.tp-rail { display: grid; align-content: start; justify-items: center; gap: 4px; padding-top: 6px; }
+.tp-rail i { width: 9px; height: 9px; border-radius: 50%; }
+.tp-side { display: grid; align-content: start; gap: 4px; padding: 7px 5px; }
+.tp-side i { height: 4px; border-radius: 2px; }
+.tp-side i.on { height: 8px; border-radius: 3px; }
+.tp-chat { position: relative; display: grid; align-content: start; gap: 6px; padding: 7px 7px 0; }
+.tp-msg { display: grid; grid-template-columns: 9px 1fr; gap: 4px; align-items: start; }
+.tp-av { width: 9px; height: 9px; border-radius: 50%; }
+.tp-lines { display: grid; gap: 3px; }
+.tp-lines i { height: 3px; border-radius: 2px; }
+.tp-box { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 9px; border-radius: 4px; }
