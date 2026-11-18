@@ -4030,3 +4030,6 @@ img.emoji { width: 1.15em; height: 1.15em; vertical-align: -0.2em; object-fit: c
 #add-dialog details.advanced { margin-top: 14px; }
 #add-dialog details.advanced .btn { margin-top: 8px; }
 #host-reach.ok { color: var(--green); }
+
+/* Run your own server: its notes are separate paragraphs, not one block. */
+#host-off > .hint, [data-step="host"] .modal-body > .hint { margin-top: 10px; }

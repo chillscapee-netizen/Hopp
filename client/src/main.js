@@ -5321,7 +5321,7 @@ function openUserCard(user, anchor) {
   $("user-card-name").textContent = user.name;
   styleName($("user-card-name"), keyOf(user), user.name, false);
   const sub = $("user-card-sub");
-  if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "", `In ${channelName(user.voice_channel)}`));
+  if (user.voice_channel !== null) sub.replaceChildren(icon("volume", "sm"), el("span", "ellipsis", `In ${channelName(user.voice_channel)}`));
   else sub.replaceChildren(el("span", "", roleOf(user) ? (roleOf(user) === "owner" ? "Server owner" : ROLE_LABEL[roleOf(user)]) : "Online"));
   renderUserRole(user);
   renderCardActions(user);
