@@ -4106,3 +4106,8 @@ html.wallpaper .channel-view, html.wallpaper .home-view, html.wallpaper .news-vi
 
 /* A menu row with nothing to do right now: greyed, not clickable. */
 .menu-item:disabled { opacity: 0.45; cursor: default; pointer-events: none; }
+
+/* The settings menu in clear groups: a line and some room between them, the group names easy
+   to read. */
+.settings-nav .settings-nav-label { margin-top: 12px; padding: 14px 10px 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.settings-nav .settings-me + .settings-nav-label { margin-top: 4px; border-top: none; }
