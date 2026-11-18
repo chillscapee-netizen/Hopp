@@ -24,6 +24,15 @@ function clipBox(n) {
   return null;
 }
 
+/** Inside a list that scrolls: what's beyond its edge is scrolled to, not lost. */
+function inScroller(n) {
+  for (let p = n.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+    const s = getComputedStyle(p);
+    if (/(auto|scroll)/.test(s.overflowX + s.overflowY) && p.scrollHeight > p.clientHeight + 1) return true;
+  }
+  return false;
+}
+
 /** Text that's cut off without the … that says so. */
 function cutText(n) {
   const s = getComputedStyle(n);
@@ -44,7 +53,7 @@ function audit(where) {
     const r = n.getBoundingClientRect();
     const name = `${n.tagName.toLowerCase()}${n.id ? "#" + n.id : ""}.${String(n.className).split(" ")[0]} "${n.textContent.trim().slice(0, 24)}"`;
     if (r.right > w + 1 || r.left < -1 || r.top < -1 || r.bottom > h + 1) {
-      if (!n.closest(".messages, .scroller, .member-list, .sidebar-body, .settings-content, [data-scroll]")) found.push(`outside the window: ${name}`);
+      if (!inScroller(n)) found.push(`outside the window (${w}×${h}): ${name}`);
     }
     const box = clipBox(n);
     if (box && n.tagName !== "IMG" && getComputedStyle(n).textOverflow !== "ellipsis") {

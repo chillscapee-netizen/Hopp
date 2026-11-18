@@ -101,7 +101,7 @@ for (const test of tests) {
   if (real || !dumpWorks) dom = await runLive(file, test, Number(real ?? budget) + (real ? 0 : 15000));
   else {
     try {
-      dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, "--window-size=1280,800", `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      dom = execFileSync(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "profile-" + test)}`, `--window-size=${windowSize(test)}`, `--virtual-time-budget=${budget}`, "--dump-dom", pathToFileURL(file).href], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
     } catch (e) {
       // Edge sometimes exits with an error after printing the page; use what it printed.
       dom = String(e.stdout ?? "");
@@ -132,7 +132,7 @@ function cleanUp() {
 async function runLive(file, test, timeoutMs) {
   cleanUp();
   const port = 9300 + Math.floor(Math.random() * 500);
-  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, "--window-size=1280,800", "--autoplay-policy=no-user-gesture-required", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
+  const browser = spawn(edge, ["--headless=new", "--disable-gpu", "--mute-audio", "--allow-file-access-from-files", `--user-data-dir=${join(work, "live-" + test)}`, `--window-size=${windowSize(test)}`, "--autoplay-policy=no-user-gesture-required", `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     let target = null;
@@ -171,4 +171,9 @@ async function runLive(file, test, timeoutMs) {
     browser.kill();
     cleanUp();
   }
+}
+
+/** A test may ask for another window: "// window-size: 940,560" (the app's smallest). */
+function windowSize(test) {
+  return readFileSync(join(here, test), "utf8").match(/\/\/ window-size: (\d+,\d+)/)?.[1] ?? "1280,800";
 }
