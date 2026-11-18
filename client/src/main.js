@@ -212,6 +212,9 @@ function avatar(name, size, dot, picture) {
   a.style.setProperty("--hue", hue(name || "?"));
   if (picture) {
     const img = el("img");
+    // Drawn in the same frame as the rest: a list drawn again (switching servers) doesn't
+    // flash empty circles while its pictures decode.
+    img.decoding = "sync";
     img.src = picture;
     img.alt = "";
     img.draggable = false;
@@ -227,6 +230,7 @@ function serverIcon(className, name, picture) {
   const chip = el("span", className);
   if (picture) {
     const img = el("img");
+    img.decoding = "sync";
     img.src = picture;
     img.alt = "";
     // The web view's own image dragging would cancel ours (rail reordering).
@@ -2194,7 +2198,11 @@ listen("server-pin", (e) => {
 listen("invites", (e) => renderInviteList(e.payload));
 listen("bans", (e) => renderBanList(e.payload));
 listen("members", (e) => {
-  state.members = e.payload ?? [];
+  const members = e.payload ?? [];
+  if (state.activeId) membersByServer.set(state.activeId, members);
+  // The same as already shown: nothing to draw again.
+  if (JSON.stringify(members) === JSON.stringify(state.members)) return;
+  state.members = members;
   memberStatusMap.from = null;
   renderMemberList();
   if (online()) renderMembers();
@@ -2205,6 +2213,8 @@ listen("members", (e) => {
  * list: asked once per visit, and again when someone new turns up.
  */
 var membersAsked = { server: null, at: 0 };
+/** Each server's member list as last seen. */
+var membersByServer = new Map();
 
 /**
  * Tells your account which Hopp Cloud servers you're in, so their member lists show you online
@@ -2245,7 +2255,9 @@ var memberStatusMap = new Map();
 function wantMembers() {
   if (!connected() || !state.roster.features?.includes("members")) return;
   const fresh = membersAsked.server !== state.activeId;
-  if (fresh) state.members = [];
+  // Back in a server: its members as last seen, at once (a fresh list follows), so the list
+  // doesn't draw without them and then jump when they arrive.
+  if (fresh) state.members = membersByServer.get(state.activeId) ?? [];
   const known = new Set(state.members.map((m) => m.public_key));
   const stranger = state.members.length > 0 && state.roster.users.some((u) => u.public_key && !known.has(u.public_key));
   if (!fresh && !(stranger && Date.now() - membersAsked.at > 5000)) return;
@@ -2915,6 +2927,8 @@ $("members-toggle").addEventListener("click", () => {
 });
 
 function renderMembers() {
+  // First, so this very drawing already has the server's members as last seen.
+  wantMembers();
   // Someone connected from two computers is one person: shown once (the one in voice, if any).
   const byKey = new Map();
   for (const u of state.roster.users) {
@@ -2947,7 +2961,6 @@ function renderMembers() {
     items.push(el("li", "member-group", `${label} — ${list.length}`));
     items.push(...list.map((u, i) => () => (u.member ? personRow(u.member, i, u.member.status) : userRow(u, "member", ""))));
   }
-  wantMembers();
   const offline = offlineRows(new Set(users.map((u) => u.public_key ?? keyOf(u)).filter(Boolean)));
   items.push(...offline);
   mountMembers(items);
