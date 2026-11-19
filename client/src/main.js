@@ -5830,6 +5830,9 @@ async function openLink(url) {
   await followInvite(url);
 }
 listen("open-url", async (e) => {
+  // Not logged in yet (someone new, making an account): the link waits, and is followed once
+  // you're in (enterApp takes it), instead of being dropped.
+  if (!state.account) return;
   // Handled here; don't handle it again from the pending slot.
   await invoke("take_pending_link");
   openLink(String(e.payload));

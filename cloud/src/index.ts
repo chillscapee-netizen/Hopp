@@ -229,15 +229,15 @@ function invitePage(code: string, p: { name: string | null; icon: string | null;
   const name = p?.name ? escapeHtml(p.name) : "";
   const icon = p?.icon && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(p.icon) ? `<img class="icon" src="${p.icon}" alt="">` : `<div class="icon letter">${name.slice(0, 1) || "?"}</div>`;
   const body = p
-    ? `<p class="kicker">${p.inviter ? `${escapeHtml(p.inviter)} invited you to join` : "You've been invited to join"}</p>
+    ? `<img class="brand" src="/site/logo.svg" alt="Hopp"><p class="kicker">${p.inviter ? `${escapeHtml(p.inviter)} invited you to join` : "You've been invited to join"}</p>
        ${icon}<h1>${name}</h1>
        ${p.members === null ? `<p class="counts">A server on someone's own computer</p>` : `<p class="counts"><span class="dot on"></span>${p.online} Online <span class="dot"></span>${p.members} ${p.members === 1 ? "Member" : "Members"}</p>`}
        <a class="btn primary" href="hopp://${code}">Open in Hopp</a>
        <p class="small">Don't have Hopp yet?</p>
-       <a class="btn" href="/download/Hopp-setup.exe">Download Hopp for Windows</a>
-       <p class="hint">After installing, come back and press <b>Open in Hopp</b>. Windows may say it doesn't recognise the app: choose <b>More info</b>, then <b>Run anyway</b>.</p>`
+       <a class="btn" href="${STORE_URL}">Get it from the Microsoft Store</a>
+       <p class="hint">Free, for Windows 10 and 11. Once it's installed, press <b>Open in Hopp</b> again: you'll land in the server as soon as you've made your account. Or <a href="/download/Hopp-setup.exe">download the installer</a> (Windows may warn about it, as it isn't signed yet).</p>`
     : `<h1>This invite is invalid or has expired</h1><p class="small">Ask for a new one.</p>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="${FAVICON}">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="/site/logo.svg">
 <title>${name ? `Join ${name} on Hopp` : "Hopp invite"}</title>
 <meta property="og:title" content="${name ? `Join ${name} on Hopp` : "Hopp invite"}"><meta property="og:description" content="Voice and chat for friends.">
 <style>
@@ -246,32 +246,32 @@ main{width:min(420px,100%);padding:32px;text-align:center;background:#2a2a2e;bor
 .kicker{margin:0 0 16px;color:#a3a3ab;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
 .icon{width:80px;height:80px;margin:0 auto 12px;border-radius:24px;object-fit:cover}.letter{display:grid;place-items:center;background:#46564c;font-size:32px;font-weight:700}
 h1{margin:0 0 6px;font-size:24px}.counts{margin:0 0 24px;color:#a3a3ab;font-size:14px}.dot{display:inline-block;width:8px;height:8px;margin:0 6px 0 10px;border-radius:50%;background:#7b7b84}.dot.on{background:#3ccf8e}
-.btn{display:block;padding:12px;border-radius:8px;background:#3b3b40;color:#e9e9ec;font-weight:600;text-decoration:none}.btn:hover{background:#46464c}.btn.primary{background:#e9e9ec;color:#1c1c1f}.btn.primary:hover{background:#fff}
-.small{margin:20px 0 8px;color:#a3a3ab;font-size:14px}.hint{margin:14px 0 0;color:#7b7b84;font-size:12.5px}
+.btn{display:block;padding:12px;border-radius:8px;background:#3b3b40;color:#e9e9ec;font-weight:600;text-decoration:none}.btn:hover{background:#46464c}.btn.primary{background:linear-gradient(135deg,#e3263f,#9b1f6e 55%,#2346c8);color:#fff;box-shadow:0 6px 22px rgb(227 38 63/.25)}.btn.primary:hover{background:linear-gradient(135deg,#e3263f,#9b1f6e 55%,#2346c8);filter:brightness(1.12)}.brand{display:block;width:32px;height:32px;margin:0 auto 18px}
+.small{margin:20px 0 8px;color:#a3a3ab;font-size:14px}.hint{margin:14px 0 0;color:#7b7b84;font-size:12.5px}.hint a{color:#a3a3ab}
 </style></head><body><main>${body}</main></body></html>`;
 }
 
 /** The page anyone gets at Hopp's address. */
 function landingPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="${FAVICON}">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="/site/logo.svg">
 <title>Hopp: voice and chat for friends</title>
 <meta property="og:title" content="Hopp"><meta property="og:description" content="Voice and chat for friends. Free, private, light.">
 <!-- Hopp cloud is running. -->
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:#1c1c1f;color:#e9e9ec;font:15px/1.5 system-ui,"Segoe UI",sans-serif}
 main{width:min(560px,100%);text-align:center}
-.logo{width:96px;height:96px;margin:0 auto 18px}.logo svg{display:block;width:100%;height:100%}
+.logo{display:block;width:96px;height:96px;margin:0 auto 18px}
 h1{margin:0 0 8px;font-size:40px;letter-spacing:-.02em}.lead{margin:0 0 28px;color:#a3a3ab;font-size:17px}
 .btn{display:inline-block;padding:13px 26px;border-radius:10px;background:#e9e9ec;color:#1c1c1f;font-weight:700;text-decoration:none}.btn:hover{background:#fff}
 .small{margin:12px 0 36px;color:#7b7b84;font-size:13px}
 .points{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;text-align:left}
 .point{padding:16px;background:#2a2a2e;border:1px solid #323236;border-radius:12px}.point b{display:block;margin-bottom:4px}.point span{color:#a3a3ab;font-size:14px}
 </style></head><body><main>
-<div class="logo">${HOPP_MARK}</div>
+<img class="logo" src="/site/logo.svg" alt="">
 <h1>Hopp</h1>
 <p class="lead">Voice and chat for you and your friends.</p>
-<a class="btn" href="/download/Hopp-setup.exe">Download for Windows</a>
-<p class="small">Windows may say it doesn't recognise the app: choose <b>More info</b>, then <b>Run anyway</b>.</p>
+<a class="btn" href="${STORE_URL}">Get it from the Microsoft Store</a>
+<p class="small">Free, for Windows 10 and 11. Or <a href="/download/Hopp-setup.exe" style="color:inherit">download the installer</a> (Windows may warn about it, as it isn't signed yet).</p>
 <div class="points">
 <div class="point"><b>Clear voice</b><span>Low delay, noise removed, straight between friends.</span></div>
 <div class="point"><b>Private</b><span>Direct messages and calls are end-to-end encrypted.</span></div>
@@ -280,6 +280,5 @@ h1{margin:0 0 8px;font-size:40px;letter-spacing:-.02em}.lead{margin:0 0 28px;col
 </main></body></html>`;
 }
 
-/** Hopp's logo (client/src-tauri/icons/hopp.svg): an H with a dot between, the one who brings people together. */
-const HOPP_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2e33"/><stop offset="1" stop-color="#18181b"/></linearGradient></defs><rect width="1024" height="1024" rx="232" fill="url(#bg)"/><rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="12"/><g fill="#fff"><rect x="270" y="252" width="160" height="520" rx="80"/><rect x="594" y="252" width="160" height="520" rx="80"/><circle cx="512" cy="512" r="70"/></g></svg>`;
-const FAVICON = `data:image/svg+xml,${encodeURIComponent(HOPP_MARK)}`;
+/** Hopp in the Microsoft Store: signed, so Windows trusts it without a warning. */
+const STORE_URL = "https://apps.microsoft.com/detail/9MW46LXNB9X6";
