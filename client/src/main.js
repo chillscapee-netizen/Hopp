@@ -4401,7 +4401,9 @@ chatInput.addEventListener("keydown", async (e) => {
   // Enter while an input method is composing a character confirms the character, not the message.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
-    if (state.attachment && state.view !== null) {
+    // Only the picture waiting in this very channel: one left in another goes with nothing typed here.
+    const waiting = state.attachment;
+    if (waiting && state.view !== null && waiting.channel === state.view && waiting.server === state.activeId) {
       sendPicture();
       return;
     }
@@ -10936,7 +10938,8 @@ async function attachPicture(file) {
   try {
     const shrunk = await shrinkChatPicture(file);
     clearAttachment();
-    state.attachment = { channel: state.view, ...shrunk, url: URL.createObjectURL(shrunk.blob), sending: false };
+    // For this channel in this server: channel numbers repeat between servers.
+    state.attachment = { server: state.activeId, channel: state.view, ...shrunk, url: URL.createObjectURL(shrunk.blob), sending: false };
     renderAttachment();
     chatInput.focus();
   } catch (err) {
@@ -10953,7 +10956,7 @@ function clearAttachment() {
 function renderAttachment() {
   const tray = $("attach-tray");
   const a = state.attachment;
-  const show = !!a && a.channel === state.view;
+  const show = !!a && a.channel === state.view && a.server === state.activeId && !state.atHome;
   tray.hidden = !show;
   $("composer").classList.toggle("has-attachment", show);
   if (!show) return tray.replaceChildren();
@@ -10982,7 +10985,7 @@ function fillTray(tray, a, clear) {
 
 async function sendPicture() {
   const a = state.attachment;
-  if (!a || a.sending) return;
+  if (!a || a.sending || a.server !== state.activeId) return;
   const channel = a.channel;
   const caption = withMentions(chatInput.value.trim());
   const replyTo = state.replyTo?.channel === channel ? state.replyTo.id : null;
@@ -10991,6 +10994,11 @@ async function sendPicture() {
   try {
     const bytes = new Uint8Array(await a.blob.arrayBuffer());
     const id = await storePicture(bytes, a.type);
+    // Went to another server while it uploaded: it isn't sent there.
+    if (state.activeId !== a.server) {
+      a.sending = false;
+      return toast("Your picture wasn't sent: you left the server.");
+    }
     chatInput.value = "";
     autosize();
     clearDraft();

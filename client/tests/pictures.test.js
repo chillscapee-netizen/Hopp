@@ -62,6 +62,18 @@
   dropOn($("scroller"), new File([Uint8Array.from(atob(smallPng.split(",")[1]), (c) => c.charCodeAt(0))], "drop.png", { type: "image/png" }));
   for (let i = 0; i < 100 && !state.attachment; i++) await wait(200);
   check("dropped picture waits in the tray", !!state.attachment);
+  // Left waiting in #general: writing in another channel sends what's written there, not the picture.
+  const imagesBefore = (state.chats.get(0) ?? []).filter((m) => /hopp-image/.test(m.text)).length;
+  openTextChannel(2);
+  await wait(100);
+  check("another channel doesn't show the waiting picture", $("attach-tray").hidden);
+  chatInput.value = "just text";
+  chatInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await wait(200);
+  check("Enter there sends the text, not the picture", (state.chats.get(2) ?? []).some((m) => m.text === "just text") && (state.chats.get(0) ?? []).filter((m) => /hopp-image/.test(m.text)).length === imagesBefore);
+  check("and the picture still waits in #general", !!state.attachment && state.attachment.channel === 0);
+  openTextChannel(0);
+  await wait(100);
   clearAttachment();
   dropOn($("scroller"), new File(["hello"], "notes.txt", { type: "text/plain" }));
   await wait(100);
