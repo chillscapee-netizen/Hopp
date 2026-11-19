@@ -4342,13 +4342,14 @@ html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 12
 .watch-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
 
 /* Hopp's logo follows the theme: in a colour theme it takes the theme's own colours, the H in white. */
-html.wallpaper .rail-item.home .rail-icon, html.wallpaper .rail-item.home.active .rail-icon { background: var(--logo-bg, var(--layer-2)); color: #fff; }
-html.wallpaper .splash-bunny, html.wallpaper .auth-logo { background: var(--logo-bg, var(--elev)); border: none; color: #fff; }
+html.logo-tint .rail-item.home .rail-icon, html.logo-tint .rail-item.home.active .rail-icon { background: var(--logo-bg); color: #fff; }
+html.logo-tint .splash-bunny, html.logo-tint .auth-logo { background: var(--logo-bg, var(--elev)); border: none; color: #fff; }
 
 /* Back and forward, in the title bar's top left corner. */
 .topbar-nav { position: absolute; left: 0; top: 0; bottom: 0; width: 72px; display: flex; align-items: center; justify-content: center; gap: 2px; }
 .shell.locked .topbar-nav, .shell.starting .topbar-nav { visibility: hidden; }
-.nav-arrow { display: grid; place-items: center; width: 28px; height: 22px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; transition: background 120ms, color 120ms; }
-.nav-arrow:hover:not(:disabled) { background: var(--layer-2); color: var(--text); }
-.nav-arrow:disabled { opacity: 0.3; cursor: default; }
-.nav-arrow .i { width: 16px; height: 16px; }
+.nav-arrow { display: grid; place-items: center; width: 30px; height: 26px; padding: 0; border: none; border-radius: 8px; background: none; color: var(--text); opacity: 0.85; cursor: pointer; transition: background 120ms, opacity 120ms; }
+.nav-arrow:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 12%, transparent); opacity: 1; }
+.nav-arrow:disabled { opacity: 0.28; cursor: default; }
+.nav-arrow .i { width: 19px; height: 19px; stroke-width: 2.4; }
+body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }

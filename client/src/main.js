@@ -1633,6 +1633,8 @@ function goPlace(p) {
 }
 
 function stepPlace(step) {
+  // Not from under an open window (settings, a dialog): close that first.
+  if (document.querySelector("dialog[open]")) return;
   let at = nav.at + step;
   while (at >= 0 && at < nav.list.length) {
     nav.at = at;
@@ -2548,7 +2550,7 @@ function renderAll() {
   $("shell").classList.toggle("loading", loading);
   $("shell").classList.toggle("news", !!state.atNews);
   if (state.atNews) renderNews();
-  $("topbar-title").textContent = on ? activeServer()?.label ?? state.roster.server_name : loading ? connectingServer().label : "Hopp";
+  $("topbar-title").textContent = state.atNews ? "Discover" : on ? activeServer()?.label ?? state.roster.server_name : loading ? connectingServer().label : "Hopp";
   renderRail();
   renderSidebar();
   renderVoicePanel();
@@ -13674,7 +13676,10 @@ function applyTheme() {
   const fade = document.documentElement.classList.contains("wallpaper");
   const spec = themeSpec();
   const ends = spec.stops ?? spec.own ?? [spec.a, spec.b ?? spec.a];
-  if (fade) root.setProperty("--logo-bg", "linear-gradient(135deg, " + swatchColor(ends[0]) + ", " + swatchColor(ends.at(-1)) + ")");
+  // Only a theme with colours of its own (not a grey one) lends them to the logo.
+  const tint = fade && !!ends[0];
+  document.documentElement.classList.toggle("logo-tint", tint);
+  if (tint) root.setProperty("--logo-bg", "linear-gradient(135deg, " + swatchColor(ends[0]) + ", " + swatchColor(ends.at(-1)) + ")");
   else root.removeProperty("--logo-bg");
   const font = (typeof APP_FONTS !== "undefined" && APP_FONTS[prefs.appFont]) || '"Inter"';
   document.documentElement.style.setProperty("--app-font", font);
