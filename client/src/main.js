@@ -6048,7 +6048,7 @@ async function removeFriend(f) {
 async function blockPerson(f) {
   const ok = await confirmDialog({
     title: `Block ${f.display_name}`,
-    text: "They won't be able to send you friend requests. They aren't told you blocked them.",
+    text: "Their messages are hidden from you, and they can't message you or send you friend requests. They aren't told you blocked them.",
     ok: "Block",
   });
   if (ok) accountSend({ type: "block", key: f.key }).catch(() => {});
@@ -12126,7 +12126,10 @@ function openUserMenu(u, row, e) {
     const groups = [...(mod ? roleItems(u) : []), ...(mod ? voiceModItems(u) : [])];
     if (hard.length) groups.push({ label: "Moderation", submenu: hard[0] === "sep" ? hard.slice(1) : hard });
     if (groups.length) items.push("sep", ...groups);
-    if (key) items.push("sep", { label: "Report", icon: "flag", danger: true, action: () => reportPerson(key, u.name) });
+    // Anyone can be blocked, friend or not: their messages hide and they can't reach you.
+    if (key && friend?.state === "blocked") items.push("sep", { label: "Unblock", icon: "ban", action: () => accountSend({ type: "unblock", key }).catch(() => {}) });
+    else if (key) items.push("sep", { label: "Block", icon: "ban", danger: true, action: () => blockPerson({ key, display_name: u.name }) });
+    if (key) items.push({ label: "Report", icon: "flag", danger: true, action: () => reportPerson(key, u.name) });
   }
   openMenu(items, e.clientX, e.clientY);
 }
