@@ -6,7 +6,7 @@ import { DurableObject } from "cloudflare:workers";
 import { troubleMessage } from "./trouble";
 import type { Env } from "./index";
 import { inviteIndex } from "./invites";
-import { accountOf } from "./account";
+import { accountOf, directory, PICTURES_FULL } from "./account";
 
 const CLOUD_BANNED = "This Hopp ID has been banned from Hopp Cloud for breaking Hopp's rules.";
 const CLOUD_TAKEN_DOWN = "This server was taken down by Hopp for breaking Hopp's rules.";
@@ -423,6 +423,8 @@ export class StromServer extends DurableObject<Env> {
     // Without a name the server no longer exists: nobody can join it again.
     // Everything, as on a server people run themselves: roles, emojis, the audit log and all.
     for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit", "outbox", "cloud_bans", "events", "event_rsvp"]) this.sql.exec(`DELETE FROM ${table}`);
+    // Its pictures no longer count against Hopp Cloud's room for them.
+    await directory(this.env).pictureRoom("server:" + this.ctx.id.toString(), 0, 0).catch(() => {});
   }
 
   // ---------- for whoever runs Hopp Cloud ----------
@@ -523,6 +525,8 @@ export class StromServer extends DurableObject<Env> {
     if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
     // Pictures picked but never sent are let go after a day.
     this.sql.exec("DELETE FROM images WHERE used = 0 AND created_at < ?", now - 86_400_000);
+    const kept = Number(this.sql.exec("SELECT coalesce(sum(size), 0) AS n FROM images").one().n);
+    if (!(await directory(this.env).pictureRoom("server:" + this.ctx.id.toString(), kept, data.length))) return fail(PICTURES_FULL, 507);
     const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
     this.sql.exec("INSERT INTO images (id, uploader, type, data, size, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, key, type, data, data.length, now);
     // Over the server's share of storage: the oldest pictures make room.

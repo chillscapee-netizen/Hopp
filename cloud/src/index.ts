@@ -46,6 +46,9 @@ export interface Env {
   CF_ANALYTICS_TOKEN?: string;
   /** Stop handing out relay logins at this many GB a month (default 800; the free amount is 1,000). */
   RELAY_BUDGET_GB?: string;
+  /** Pictures across all of Hopp Cloud stop at this many GB (default 3.5 of the free 5), so
+   *  messages and accounts always have room. */
+  PICTURE_BUDGET_GB?: string;
 }
 
 /** Server ids are long and random, so they can't be guessed. */

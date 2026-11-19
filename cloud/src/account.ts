@@ -111,6 +111,9 @@ interface Session {
   ip?: string;
 }
 
+/** Said when all of Hopp Cloud is out of room for pictures (see UserDirectory.pictureRoom). */
+export const PICTURES_FULL = "Hopp Cloud is full of pictures right now, so new ones are paused for a while. Messages work as usual.";
+
 /** New accounts a day from one internet address: plenty for a family, too few for a script. */
 const NEW_ACCOUNTS_PER_ADDRESS = 5;
 
@@ -187,6 +190,7 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay_logins (username TEXT PRIMARY KEY, until INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS new_accounts (day TEXT NOT NULL, tag TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, tag))");
     this.sql.exec("CREATE TABLE IF NOT EXISTS day_salt (day TEXT PRIMARY KEY, salt TEXT NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS picture_stores (store TEXT PRIMARY KEY, bytes INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, reporter TEXT NOT NULL, reporter_name TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, details TEXT NOT NULL, target TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)");
     const reportColumns = new Set(this.sql.exec("PRAGMA table_info(reports)").toArray().map((c) => String(c.name)));
     for (const [name, type] of [["user_key", "TEXT NOT NULL DEFAULT ''"], ["server", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT"], ["note", "TEXT"], ["handled_at", "INTEGER"]]) {
@@ -220,6 +224,23 @@ export class UserDirectory extends DurableObject<Env> {
     if (n >= NEW_ACCOUNTS_PER_ADDRESS) return false;
     this.sql.exec("INSERT INTO new_accounts (day, tag, n) VALUES (?, ?, 1) ON CONFLICT (day, tag) DO UPDATE SET n = n + 1", day, tag);
     return true;
+  }
+
+  /**
+   * Room for one more picture in all of Hopp Cloud? Every server and account says how much it
+   * keeps when someone adds a picture (a store that has since let some go is counted a little
+   * high until its next one, which errs on the safe side). Pictures pause before the free
+   * storage could run out, so messages and accounts always have room.
+   */
+  async pictureRoom(store: string, kept: number, adding: number): Promise<boolean> {
+    const gb = Number(this.env.PICTURE_BUDGET_GB ?? 3.5);
+    const budget = (Number.isFinite(gb) && gb > 0 ? Math.min(gb, 4.5) : 3.5) * 1e9;
+    const others = Number(this.sql.exec("SELECT coalesce(sum(bytes), 0) AS n FROM picture_stores WHERE store != ?", store).one().n);
+    const room = others + kept + adding <= budget;
+    const bytes = kept + (room ? adding : 0);
+    if (bytes > 0) this.sql.exec("INSERT INTO picture_stores (store, bytes) VALUES (?, ?) ON CONFLICT (store) DO UPDATE SET bytes = excluded.bytes", store, bytes);
+    else this.sql.exec("DELETE FROM picture_stores WHERE store = ?", store);
+    return room;
   }
 
   async fileReport(r: { reporter: string; reporter_name: string; kind: string; reason: string; details: string; target: string; user_key: string; server: string }) {
@@ -618,6 +639,8 @@ export class StromAccount extends DurableObject<Env> {
     const now = Date.now();
     const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE created_at > ?", now - 86_400_000).one().n);
     if (today >= DM_IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
+    const kept = Number(this.sql.exec("SELECT coalesce(sum(size), 0) AS n FROM images").one().n);
+    if (!(await directory(this.env).pictureRoom("account:" + this.ctx.id.toString(), kept, data.length))) return fail(PICTURES_FULL, 507);
     const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
     this.sql.exec("INSERT INTO images (id, data, size, created_at) VALUES (?, ?, ?, ?)", id, data, data.length, now);
     // Past the account's share of storage, the oldest pictures make room.
