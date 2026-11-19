@@ -13,6 +13,7 @@ use crate::{AppState, CmdResult};
 
 /// Message types the page may send to the account.
 const ALLOWED: &[&str] = &[
+    "report",
     "set_profile",
     "check_username",
     "claim_username",

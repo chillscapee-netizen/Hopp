@@ -37,6 +37,11 @@ export interface Env {
    *   npx wrangler secret put CF_ACCOUNT_ID         (the account id, from the dashboard)
    *   npx wrangler secret put CF_ANALYTICS_TOKEN    (an API token with "Account Analytics: Read")
    */
+  /**
+   * The key to read reports at /admin/reports (`npx wrangler secret put ADMIN_TOKEN`, a long
+   * random word only you know). Without it there is no reports page at all.
+   */
+  ADMIN_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
   CF_ANALYTICS_TOKEN?: string;
   /** Stop handing out relay logins at this many GB a month (default 800; the free amount is 1,000). */
@@ -141,6 +146,20 @@ export default {
     }
 
     // Hopp's home page: what it is and where to get it.
+    // Reports, for whoever runs Hopp Cloud: only with the right key, and not even there without one.
+    const admin = url.pathname.match(/^\/admin\/reports(?:\/(\d+)\/(done|open))?$/);
+    if (admin) {
+      const token = url.searchParams.get("token") ?? "";
+      if (!env.ADMIN_TOKEN || token.length < 16 || token !== env.ADMIN_TOKEN) return new Response("Not found", { status: 404 });
+      const dir = directory(env);
+      if (admin[1] && request.method === "POST") {
+        await dir.markReport(Number(admin[1]), admin[2] === "done");
+        return Response.redirect(`${url.origin}/admin/reports?token=${encodeURIComponent(token)}${url.searchParams.get("all") ? "&all=1" : ""}`, 303);
+      }
+      const all = url.searchParams.get("all") === "1";
+      return new Response(reportsPage(await dir.reports(!all), token, all), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+    }
+
     if (url.pathname === "/") {
       return new Response(landingPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
@@ -191,6 +210,33 @@ async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response
 }
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** The reports, newest first, each with what was reported and a button to mark it handled. */
+function reportsPage(rows: Record<string, unknown>[], token: string, all: boolean): string {
+  const esc = (v: unknown) => escapeHtml(String(v ?? ""));
+  const reasons: Record<string, string> = { spam: "Spam or scams", harassment: "Harassment or threats", hate: "Hate", child: "Child sexual content", sexual: "Non-consensual sexual content", violence: "Violence, terror or self-harm", illegal: "Other illegal", other: "Other" };
+  const t = encodeURIComponent(token);
+  const items = rows.map((r) => {
+    let target: Record<string, string> = {};
+    try {
+      target = JSON.parse(String(r.target));
+    } catch {}
+    const urgent = r.reason === "child" || r.reason === "violence";
+    return `<article class="${r.done ? "done" : ""} ${urgent ? "urgent" : ""}">
+      <header><strong>#${esc(r.id)} · ${esc(reasons[String(r.reason)] ?? r.reason)}</strong> · ${esc(r.kind)} · ${new Date(Number(r.at)).toISOString().replace("T", " ").slice(0, 16)} UTC</header>
+      <p>Server: ${esc(target.server_name)} <code>${esc(target.server)}</code>${target.channel ? ` · #${esc(target.channel)}` : ""}</p>
+      ${target.user_name ? `<p>Reported: ${esc(target.user_name)} <code>${esc(target.user_key)}</code></p>` : ""}
+      ${target.message ? `<blockquote>${esc(target.message)}</blockquote>` : ""}
+      ${r.details ? `<p>Reporter says: ${esc(r.details)}</p>` : ""}
+      <p class="who">From ${esc(r.reporter_name || "someone")} <code>${esc(r.reporter)}</code></p>
+      <form method="post" action="/admin/reports/${esc(r.id)}/${r.done ? "open" : "done"}?token=${t}${all ? "&all=1" : ""}"><button>${r.done ? "Open again" : "Handled"}</button></form>
+    </article>`;
+  });
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Reports · Hopp</title>
+<style>body{font:15px system-ui,sans-serif;background:#16161a;color:#eee;max-width:900px;margin:30px auto;padding:0 16px}article{background:#222228;border-radius:10px;padding:12px 16px;margin:12px 0}article.urgent{border-left:4px solid #f2555a}article.done{opacity:.5}blockquote{white-space:pre-wrap;background:#111;padding:8px 12px;border-radius:6px;margin:8px 0}code{color:#aaa;font-size:12px;word-break:break-all}.who{color:#aaa}a{color:#8ab4f8}button{padding:6px 12px;border-radius:6px;border:0;cursor:pointer}</style></head>
+<body><h1>Reports</h1><p>${all ? `All reports · <a href="/admin/reports?token=${t}">only open ones</a>` : `Open reports · <a href="/admin/reports?token=${t}&all=1">all, handled too</a>`}</p>
+${items.join("") || "<p>Nothing here.</p>"}</body></html>`;
+}
 
 /** The page an invite link opens in a browser. */
 function invitePage(code: string, p: { name: string | null; icon: string | null; members: number; online: number; inviter: string | null } | null): string {

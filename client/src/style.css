@@ -4121,3 +4121,13 @@ html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpa
 .folder-closed.settling .folder-mini:nth-child(2) { animation-delay: 30ms; }
 .folder-closed.settling .folder-mini:nth-child(n+3) { animation-delay: 60ms; }
 @keyframes folder-settle { from { opacity: 0; } }
+
+/* Saving and sharing your own theme. */
+.own-actions { display: flex; align-items: center; gap: 14px; }
+.own-actions .btn .i { width: 15px; height: 15px; margin-right: 6px; }
+.saved-theme .theme-name { max-width: 64px; }
+/* A theme shared in a chat: a card to try or save. */
+.theme-share { display: flex; align-items: center; gap: 12px; max-width: 420px; margin: 4px 0; padding: 10px 12px; border-radius: 12px; background: var(--layer); box-shadow: inset 0 0 0 1px var(--hover); }
+.theme-share .theme-pic { flex: none; width: 40px; height: 40px; }
+.theme-share-text { display: grid; flex: 1; min-width: 0; }
+.theme-share-sub { color: var(--muted); font-size: 12.5px; }

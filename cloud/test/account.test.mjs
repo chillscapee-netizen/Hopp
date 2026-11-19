@@ -761,3 +761,36 @@ test("online is online: a server's member list shows members who have Hopp open 
   eveApp.close();
   owner.close();
 });
+
+test("reports reach Hopp: checked, kept, a few a day, and only the right key reads them", async () => {
+  const a = await userWithName("reporter");
+  const bad = newKey();
+  a.d.send({ type: "report", kind: "message", reason: "nonsense", user_key: bad.pub });
+  assert.match((await a.d.waitFor((m) => m.type === "error" && m.for === "report")).message, /wrong/);
+  const text = unique("buy cheap coins ");
+  a.d.send({ type: "report", kind: "message", reason: "spam", server: "crew.example:7700", server_name: "Crew", channel_name: "general", user_key: bad.pub, user_name: "Spammer", message: text, message_id: "0/5", details: "x".repeat(5000) });
+  await a.d.waitFor((m) => m.type === "report_sent");
+  for (let i = 1; i < 10; i++) {
+    a.d.send({ type: "report", kind: "user", reason: "harassment", user_key: bad.pub, user_name: "Spammer" });
+    await a.d.waitFor((m) => m.type === "report_sent");
+  }
+  a.d.send({ type: "report", kind: "server", reason: "illegal", server: "x" });
+  assert.match((await a.d.waitFor((m) => m.type === "error" && m.for === "report")).message, /tomorrow/);
+
+  // The page: nothing at all without the key, everything with it.
+  assert.equal((await fetch(`${HTTP}/admin/reports`)).status, 404);
+  assert.equal((await fetch(`${HTTP}/admin/reports?token=wrong-but-long-enough`)).status, 404);
+  const token = process.env.ADMIN_TOKEN;
+  if (token) {
+    const page = await (await fetch(`${HTTP}/admin/reports?token=${encodeURIComponent(token)}`)).text();
+    assert.ok(page.includes(text), "the reported message is on the page");
+    assert.ok(page.includes(a.key.pub), "and who reported it");
+    assert.ok(!page.includes("x".repeat(1001)), "details are clipped");
+    const id = page.match(/#(\d+) · Spam or scams/)[1];
+    const done = await fetch(`${HTTP}/admin/reports/${id}/done?token=${encodeURIComponent(token)}`, { method: "POST", redirect: "manual" });
+    assert.equal(done.status, 303);
+    const open = await (await fetch(`${HTTP}/admin/reports?token=${encodeURIComponent(token)}`)).text();
+    assert.ok(!open.includes(text), "handled reports leave the open list");
+  }
+  a.d.close();
+});

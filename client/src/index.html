@@ -44,6 +44,7 @@
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
     <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.3 2A6.6 6.6 0 0 0 20 3v12a6.6 6.6 0 0 1-4.7 1C13 16 11 14 8 14a6 6 0 0 0-4 1.5"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
     <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
@@ -1155,6 +1156,39 @@
     </div>
   </dialog>
 
+  <!-- ---------- reporting ---------- -->
+  <dialog id="report-dialog" class="modal">
+    <form id="report-form" method="dialog" class="modal-body">
+      <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      <h2 id="report-title">Report</h2>
+      <p id="report-what" class="modal-sub"></p>
+      <label class="field">
+        <span class="field-label">What's wrong?</span>
+        <select id="report-reason">
+          <option value="" disabled selected>Pick one</option>
+          <option value="spam">Spam or scams</option>
+          <option value="harassment">Harassment, threats or bullying</option>
+          <option value="hate">Hate against a group of people</option>
+          <option value="child">Sexual content involving a child</option>
+          <option value="sexual">Sexual content shared without consent</option>
+          <option value="violence">Violence, terror or self-harm</option>
+          <option value="illegal">Something else that's illegal</option>
+          <option value="other">Something else</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Anything to add? (optional)</span>
+        <textarea id="report-details" rows="3" maxlength="1000" placeholder="What happened, and anything that helps us understand it"></textarea>
+      </label>
+      <p class="hint left">The report goes to Hopp, with what's reported as you see it, and who you are. The person isn't told who reported them. If someone is in danger right now, call the emergency number (112 in Sweden and the EU). <a href="#" id="report-rules">Hopp's rules</a></p>
+      <p id="report-error" class="form-error" hidden></p>
+      <div class="modal-foot spread">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" id="report-send" class="btn danger">Send report</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ---------- user settings ---------- -->
   <dialog id="settings" class="modal settings-modal">
     <div class="settings-layout">
@@ -1531,6 +1565,8 @@
           <div class="theme-group">Colours</div>
           <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Colour themes"></div>
           <div id="own-theme-card"></div>
+          <div id="saved-themes-group" class="theme-group" hidden>Saved</div>
+          <div id="saved-themes" class="theme-grid"></div>
 
 
           <div id="theme-editor" class="card theme-editor">
@@ -1540,6 +1576,10 @@
                 <span class="row-sub">Click a colour to change it, + to add another. With two or more, they fade across the whole window.</span>
               </span>
               <div id="own-colours" class="own-colours"></div>
+              <div class="own-actions">
+                <button type="button" id="own-save" class="btn sm"><svg class="i"><use href="#i-check"/></svg>Save theme</button>
+                <button type="button" id="own-share" class="btn-link sm">Copy to share</button>
+              </div>
             </div>
             <div class="row">
               <span class="row-title">Light or dark</span>

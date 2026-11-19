@@ -155,6 +155,12 @@ export function accountOf(env: Env, key: string) {
   return env.ACCOUNTS.get(env.ACCOUNTS.idFromName(key));
 }
 
+/** Reports one account may send a day. */
+const MAX_REPORTS_PER_DAY = 10;
+const REPORT_REASONS = new Set(["spam", "harassment", "hate", "child", "sexual", "violence", "illegal", "other"]);
+/** Reports kept; the oldest go past this. */
+const MAX_REPORTS = 5000;
+
 export function directory(env: Env) {
   return env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
 }
@@ -171,6 +177,22 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE INDEX IF NOT EXISTS names_by_key ON names (key)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay_logins (username TEXT PRIMARY KEY, until INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, reporter TEXT NOT NULL, reporter_name TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, details TEXT NOT NULL, target TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)");
+  }
+
+  // ---------- reports, for whoever runs Hopp Cloud ----------
+
+  async fileReport(r: { reporter: string; reporter_name: string; kind: string; reason: string; details: string; target: string }) {
+    this.sql.exec("INSERT INTO reports (at, reporter, reporter_name, kind, reason, details, target) VALUES (?, ?, ?, ?, ?, ?, ?)", Date.now(), r.reporter, r.reporter_name, r.kind, r.reason, r.details, r.target);
+    this.sql.exec("DELETE FROM reports WHERE id <= (SELECT id FROM reports ORDER BY id DESC LIMIT 1 OFFSET ?)", MAX_REPORTS);
+  }
+
+  async reports(open: boolean) {
+    return this.sql.exec(`SELECT * FROM reports ${open ? "WHERE done = 0" : ""} ORDER BY id DESC LIMIT 300`).toArray();
+  }
+
+  async markReport(id: number, done: boolean) {
+    this.sql.exec("UPDATE reports SET done = ? WHERE id = ?", done ? 1 : 0, id);
   }
 
   // ---------- the voice relay, for all of Hopp ----------
@@ -817,6 +839,29 @@ export class StromAccount extends DurableObject<Env> {
         const added = ids.filter((id) => !before.has(id));
         // Left a server: it no longer needs to hear from you (it drops you anyway).
         return this.tellServers(added);
+      }
+      case "report": {
+        // Something wrong, sent to Hopp: a few a day at most, so reports can't be used to flood.
+        const today = new Date().toISOString().slice(0, 10);
+        const used = this.meta("reports_day") === today ? Number(this.meta("reports_count") ?? 0) : 0;
+        if (used >= MAX_REPORTS_PER_DAY) return error("You've sent a lot of reports today. Try again tomorrow.");
+        const kind = ["message", "user", "server"].includes(msg.kind) ? String(msg.kind) : null;
+        const reason = REPORT_REASONS.has(String(msg.reason)) ? String(msg.reason) : null;
+        if (!kind || !reason) return error("That report is missing what's wrong.");
+        const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
+        const target = {
+          server: clip(msg.server, 300),
+          server_name: clip(msg.server_name, 100),
+          channel: clip(msg.channel_name, 100),
+          user_key: /^[0-9a-f]{64}$/.test(String(msg.user_key ?? "")) ? String(msg.user_key) : "",
+          user_name: clip(msg.user_name, 64),
+          message: clip(msg.message, 4000),
+          message_id: clip(msg.message_id, 40),
+        };
+        await directory(this.env).fileReport({ reporter: myKey, reporter_name: this.meta("username") ?? "", kind, reason, details: clip(msg.details, 1000), target: JSON.stringify(target) });
+        this.setMeta("reports_day", today);
+        this.setMeta("reports_count", String(used + 1));
+        return this.send(ws, { type: "report_sent" });
       }
       case "ping":
         return this.send(ws, { type: "pong" });

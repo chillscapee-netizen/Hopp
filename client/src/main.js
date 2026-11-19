@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "chatSize", "chatSpace", "chatCompact", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "savedThemes", "chatSize", "chatSpace", "chatCompact", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -1704,6 +1704,7 @@ function openServerMenu(server, x, y) {
           ? [{ label: "Delete server", icon: "trash", danger: true, action: () => deleteServer(server) }]
           : [{ label: "Remove from list", icon: "trash", danger: true, action: () => removeServer(server) }]
         : [{ label: "Leave server", icon: "logout", danger: true, action: () => leaveServer(server) }]),
+      ...(server.owner || (active && isOwner()) ? [] : [{ label: "Report server", icon: "flag", danger: true, action: () => reportServer(server) }]),
     ],
     x,
     y,
@@ -3477,6 +3478,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     if (state.editing?.id === m.id) li.append(messageEditor(m));
     else if (VOICE_MESSAGE.test(m.text)) li.append(voiceView(m.text.match(VOICE_MESSAGE)[1], Number(m.text.match(VOICE_MESSAGE)[2])));
     else if (pollOf(m.text)) li.append(pollView(m, pollOf(m.text)));
+    else if (themeOf(m.text)) li.append(themeShareView(themeOf(m.text)));
     else if (forwardParts(m.text)) li.append(forwardView(forwardParts(m.text)));
     else if (PICTURE.test(m.text)) {
       const [, id, w, h] = m.text.match(PICTURE);
@@ -5823,9 +5825,13 @@ listen("account", (e) => {
     case "username_check":
       showUsernameCheck(m);
       return;
+    case "report_sent":
+      reportSent();
+      return;
     case "error":
       // Read marks are best effort (an older cloud doesn't know them yet).
       if (m.for === "channel_read") return;
+      if (m.for === "report") return reportFailed(m.message);
       if (m.for === "friend_request") addFriendResult(m.message, true);
       else if (m.for === "claim_username" || m.for === "check_username") showUsernameError(m.message);
       else toast(m.message, true);
@@ -6284,6 +6290,7 @@ function applySyncedSettings(remote) {
     $("chat-compact").checked = prefs.compact;
     prefs.appFont = load("appFont", "inter");
     $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
+    prefs.savedThemes = loadSavedThemes();
     applyTheme();
     syncThemePage();
     prefs.linkPreviews = load("linkPreviews", "1") === "1";
@@ -6897,6 +6904,8 @@ function renderDmView(keepScroll) {
       li.append(dmEditor(peer, m));
     } else if (m.text !== null && forwardParts(m.text)) {
       li.append(forwardView(forwardParts(m.text)));
+    } else if (m.text !== null && themeOf(m.text)) {
+      li.append(themeShareView(themeOf(m.text)));
     } else if (m.text !== null && FILE_OFFER.test(m.text)) {
       li.append(fileCard(peer, m));
     } else if (m.text !== null && DM_PICTURE.test(m.text)) {
@@ -6938,6 +6947,7 @@ function renderDmView(keepScroll) {
             ...(own && dmEditable(current) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, current) }] : []),
             { label: "Copy text", icon: "copy", action: copyText },
             ...(own ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteDm(peer, current) }] : []),
+            ...(!own ? ["sep", { label: "Report message", icon: "flag", danger: true, action: () => reportDm(current) }] : []),
           ],
           e.clientX,
           e.clientY,
@@ -7049,6 +7059,8 @@ function previewText(text) {
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
   const poll = pollOf(text);
   if (poll) return "📊 " + (poll.question || "Poll");
+  const theme = themeOf(text);
+  if (theme) return "🎨 Theme: " + theme.name;
   if (VOICE_MESSAGE.test(text)) return "🎤 Voice message";
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
@@ -7455,7 +7467,7 @@ function messageActions(m) {
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (canForward(m.text)) button("forward", "Forward", () => forwardMessage(m));
-  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text)) button("edit", "Edit", () => startEdit(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -8867,7 +8879,7 @@ function openMessageMenu(m, e) {
       ...(threadsHere() && channel(m.channel)?.parent == null && channel(m.channel)?.kind === "text"
         ? [threadFrom(m) ? { label: "Open thread", icon: "message", action: () => openTextChannel(threadFrom(m).id) } : { label: "Start a thread", icon: "message", action: () => openThreadDialog(m) }]
         : []),
-      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -8875,6 +8887,7 @@ function openMessageMenu(m, e) {
       { label: "Copy text", icon: "copy", action: () => copy(plainText(m.text), "Text") },
       { label: "Copy message link", icon: "link", action: () => copy(messageLink(m), "Link") },
       ...(canDelete(m) ? ["sep", { label: "Delete message", icon: "trash", danger: true, action: () => deleteMessage(m) }] : []),
+      ...(!mine ? ["sep", { label: "Report message", icon: "flag", danger: true, action: () => reportMessage(m) }] : []),
     ],
     e.clientX,
     e.clientY,
@@ -12057,8 +12070,83 @@ function openUserMenu(u, row, e) {
     const groups = [...(mod ? roleItems(u) : []), ...(mod ? voiceModItems(u) : [])];
     if (hard.length) groups.push({ label: "Moderation", submenu: hard[0] === "sep" ? hard.slice(1) : hard });
     if (groups.length) items.push("sep", ...groups);
+    if (key) items.push("sep", { label: "Report", icon: "flag", danger: true, action: () => reportPerson(key, u.name) });
   }
   openMenu(items, e.clientX, e.clientY);
+}
+
+// ---------- reporting ----------
+//
+// Something wrong (spam, threats, illegal content) goes to Hopp with what's reported as the
+// reporter sees it: messages between friends are end-to-end encrypted, so that's the only way
+// Hopp can know what they said. The reported person isn't told who reported them.
+
+let reporting = null;
+
+function openReport(target, what) {
+  if (!state.accountConnected) return toast("You're offline, so the report can't be sent right now. Try again in a moment.", true);
+  reporting = target;
+  $("report-title").textContent = { message: "Report message", user: "Report person", server: "Report server" }[target.kind];
+  $("report-what").textContent = what;
+  $("report-reason").value = "";
+  $("report-details").value = "";
+  $("report-error").hidden = true;
+  $("report-send").disabled = false;
+  openModal($("report-dialog"));
+}
+
+function reportMessage(m) {
+  const server = activeServer();
+  openReport(
+    { kind: "message", server: server?.address ?? "", server_name: server?.label ?? "", channel_name: channelName(m.channel) ?? "", user_key: m.author_key ?? "", user_name: m.sender_name, message: m.text, message_id: `${m.channel}/${m.id}` },
+    `${m.sender_name}: "${previewText(m.text).slice(0, 140)}"`,
+  );
+}
+
+function reportDm(m) {
+  const who = personFor(m.from_key);
+  openReport({ kind: "message", server: "dm", server_name: "", channel_name: "", user_key: m.from_key, user_name: who.display_name, message: m.text ?? "", message_id: String(m.id) }, `${who.display_name}: "${previewText(m.text ?? "").slice(0, 140)}"`);
+}
+
+function reportPerson(key, name) {
+  const server = activeServer();
+  openReport({ kind: "user", server: server?.address ?? "", server_name: server?.label ?? "", user_key: key, user_name: name }, name);
+}
+
+function reportServer(server) {
+  openReport({ kind: "server", server: server.address, server_name: server.label }, server.label);
+}
+
+$("report-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!reporting) return;
+  if (!$("report-reason").value) {
+    $("report-error").textContent = "Pick what's wrong.";
+    $("report-error").hidden = false;
+    return;
+  }
+  $("report-send").disabled = true;
+  invoke("account_send", { msg: { type: "report", ...reporting, reason: $("report-reason").value, details: $("report-details").value.trim() } }).catch((err) => reportFailed(friendlyError(err)));
+});
+
+$("report-rules").addEventListener("click", (e) => {
+  e.preventDefault();
+  openUrl(cloudHttp() + "/rules");
+});
+
+/** The cloud got the report. */
+function reportSent() {
+  if (!reporting) return;
+  $("report-dialog").close();
+  reporting = null;
+  toast("Thanks. Your report was sent to Hopp.");
+}
+
+function reportFailed(message) {
+  if (!reporting) return toast(message, true);
+  $("report-error").textContent = message;
+  $("report-error").hidden = false;
+  $("report-send").disabled = false;
 }
 
 /** Puts "@name " in the message box, as picking them from the @ list would. */
@@ -12817,6 +12905,161 @@ function renderOwnColours() {
   box.replaceChildren(...items, add);
 }
 
+// ---------- themes you make: saved, and shared with a code ----------
+
+/** A shared theme in a message: hopp-theme:<base64url {"n": name, "c": [colours], "m": "dark"|"light", "s": colourfulness}>. */
+var THEME_CODE = /^hopp-theme:([A-Za-z0-9_-]{8,800})$/;
+var HEX = /^#[0-9a-f]{6}$/i;
+var MAX_SAVED_THEMES = 30;
+
+/** A theme from its code, checked: a name, one to five colours, light or dark, colourfulness. */
+function themeOf(text) {
+  const m = typeof text === "string" && text.trim().match(THEME_CODE);
+  if (!m) return null;
+  try {
+    const t = JSON.parse(fromBase64url(m[1]));
+    const colors = (Array.isArray(t.c) ? t.c : []).filter((c) => typeof c === "string" && HEX.test(c)).slice(0, MAX_OWN_COLOURS).map((c) => c.toLowerCase());
+    if (!colors.length) return null;
+    const name = String(t.n ?? "").replace(/\s+/g, " ").trim().slice(0, 32) || "A theme";
+    return { name, colors, mode: t.m === "light" ? "light" : "dark", saturation: Math.max(0, Math.min(100, Math.round(Number(t.s) || 50))) };
+  } catch {
+    return null;
+  }
+}
+
+function themeCode(t) {
+  return "hopp-theme:" + base64url(JSON.stringify({ n: t.name, c: t.colors, m: t.mode, s: t.saturation }));
+}
+
+/** Your own theme as it is now. */
+function currentOwnTheme(name = "My theme") {
+  return { name, colors: [...ownColours()], mode: prefs.custom.mode ?? "dark", saturation: prefs.custom.saturation ?? 50 };
+}
+
+/** The same colours, light or dark and colourfulness: the same theme, whatever its name. */
+function sameTheme(a, b) {
+  return JSON.stringify([a.colors, a.mode, a.saturation]) === JSON.stringify([b.colors, b.mode, b.saturation]);
+}
+
+function loadSavedThemes() {
+  return (loadJson("savedThemes", []) ?? [])
+    .map((t) => ({ ...themeOf(themeCode({ name: t.name, colors: t.colors, mode: t.mode, saturation: t.saturation })), id: String(t.id ?? crypto.randomUUID()) }))
+    .filter((t) => t.colors?.length)
+    .slice(0, MAX_SAVED_THEMES);
+}
+
+function saveSavedThemes() {
+  save("savedThemes", JSON.stringify(prefs.savedThemes.map(({ id, name, colors, mode, saturation }) => ({ id, name, colors, mode, saturation }))));
+  renderSavedThemes();
+}
+
+/** Uses a theme: it becomes your own theme, colours and all. */
+function useTheme(t) {
+  Object.assign(prefs.custom, { mode: t.mode, saturation: t.saturation });
+  setOwnColours([...t.colors]);
+  setTheme("custom");
+}
+
+/** Keeps a theme among yours (once: the same colours aren't saved twice). */
+function keepTheme(t) {
+  const known = prefs.savedThemes.find((x) => sameTheme(x, t));
+  if (known) return known;
+  if (prefs.savedThemes.length >= MAX_SAVED_THEMES) {
+    toast(`You can keep up to ${MAX_SAVED_THEMES} themes. Delete one to make room.`, true);
+    return null;
+  }
+  const kept = { ...t, id: crypto.randomUUID() };
+  prefs.savedThemes.push(kept);
+  saveSavedThemes();
+  return kept;
+}
+
+async function saveOwnTheme() {
+  const name = await askText({ title: "Save your theme", label: "Name", value: "My theme", ok: "Save" });
+  if (!name?.trim()) return;
+  const kept = keepTheme(currentOwnTheme(name.trim().slice(0, 32)));
+  if (kept) toast(`Saved "${kept.name}". Find it under Saved.`);
+}
+
+function shareTheme(t) {
+  navigator.clipboard.writeText(themeCode(t)).then(
+    () => toast("Copied. Paste it in any chat, and others can try it or save it."),
+    () => toast("Couldn't copy it right now.", true),
+  );
+}
+
+/** Your saved themes, as round swatches: click to use, right-click to share, rename or delete. */
+function renderSavedThemes() {
+  const box = $("saved-themes");
+  if (!box) return;
+  $("saved-themes-group").hidden = !prefs.savedThemes.length;
+  const now = prefs.theme === "custom" ? currentOwnTheme() : null;
+  box.replaceChildren(
+    ...prefs.savedThemes.map((t) => {
+      const b = el("button", "theme-card saved-theme");
+      b.type = "button";
+      b.dataset.tip = "Click to use, right-click for more";
+      const check = el("span", "theme-check");
+      check.append(icon("check"));
+      b.append(themePicture({ a: t.colors[0], b: t.colors.at(-1), own: t.colors, saturation: t.saturation }), check, el("span", "theme-name ellipsis", t.name));
+      b.classList.toggle("active", !!now && sameTheme(t, now));
+      b.addEventListener("click", () => useTheme(t));
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openMenu(
+          [
+            { label: "Use", icon: "check", action: () => useTheme(t) },
+            { label: "Copy to share", icon: "copy", action: () => shareTheme(t) },
+            { label: "Rename", icon: "edit", action: async () => {
+              const name = await askText({ title: "Rename theme", label: "Name", value: t.name, ok: "Save" });
+              if (name?.trim()) {
+                t.name = name.trim().slice(0, 32);
+                saveSavedThemes();
+              }
+            } },
+            "sep",
+            { label: "Delete", icon: "trash", danger: true, action: () => {
+              prefs.savedThemes = prefs.savedThemes.filter((x) => x !== t);
+              saveSavedThemes();
+            } },
+          ],
+          e.clientX,
+          e.clientY,
+        );
+      });
+      return b;
+    }),
+  );
+}
+
+/** A theme someone shared in a chat: its colours, its name, and Try or Save. */
+function themeShareView(t) {
+  const card = el("div", "theme-share");
+  const pic = themePicture({ a: t.colors[0], b: t.colors.at(-1), own: t.colors, saturation: t.saturation });
+  const words = el("div", "theme-share-text");
+  words.append(el("strong", "ellipsis", t.name), el("span", "theme-share-sub", "A Hopp theme · " + (t.colors.length > 1 ? t.colors.length + " colours" : "1 colour") + ", " + t.mode));
+  const tryIt = el("button", "btn sm", "Try");
+  tryIt.type = "button";
+  tryIt.addEventListener("click", () => {
+    useTheme(t);
+    toast(`Trying "${t.name}". Save it to keep it, or pick another theme in Appearance.`);
+  });
+  const keep = el("button", "btn sm primary");
+  keep.type = "button";
+  const saved = () => prefs.savedThemes.some((x) => sameTheme(x, t));
+  const label = () => {
+    keep.textContent = saved() ? "Saved" : "Save";
+    keep.disabled = saved();
+  };
+  label();
+  keep.addEventListener("click", () => {
+    if (keepTheme(t)) toast(`Saved "${t.name}" among your themes.`);
+    label();
+  });
+  card.append(pic, words, tryIt, keep);
+  return card;
+}
+
 /** Builds the Appearance page once; after that only marks and colours change, so a colour picker stays open while you use it. */
 function renderThemes() {
   const list = $("theme-list");
@@ -12861,6 +13104,7 @@ function syncThemePage() {
   if (custom) custom.classList.toggle("made", prefs.theme === "custom");
   const c = prefs.custom;
   renderOwnColours();
+  renderSavedThemes();
   for (const b of document.querySelectorAll(".theme-mode .segment")) {
     b.classList.toggle("active", b.dataset.look === c.mode);
     b.setAttribute("aria-checked", String(b.dataset.look === c.mode));
@@ -12873,6 +13117,7 @@ function syncThemePage() {
   $("chat-space-value").textContent = prefs.chatSpace + " px";
 }
 
+prefs.savedThemes = [];
 prefs.theme = load("theme", "mid");
 prefs.custom = { a: load("themeColor", "#3b4a46"), b: null, contrast: 50, saturation: 50, ...JSON.parse(load("themeCustom", "{}") || "{}") };
 // Older saves picked light or dark from the colour; keep what they had.
@@ -12901,6 +13146,9 @@ $("chat-compact").addEventListener("change", (e) => {
 });
 
 $("theme-saturation").addEventListener("input", (e) => saveCustom({ saturation: Number(e.target.value) }));
+prefs.savedThemes = loadSavedThemes();
+$("own-save").addEventListener("click", saveOwnTheme);
+$("own-share").addEventListener("click", () => shareTheme(currentOwnTheme(prefs.savedThemes.find((t) => sameTheme(t, currentOwnTheme()))?.name ?? "My theme")));
 $("chat-size").addEventListener("input", (e) => {
   prefs.chatSize = Number(e.target.value);
   save("chatSize", String(prefs.chatSize));
