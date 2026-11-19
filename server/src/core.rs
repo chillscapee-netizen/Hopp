@@ -1032,7 +1032,7 @@ impl Core {
         }
         // Pictures off: none in chat, but admins still upload the server's own emojis (a picture
         // sent in chat is refused when it's sent, admins too).
-        if self.meta("pictures_off").as_deref() == Some("1") && kind.starts_with("image/") && rank(self.role_of(&key)) < Rank::Admin {
+        if self.meta("pictures_off").as_deref() == Some("1") && kind.starts_with("image/") && rank(self.role_of(key)) < Rank::Admin {
             return fail(403, "Pictures are turned off in this server.");
         }
         let now = now_ms() as i64;

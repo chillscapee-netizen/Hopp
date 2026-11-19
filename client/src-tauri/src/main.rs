@@ -1990,6 +1990,7 @@ fn main() {
         })
         .setup(|app| {
             init_logging(app);
+            host::clean_up(app.handle());
             // The window, from the settings; the second account's with web storage of its own.
             let mut config = app.config().app.windows.first().cloned().ok_or("no window in the settings")?;
             // The Store copy runs inside an app package, and graphics drivers treat packaged apps

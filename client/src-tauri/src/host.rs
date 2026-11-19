@@ -34,6 +34,9 @@ pub struct HostStatus {
 
 #[derive(Default)]
 pub struct Host {
+    /// Starting right now: a second start (Hopp's own at launch, and a click) waits its turn
+    /// instead of opening the same database twice.
+    starting: tokio::sync::Mutex<()>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     server: Mutex<Option<Arc<strom_server::Server>>>,
     status: Mutex<HostStatus>,
@@ -69,12 +72,15 @@ fn folder(app: &AppHandle) -> CmdResult<PathBuf> {
 /// Starts the server on this computer (or says how it's doing, if it already runs).
 #[tauri::command]
 pub async fn host_start(app: AppHandle, host: State<'_, Host>, name: String) -> CmdResult<HostStatus> {
+    let _one_at_a_time = host.starting.lock().await;
     if host.status.lock().unwrap().running {
         return Ok(host.status.lock().unwrap().clone());
     }
     let name = name.trim().chars().take(40).collect::<String>();
     let name = if name.is_empty() { "My server".to_string() } else { name };
     let dir = folder(&app)?;
+    // A server deleted while its files were busy: gone for good before a new one starts.
+    remove_deleted(&dir);
     let storage = strom_server::Storage::at(dir.join("data")).map_err(|e| format!("Couldn't make the server's folder: {e}"))?;
     let tls = strom_server::tls::load_or_create(&dir).map_err(|e| format!("Couldn't make the server's key: {e}"))?;
     let tunnel = tunnel_id(&dir).map_err(|e| format!("Couldn't set up the server's tunnel: {e}"))?;
@@ -144,7 +150,25 @@ pub async fn host_delete(app: AppHandle, host: State<'_, Host>) -> CmdResult {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    Err("Couldn't remove the server's data. It will go when Hopp restarts.".into())
+    // Still busy: marked, and removed the next time Hopp starts.
+    let _ = std::fs::write(dir.join(DELETED_MARK), "");
+    Err("Couldn't remove the server's data yet. It goes the next time Hopp starts.".into())
+}
+
+const DELETED_MARK: &str = "deleted";
+
+/// A hosted server deleted earlier whose files couldn't be removed then: removed now.
+fn remove_deleted(dir: &Path) {
+    if dir.join(DELETED_MARK).exists() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// At launch: finishes deleting a server whose files were busy when it was deleted.
+pub fn clean_up(app: &AppHandle) {
+    if let Ok(dir) = folder(app) {
+        remove_deleted(&dir);
+    }
 }
 
 #[tauri::command]
@@ -163,4 +187,21 @@ fn report(app: &AppHandle, f: impl FnOnce(&mut HostStatus)) {
         s.clone()
     };
     let _ = app.emit("host-status", status);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_server_marked_deleted_is_removed_next_time() {
+        let dir = std::env::temp_dir().join(format!("hopp-host-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        std::fs::write(dir.join("data").join("server.db"), "messages").unwrap();
+        remove_deleted(&dir);
+        assert!(dir.exists(), "not marked: kept");
+        std::fs::write(dir.join(DELETED_MARK), "").unwrap();
+        remove_deleted(&dir);
+        assert!(!dir.exists(), "marked deleted: gone, messages and all");
+    }
 }
