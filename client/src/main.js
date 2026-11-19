@@ -15682,14 +15682,16 @@ function renderRolesTab() {
   const roles = state.roster?.roles ?? [];
   $("roles-empty").hidden = roles.length > 0;
   $("roles-layout").hidden = roles.length === 0;
+  $("role-list-count").textContent = `Roles — ${roles.length}`;
   $("role-list").replaceChildren(...(roles.length ? roles.map((r, i) => {
     const li = el("li", "role-row" + (editingRole === r.id ? " active" : ""));
+    li.style.setProperty("--role", r.color ?? "var(--faint)");
     const dot = el("i", "role-dot");
     dot.style.background = r.color ?? "var(--faint)";
-    // Everyone with it, not only who is online (the member list, once it is here).
-    const people = state.members?.length ? state.members : state.roster.users;
-    const count = people.filter((u) => u.roles?.includes(r.id)).length;
-    li.append(dot, el("span", "role-row-name ellipsis", r.name), el("span", "role-row-count", count ? String(count) : ""));
+    const count = roleCount(r);
+    const pill = el("span", "role-row-count");
+    pill.append(icon("user", "xs"), String(count));
+    li.append(dot, el("span", "role-row-name ellipsis", r.name), pill);
     const move = (d) => {
       const order = roles.map((x) => x.id);
       const j = i + d;
@@ -15722,6 +15724,58 @@ function renderRolesTab() {
   else $("role-editor").hidden = true;
 }
 
+/** Everyone with a role, not only who is online (the member list, once it is here). */
+function roleCount(r) {
+  const people = state.members?.length ? state.members : state.roster.users;
+  return people.filter((u) => u.roles?.includes(r.id)).length;
+}
+
+var ROLE_LEVELS = [
+  ["", "user", "Member", "Just the colour and the place in the member list."],
+  ["mod", "shield", "Moderator", "Kick, time out, mute and move people, and delete messages."],
+  ["admin", "crown", "Admin", "Also channels, roles, bans and the server's settings."],
+];
+
+/** What the role may do, as three cards to pick from. */
+function renderRoleLevels() {
+  const select = $("role-level");
+  $("role-levels").replaceChildren(...ROLE_LEVELS.map(([value, iconName, title, sub]) => {
+    const b = el("button", "role-level" + (select.value === value ? " active" : ""));
+    b.type = "button";
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(select.value === value));
+    const locked = select.querySelector(`option[value="${value}"]`)?.disabled;
+    b.disabled = !!locked;
+    const words = el("span", "role-level-words");
+    words.append(el("strong", null, title), el("span", null, locked ? "Only the owner can give this." : sub));
+    b.append(icon(iconName), words);
+    b.addEventListener("click", () => {
+      select.value = value;
+      renderRoleLevels();
+    });
+    return b;
+  }));
+}
+
+/** How the role looks: a name in its colour, as in the chat, and its @. */
+function renderRolePreview() {
+  const r = state.roster.roles.find((x) => x.id === editingRole);
+  if (!r) return;
+  const color = roleColorPick ?? null;
+  const name = $("role-name").value.trim() || r.name;
+  const box = $("role-preview");
+  const who = el("div", "role-preview-who");
+  const me = meUser();
+  const shown = el("span", "role-preview-name", me?.name ?? "Someone");
+  if (color) shown.style.color = color;
+  who.append(avatar(me?.name ?? "?", "s32", undefined, state.me?.avatar ?? null), shown);
+  const chip = el("span", "role-preview-chip", "@" + name);
+  chip.style.setProperty("--role", color ?? "var(--muted)");
+  const count = roleCount(r);
+  box.replaceChildren(who, chip, el("span", "role-preview-count", count === 1 ? "1 member" : `${count} members`));
+}
+$("role-name").addEventListener("input", () => renderRolePreview());
+
 function openRole(r, keepEdits) {
   editingRole = r.id;
   document.querySelectorAll(".role-row").forEach((n, i) => n.classList.toggle("active", state.roster.roles[i]?.id === r.id));
@@ -15735,10 +15789,12 @@ function openRole(r, keepEdits) {
   $("role-level").querySelector('option[value="admin"]').disabled = !can("own");
   roleColorPick = r.color;
   renderRoleColors();
+  renderRoleLevels();
+  renderRolePreview();
 }
 
 function renderRoleColors() {
-  $("role-colors").replaceChildren(...ROLE_COLORS.map((c) => {
+  const swatches = ROLE_COLORS.map((c) => {
     const b = el("button", "role-swatch" + (c === roleColorPick ? " active" : "") + (c ? "" : " none"));
     b.type = "button";
     b.setAttribute("aria-label", c ?? "No colour");
@@ -15746,9 +15802,28 @@ function renderRoleColors() {
     b.addEventListener("click", () => {
       roleColorPick = c;
       renderRoleColors();
+      renderRolePreview();
     });
     return b;
-  }));
+  });
+  // Any colour at all: the colour picker, showing the one picked if it isn't one of the above.
+  const own = el("label", "role-swatch own" + (roleColorPick && !ROLE_COLORS.includes(roleColorPick) ? " active" : ""));
+  own.setAttribute("aria-label", "Any colour");
+  own.dataset.tip = "Any colour";
+  if (roleColorPick && !ROLE_COLORS.includes(roleColorPick)) own.style.background = roleColorPick;
+  else own.append(icon("plus", "xs"));
+  const input = el("input");
+  input.type = "color";
+  input.value = roleColorPick ?? "#5865f2";
+  input.addEventListener("input", () => {
+    roleColorPick = input.value.toLowerCase();
+    own.style.background = roleColorPick;
+    own.replaceChildren(input);
+    for (const s of $("role-colors").querySelectorAll(".role-swatch")) s.classList.toggle("active", s === own);
+    renderRolePreview();
+  });
+  own.append(input);
+  $("role-colors").replaceChildren(...swatches, own);
 }
 
 $("role-new").addEventListener("click", () => call("create_role", { name: "new role", color: null, hoist: false, level: null }));

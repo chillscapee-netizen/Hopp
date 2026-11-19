@@ -999,16 +999,22 @@
           </div>
           <div id="roles-layout" class="roles-layout">
             <div class="roles-side">
-              <div class="role-list-head"><span>Roles</span><button id="role-new" type="button" class="btn-link sm">+ Create</button></div>
+              <button id="role-new" type="button" class="btn sm role-create"><svg class="i"><use href="#i-plus"/></svg>Create role</button>
+              <div class="role-list-head"><span id="role-list-count">Roles</span></div>
               <ul id="role-list" class="role-list"></ul>
             </div>
             <form id="role-editor" class="role-editor" hidden>
-              <label class="field">
-                <span class="field-label">Name</span>
-                <input id="role-name" maxlength="32" autocomplete="off">
-              </label>
-              <span class="field-label">Colour</span>
-              <div id="role-colors" class="role-colors"></div>
+              <div id="role-preview" class="role-preview"></div>
+              <div class="role-section">
+                <label class="field">
+                  <span class="field-label">Name</span>
+                  <input id="role-name" maxlength="32" autocomplete="off">
+                </label>
+                <span class="field-label">Colour</span>
+                <div id="role-colors" class="role-colors"></div>
+              </div>
+              <div class="role-section role-switches">
+                <span class="role-section-title">In the member list and mentions</span>
               <label class="row setting-row">
                 <span class="row-label">
                   <span class="row-title">Show separately</span>
@@ -1023,7 +1029,12 @@
                 </span>
                 <input id="role-mentionable" type="checkbox" class="switch">
               </label>
-              <label class="field">
+              </div>
+              <div class="role-section">
+                <span class="role-section-title">What they may do</span>
+                <div id="role-levels" class="role-levels" role="radiogroup" aria-label="What they may do"></div>
+              </div>
+              <label class="field" hidden>
                 <span class="field-label">What they may do</span>
                 <select id="role-level">
                   <option value="">Just the colour and the place in the list</option>
