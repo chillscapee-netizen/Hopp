@@ -5030,6 +5030,11 @@ listen("keybind-recorded", (e) => {
   const id = recordingBind;
   recordingBind = null;
   if (!id || e.payload.cancelled) return renderKeybinds();
+  // Your push-to-talk key would mute or deafen you every time you talk.
+  if (prefs.pttKey && e.payload.key === prefs.pttKey && !(e.payload.mods ?? 0)) {
+    toast("That's your push-to-talk key. Pick another one.", true);
+    return renderKeybinds();
+  }
   saveKeybind(id, { key: e.payload.key, mods: e.payload.mods ?? 0, label: e.payload.label });
 });
 listen("keybind", (e) => {
@@ -5038,6 +5043,13 @@ listen("keybind", (e) => {
 });
 renderKeybinds();
 applyKeybinds();
+// Settings closed while waiting for a key: stop waiting, or the next key pressed anywhere would be taken.
+$("settings").addEventListener("close", () => {
+  if (!recordingBind) return;
+  recordingBind = null;
+  invoke("cancel_ptt_recording").catch(() => {});
+  renderKeybinds();
+});
 
 listen("ptt-blocked", () => {
   toast("Push to talk can't see your key while the app in front runs as administrator. Run Hopp as administrator too, or the game without it.", true);

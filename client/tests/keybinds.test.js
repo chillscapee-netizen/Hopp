@@ -34,5 +34,25 @@
   $("bind-deafen-clear").click();
   await wait(20);
   check("Clear lets it go", !prefs.keybinds.deafen && calls.filter((c) => Array.isArray(c)).at(-1).length === 0);
+
+  // Your push-to-talk key can't also mute you.
+  prefs.pttKey = 0x56;
+  $("bind-mute").dispatchEvent(new MouseEvent("click", { detail: 1 }));
+  emit("keybind-recorded", { key: 0x56, mods: 0, label: "V" });
+  await wait(30);
+  check("the push-to-talk key isn't taken as a keybind", !prefs.keybinds.mute);
+  prefs.pttKey = 0;
+
+  // Closing settings while waiting for a key stops waiting.
+  openSettings("keys");
+  $("bind-mute").dispatchEvent(new MouseEvent("click", { detail: 1 }));
+  await wait(50);
+  check("waiting for a key", recordingBind === "mute" && $("settings").open, String($("settings").open));
+  $("settings").close();
+  // (This test browser doesn't fire a dialog's close event by itself; the app's does.)
+  $("settings").dispatchEvent(new Event("close"));
+  await wait(20);
+  await wait(100);
+  check("settings closed: no longer waiting", recordingBind === null && !$("bind-mute").classList.contains("recording"), `${recordingBind} ${$("settings").open} ${$("bind-mute").className}`);
   report();
 })();
