@@ -99,10 +99,16 @@ async fn run(app: AppHandle, identity: Identity, cloud: String) {
                 if e.to_string().contains("banned from Hopp Cloud") {
                     pause = 3600;
                 }
+                // Hopp Cloud is at its daily limit: it comes back by itself, so ask every ten minutes.
+                let text = e.to_string();
+                if text.contains("429") || text.contains("1027") || text.contains("exceeded") {
+                    pause = pause.max(600);
+                }
             }
         }
-        tokio::time::sleep(Duration::from_secs(pause)).await;
-        pause = if pause >= 3600 { 1 } else { (pause * 2).min(30) };
+        // A little give either way, so everyone doesn't knock at the same moment after an outage.
+        tokio::time::sleep(Duration::from_secs_f64(pause as f64 * (0.8 + 0.4 * rand::random::<f64>()))).await;
+        pause = if pause >= 600 { 1 } else { (pause * 2).min(30) };
     }
 }
 

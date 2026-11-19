@@ -1856,7 +1856,8 @@ function startReconnect(server, voice) {
 function scheduleReconnect() {
   const r = state.reconnect;
   if (!r) return;
-  const seconds = RECONNECT_DELAYS[Math.min(r.tries, RECONNECT_DELAYS.length - 1)];
+  // A little give either way, so everyone doesn't knock at the same moment after an outage.
+  const seconds = Math.max(1, Math.round(RECONNECT_DELAYS[Math.min(r.tries, RECONNECT_DELAYS.length - 1)] * (0.8 + 0.4 * Math.random())));
   r.at = Date.now() + seconds * 1000;
   state.notice = { kind: "error", server: r.server, text: `${r.server.label}: Lost the connection. Reconnecting in ${seconds} s…`, reconnecting: true };
   renderAll();

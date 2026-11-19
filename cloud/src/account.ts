@@ -107,7 +107,12 @@ interface Session {
   stage: "hello" | "auth" | "joined" | "removed";
   nonce?: string;
   key?: string;
+  /** Where the connection comes from, only until it has logged in (see allowNewAccount). */
+  ip?: string;
 }
+
+/** New accounts a day from one internet address: plenty for a family, too few for a script. */
+const NEW_ACCOUNTS_PER_ADDRESS = 5;
 
 // Pictures in DMs: encrypted in the app with a key that only travels inside the
 // (also encrypted) message, so this store only ever holds noise. Capped per account.
@@ -180,6 +185,8 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE INDEX IF NOT EXISTS names_by_key ON names (key)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay_logins (username TEXT PRIMARY KEY, until INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS new_accounts (day TEXT NOT NULL, tag TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, tag))");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS day_salt (day TEXT PRIMARY KEY, salt TEXT NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, reporter TEXT NOT NULL, reporter_name TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, details TEXT NOT NULL, target TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)");
     const reportColumns = new Set(this.sql.exec("PRAGMA table_info(reports)").toArray().map((c) => String(c.name)));
     for (const [name, type] of [["user_key", "TEXT NOT NULL DEFAULT ''"], ["server", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT"], ["note", "TEXT"], ["handled_at", "INTEGER"]]) {
@@ -192,6 +199,28 @@ export class UserDirectory extends DurableObject<Env> {
   }
 
   // ---------- reports, for whoever runs Hopp Cloud ----------
+
+  /**
+   * Whether one more account may be made from this internet address today. The address isn't
+   * kept: only a scrambled tag made with a secret that's new each day and gone the day after,
+   * so yesterday's tags can't be turned back into addresses.
+   */
+  async allowNewAccount(ip: string | undefined): Promise<boolean> {
+    if (!ip || ip === "127.0.0.1" || ip === "::1") return true;
+    const day = new Date().toISOString().slice(0, 10);
+    this.sql.exec("DELETE FROM new_accounts WHERE day < ?", day);
+    this.sql.exec("DELETE FROM day_salt WHERE day < ?", day);
+    let salt = this.sql.exec("SELECT salt FROM day_salt WHERE day = ?", day).toArray()[0]?.salt as string | undefined;
+    if (!salt) {
+      salt = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+      this.sql.exec("INSERT INTO day_salt (day, salt) VALUES (?, ?)", day, salt);
+    }
+    const tag = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + "|" + ip)))).slice(0, 32);
+    const n = Number(this.sql.exec("SELECT n FROM new_accounts WHERE day = ? AND tag = ?", day, tag).toArray()[0]?.n ?? 0);
+    if (n >= NEW_ACCOUNTS_PER_ADDRESS) return false;
+    this.sql.exec("INSERT INTO new_accounts (day, tag, n) VALUES (?, ?, 1) ON CONFLICT (day, tag) DO UPDATE SET n = n + 1", day, tag);
+    return true;
+  }
 
   async fileReport(r: { reporter: string; reporter_name: string; kind: string; reason: string; details: string; target: string; user_key: string; server: string }) {
     this.sql.exec(
@@ -551,7 +580,7 @@ export class StromAccount extends DurableObject<Env> {
     }
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ stage: "hello" } satisfies Session);
+    server.serializeAttachment({ stage: "hello", ip: request.headers.get("CF-Connecting-IP") ?? undefined } satisfies Session);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -629,7 +658,7 @@ export class StromAccount extends DurableObject<Env> {
     const owner = this.meta("key");
     if (owner && owner !== key) return this.reject(ws, "Wrong account.");
     const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
-    ws.serializeAttachment({ stage: "auth", nonce, key } satisfies Session);
+    ws.serializeAttachment({ stage: "auth", nonce, key, ip: (ws.deserializeAttachment() as Session | null)?.ip } satisfies Session);
     this.send(ws, { type: "challenge", nonce });
   }
 
@@ -651,6 +680,7 @@ export class StromAccount extends DurableObject<Env> {
     const wasOffline = this.devices().length === 0;
     if (!this.meta("key")) {
       if (this.env.PAUSE_NEW === "1") return this.reject(ws, "Hopp isn't taking new accounts right now. Try again in a while.");
+      if (!(await directory(this.env).allowNewAccount(s.ip))) return this.reject(ws, "A lot of new accounts have been made from your internet connection today. Try again tomorrow.");
       this.setMeta("key", s.key!);
       this.setMeta("created_at", String(Date.now()));
     }
