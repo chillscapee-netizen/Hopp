@@ -3965,6 +3965,8 @@ document.querySelectorAll(".close-dialog").forEach((b) => b.addEventListener("cl
 $("sidebar-head").addEventListener("click", (e) => {
   if (!online()) return;
   e.stopPropagation();
+  // Open: a second click on the server's name closes it.
+  if ($("sidebar-head").classList.contains("open") && !$("server-menu").hidden) return closePopovers();
   const head = $("sidebar-head");
   const r = head.getBoundingClientRect();
   openServerMenu(activeServer(), r.left + 8, r.bottom + 4);
@@ -4528,10 +4530,13 @@ function showTab(tab) {
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
 }
 document.querySelectorAll(".settings-tab[data-tab]").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
-document.querySelectorAll(".open-settings").forEach((b) => b.addEventListener("click", () => openSettings("voice")));
+document.querySelectorAll(".open-settings").forEach((b) => b.addEventListener("click", () => openSettings("profile")));
 $("me-card").addEventListener("click", () => {
+  // A second click closes it again.
+  if (wasOpen($("server-menu")) && $("server-menu").dataset.owner === "status") return closePopovers();
   const r = $("me-card").getBoundingClientRect();
   openStatusMenu(r.left, r.top);
+  $("server-menu").dataset.owner = "status";
 });
 $("settings").addEventListener("close", stopMicTest);
 $("settings").addEventListener("close", stopRecordingPtt);
@@ -4677,7 +4682,7 @@ async function freshDevices() {
 }
 
 async function openDeviceMenu(kind, anchor) {
-  if (!$("server-menu").hidden && $("server-menu").dataset.owner === kind) return closePopovers();
+  if ((!$("server-menu").hidden || wasOpen($("server-menu"))) && $("server-menu").dataset.owner === kind) return closePopovers();
   const list = deviceCache ?? (deviceCache = await call("list_devices"));
   if (!list) return;
   renderDeviceMenu(kind, anchor, list);
@@ -5583,8 +5588,17 @@ $("user-transfer").addEventListener("click", () => {
 document.addEventListener("mousedown", (e) => {
   if ([...document.querySelectorAll(".popover")].some((p) => !p.hidden && p.contains(e.target))) return;
   if (e.target.closest("#sidebar-head, .split-more")) return;
+  // Pressing the very button that opened one closes it here, before its click arrives; the
+  // click then asks wasOpen() and leaves it closed instead of opening it again.
+  popoverPress = { at: Date.now(), open: [...document.querySelectorAll(".popover")].filter((p) => !p.hidden) };
   closePopovers();
 });
+
+/** Open until this very press: a button that toggles it should close it, not reopen it. */
+var popoverPress = null;
+function wasOpen(pop) {
+  return !!popoverPress && Date.now() - popoverPress.at < 800 && popoverPress.open.includes(pop);
+}
 
 // ---------- no tooltips ----------
 //
@@ -6885,7 +6899,7 @@ function renderDmView(keepScroll) {
     emoji.append(icon("smile"));
     emoji.addEventListener("mousedown", (e) => e.preventDefault());
     emoji.addEventListener("click", () => {
-      if (!$("emoji-picker").hidden) return closePopovers();
+      if (!$("emoji-picker").hidden || wasOpen($("emoji-picker"))) return closePopovers();
       openEmojiPicker(
         emoji,
         (picked, e) => {
@@ -8189,7 +8203,7 @@ function renderGifs(body, q) {
 }
 
 $("emoji-btn").addEventListener("click", (e) => {
-  if (!$("emoji-picker").hidden) return closePopovers();
+  if (!$("emoji-picker").hidden || wasOpen($("emoji-picker"))) return closePopovers();
   openEmojiPicker(
     e.currentTarget,
     (picked, emoji) => {
@@ -9914,7 +9928,7 @@ listen("pins", (e) => {
 
 $("pins-btn").addEventListener("click", (e) => {
   const pop = $("pins-pop");
-  if (!pop.hidden) return closePopovers();
+  if (!pop.hidden || wasOpen(pop)) return closePopovers();
   if (state.view === null) return;
   pop.replaceChildren(el("div", "pins-title", "Pinned messages"), el("div", "pins-empty", "Loading…"));
   const r = e.currentTarget.getBoundingClientRect();
@@ -10272,7 +10286,7 @@ function renderInbox() {
 for (const btn of document.querySelectorAll(".inbox-btn")) {
   btn.addEventListener("click", (e) => {
     const pop = $("inbox-pop");
-    if (!pop.hidden) return closePopovers();
+    if (!pop.hidden || wasOpen(pop)) return closePopovers();
     renderInbox();
     const r = e.currentTarget.getBoundingClientRect();
     placePopover(pop, r.right - 380, r.bottom + 8);
@@ -15388,7 +15402,7 @@ var soundboardAt = 0;
 
 function openSoundboard(anchor) {
   const pop = $("soundboard");
-  if (!pop.hidden) return closePopovers();
+  if (!pop.hidden || wasOpen(pop)) return closePopovers();
   const grid = el("div", "soundboard-grid");
   for (const [name, label, emoji] of SOUNDBOARD) {
     const b = el("button", "sound");
