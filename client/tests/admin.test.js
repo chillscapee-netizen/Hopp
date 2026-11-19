@@ -43,6 +43,7 @@
   const msgCard = cards.find((c) => c.textContent.includes("something awful"));
   check("a card: why, who, where, what and from whom", msgCard && /Hate/.test(msgCard.textContent) && /Elin/.test(msgCard.textContent) && /The Crew · #general/.test(msgCard.textContent) && /12 members/.test(msgCard.textContent) && /Reporter says: keeps doing it/.test(msgCard.textContent));
   check("reported often: says so", /Reported 3 times/.test(msgCard.textContent));
+  check("while streaming, who reported and what was said are blurred", msgCard.querySelector(".admin-from [data-private]")?.textContent === "sara" && msgCard.querySelector(".admin-quote")?.hasAttribute("data-private") && msgCard.querySelector(".admin-key")?.hasAttribute("data-private"));
   const urgent = cards.find((c) => c.classList.contains("urgent"));
   check("child content stands out, and a tunnel server can be blocked", urgent && /Block tunnel/.test(urgent.textContent));
   const buttons = (card) => [...card.querySelectorAll(".admin-act")].map((b) => b.textContent);

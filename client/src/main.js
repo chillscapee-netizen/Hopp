@@ -12410,6 +12410,7 @@ function adminReportCard(r, found) {
   if (r.user_key) {
     const who = el("span", "admin-who", t.user_name || "Someone");
     const key = el("button", "admin-key", shortKey(r.user_key));
+    key.dataset.private = "";
     key.type = "button";
     key.dataset.tip = "Copy their Hopp ID";
     key.addEventListener("click", () => navigator.clipboard.writeText(r.user_key).then(() => toast("Hopp ID copied."), () => toast("Couldn't copy.", true)));
@@ -12423,14 +12424,23 @@ function adminReportCard(r, found) {
     fact("Where", el("span", null, where.join("")), el("span", "admin-quiet", extra), ...(tunnelId && found.blocked[tunnelId] ? [el("span", "admin-tag red", "Blocked")] : []));
   }
   card.append(facts);
-  if (t.message) card.append(el("blockquote", "admin-quote", t.message));
+  // While streaming, who reported and what was reported stay blurred: reporters are promised
+  // the person never learns who they were.
+  if (t.message) {
+    const quote = el("blockquote", "admin-quote", t.message);
+    quote.dataset.private = "";
+    card.append(quote);
+  }
   if (r.details) {
     const said = el("p", "admin-said");
+    said.dataset.private = "";
     said.append(el("span", "admin-quiet", "Reporter says: "), r.details);
     card.append(said);
   }
   const from = el("p", "admin-from");
-  from.append(el("span", "admin-quiet", "From "), el("span", null, r.reporter_name || "someone"));
+  const reporter = el("span", null, r.reporter_name || "someone");
+  reporter.dataset.private = "";
+  from.append(el("span", "admin-quiet", "From "), reporter);
   const sent = found.byReporter[r.reporter] ?? 1;
   if (sent > 1) {
     from.append(" · ");
