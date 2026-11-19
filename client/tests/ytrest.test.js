@@ -11,15 +11,16 @@
   const player = card().querySelector("iframe");
   check("playing opens the player", !!player);
   check("which tells Hopp how it's doing", /enablejsapi=1/.test(player?.src ?? ""), player?.src);
-  YT_REST_MS = 150;
+  // Short, but with room: these tests run in real time here, so 80 ms can easily become 150.
+  YT_REST_MS = 800;
   const tell = (info) => window.dispatchEvent(new MessageEvent("message", { origin: "https://www.youtube-nocookie.com", source: player.contentWindow, data: JSON.stringify({ event: "infoDelivery", info }) }));
   tell({ playerState: 1, currentTime: 140 });
-  await wait(300);
+  await wait(1000);
   check("while it plays, it stays", !!card().querySelector("iframe"));
   tell({ playerState: 2, currentTime: 151 });
   await wait(80);
   check("just paused: still there (you might go on)", !!card().querySelector("iframe"));
-  await wait(250);
+  await wait(1200);
   check("paused a while: the player is closed", !card().querySelector("iframe"));
   check("and says where it was", card().querySelector(".yt-resume")?.textContent === "Continue at 2:31", card().querySelector(".yt-resume")?.textContent);
   card().querySelector(".yt-play").click();
