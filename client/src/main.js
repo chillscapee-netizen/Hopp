@@ -2200,8 +2200,11 @@ listen("bans", (e) => renderBanList(e.payload));
 listen("members", (e) => {
   const members = e.payload ?? [];
   if (state.activeId) membersByServer.set(state.activeId, members);
-  // The same as already shown: nothing to draw again.
-  if (JSON.stringify(members) === JSON.stringify(state.members)) return;
+  // The same as already drawn: nothing to draw again (compared with a copy taken then, so a
+  // list changed in place still counts as changed).
+  const seen = JSON.stringify(members);
+  if (seen === membersDrawn && members.length === state.members.length) return;
+  membersDrawn = seen;
   state.members = members;
   memberStatusMap.from = null;
   renderMemberList();
@@ -2215,6 +2218,8 @@ listen("members", (e) => {
 var membersAsked = { server: null, at: 0 };
 /** Each server's member list as last seen. */
 var membersByServer = new Map();
+/** The member list as last drawn, to skip drawing the very same again. */
+var membersDrawn = "";
 
 /**
  * Tells your account which Hopp Cloud servers you're in, so their member lists show you online
@@ -2257,7 +2262,10 @@ function wantMembers() {
   const fresh = membersAsked.server !== state.activeId;
   // Back in a server: its members as last seen, at once (a fresh list follows), so the list
   // doesn't draw without them and then jump when they arrive.
-  if (fresh) state.members = membersByServer.get(state.activeId) ?? [];
+  if (fresh) {
+    state.members = membersByServer.get(state.activeId) ?? [];
+    membersDrawn = JSON.stringify(state.members);
+  }
   const known = new Set(state.members.map((m) => m.public_key));
   const stranger = state.members.length > 0 && state.roster.users.some((u) => u.public_key && !known.has(u.public_key));
   if (!fresh && !(stranger && Date.now() - membersAsked.at > 5000)) return;
