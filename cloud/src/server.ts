@@ -9,6 +9,8 @@ import { inviteIndex } from "./invites";
 import { accountOf } from "./account";
 
 /** What a member list shows of someone who's in Hopp but not in this server right now. */
+const CLOUD_BANNED = "This Hopp ID has been banned from Hopp Cloud for breaking Hopp's rules.";
+const CLOUD_TAKEN_DOWN = "This server was taken down by Hopp for breaking Hopp's rules.";
 const MEMBER_STATUSES = new Set(["online", "idle", "dnd", "offline"]);
 /** Up to this many members, the list goes out again when someone comes or goes. */
 const PRESENCE_PUSH_LIMIT = 300;
@@ -293,6 +295,7 @@ export class StromServer extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS accounts (key TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, banned_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS cloud_bans (key TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS member_roles (key TEXT NOT NULL, role INTEGER NOT NULL, PRIMARY KEY (key, role));
@@ -376,6 +379,67 @@ export class StromServer extends DurableObject<Env> {
     for (const [mws] of this.members()) this.send(mws, { type: "members", members: list });
   }
 
+  /** Deleted by its owner or taken down by Hopp: invites stop working, everyone is let go, nothing is kept. */
+  private async wipe(message?: string) {
+    for (const invite of this.invites()) await inviteIndex(this.env).remove(invite.code);
+    for (const other of this.ctx.getWebSockets()) {
+      if (message) this.send(other, { type: "error", message });
+      this.send(other, { type: "server_deleted" });
+      other.serializeAttachment({ stage: "removed" } satisfies Session);
+      try {
+        other.close(1000, "deleted");
+      } catch {
+        // Already closing.
+      }
+    }
+    // Without a name the server no longer exists: nobody can join it again.
+    for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
+  }
+
+  // ---------- for whoever runs Hopp Cloud ----------
+
+  /** Someone was banned from Hopp Cloud, or let back: banned, they're let go at once. */
+  async setCloudBanned(key: string, on: boolean) {
+    if (!on) return void this.sql.exec("DELETE FROM cloud_bans WHERE key = ?", key);
+    this.sql.exec("INSERT OR IGNORE INTO cloud_bans (key) VALUES (?)", key);
+    for (const [ws, m] of this.members().filter(([, m]) => m.key === key)) {
+      this.send(ws, { type: "error", message: CLOUD_BANNED });
+      ws.serializeAttachment({ stage: "removed" } satisfies Session);
+      try {
+        ws.close(4003, "banned");
+      } catch {
+        // Already gone.
+      }
+      if (m.user) this.broadcast({ type: "user_left", session_id: m.user.session_id });
+    }
+  }
+
+  /** What this server is, for a report about it: null when it no longer exists. */
+  async adminInfo() {
+    const name = this.meta("name");
+    if (name === null) return null;
+    const owner = this.meta("owner");
+    const ownerName = owner ? this.sql.exec("SELECT name FROM accounts WHERE key = ?", owner).toArray()[0]?.name : null;
+    return { name, owner, owner_name: ownerName == null ? null : String(ownerName), members: Number(this.sql.exec("SELECT count(*) AS n FROM accounts").one().n), created_at: Number(this.meta("created_at") ?? 0) };
+  }
+
+  /** A reported message removed by Hopp: like a moderator deleting it. False if it was already gone. */
+  async adminDeleteMessage(channel: number, id: number): Promise<boolean> {
+    const row = this.sql.exec("SELECT 1 FROM messages WHERE channel = ? AND id = ?", channel, id).toArray()[0];
+    if (!row) return false;
+    this.dropPicture(id);
+    this.sql.exec("DELETE FROM messages WHERE id = ?", id);
+    this.audit("Hopp", "delete_message", "a reported message", null);
+    this.broadcastChannel(channel, { type: "message_deleted", channel, id });
+    return true;
+  }
+
+  /** Taken down by Hopp for breaking its rules. */
+  async adminTakeDown() {
+    if (this.meta("name") === null) return;
+    await this.wipe(CLOUD_TAKEN_DOWN);
+  }
+
   async preview(code: string) {
     const name = this.meta("name");
     if (name === null || !this.invites().some((i) => i.code === code)) return null;
@@ -420,7 +484,7 @@ export class StromServer extends DurableObject<Env> {
     }
     if (!valid) return fail("Not signed.", 401);
     const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
-    const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length > 0;
+    const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ? UNION SELECT 1 FROM cloud_bans WHERE key = ?", key, key).toArray().length > 0;
     if (!member || banned) return fail("You're not a member of this server.", 403);
     if (this.meta("pictures_off") === "1" && type.startsWith("image/")) return fail("Pictures are turned off in this server.", 403);
     const now = Date.now();
@@ -828,6 +892,7 @@ export class StromServer extends DurableObject<Env> {
         return this.reject(ws, `Server names must be 1–${MAX_SERVER_NAME_LEN} characters.`);
       }
       if (this.env.PAUSE_NEW === "1") return this.reject(ws, "New servers are paused right now. Try again in a while.");
+      if (await accountOf(this.env, key).isCloudBanned()) return this.reject(ws, CLOUD_BANNED);
       if (!(await accountOf(this.env, key).allowNewServer())) return this.reject(ws, "You've created a lot of servers today. Try again tomorrow.");
       this.setMeta("name", serverName);
       this.setMeta("owner", key);
@@ -838,6 +903,7 @@ export class StromServer extends DurableObject<Env> {
     } else if (s.create) {
       return this.reject(ws, "That server already exists.");
     }
+    if (this.sql.exec("SELECT 1 FROM cloud_bans WHERE key = ?", key).toArray().length) return this.reject(ws, CLOUD_BANNED);
 
     if (this.sql.exec("SELECT 1 FROM bans WHERE key = ?", key).toArray().length) {
       return this.reject(ws, "You are banned from this server.");
@@ -860,6 +926,9 @@ export class StromServer extends DurableObject<Env> {
 
     const isOwner = this.meta("owner") === key;
     const known = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
+    // Someone new: their account says whether they're banned from Hopp Cloud (members already
+    // in are told here when it happens).
+    if (!known && (await accountOf(this.env, key).isCloudBanned())) return this.reject(ws, CLOUD_BANNED);
     if (!known && !isOwner) {
       if (!s.invite) return this.reject(ws, "This server is invite-only. Ask the owner for an invite link.");
       const invite = this.invites().find((i) => i.code === s.invite);
@@ -1692,21 +1761,7 @@ export class StromServer extends DurableObject<Env> {
       }
       case "delete_server": {
         if (!ownerOnly()) return;
-        // Invite links stop working everywhere.
-        for (const invite of this.invites()) await inviteIndex(this.env).remove(invite.code);
-        // Everyone connected is told, then let go.
-        for (const other of this.ctx.getWebSockets()) {
-          this.send(other, { type: "server_deleted" });
-          other.serializeAttachment({ stage: "removed" } satisfies Session);
-          try {
-            other.close(1000, "deleted");
-          } catch {
-            // Already closing.
-          }
-        }
-        // Without a name the server no longer exists: nobody can join it again.
-        for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
-        return;
+        return this.wipe();
       }
       case "revoke_invite": {
         if (!allowed("admin")) return;

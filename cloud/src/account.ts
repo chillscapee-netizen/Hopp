@@ -10,6 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import { troubleMessage } from "./trouble";
 import { budgetBytes, LOGIN_TTL_S, LOGINS_PER_DAY, monthUsage, newLogin, relayConfigured, revoke, USAGE_FRESH_MS, USAGE_TRUSTED_MS, type TurnLogin } from "./relay";
 import type { Env } from "./index";
+import { adminKeys, adminRequest, owners, type AdminRole } from "./admin";
 
 /** Past this share of the month's free relay amount, screens shared through it go to 720p. */
 const TIGHT_SHARE = 0.8;
@@ -155,6 +156,8 @@ export function accountOf(env: Env, key: string) {
   return env.ACCOUNTS.get(env.ACCOUNTS.idFromName(key));
 }
 
+const BANNED_MESSAGE = "This Hopp ID has been banned from Hopp Cloud for breaking Hopp's rules. If you think it's a mistake, see the rules on Hopp's website.";
+
 /** Reports one account may send a day. */
 const MAX_REPORTS_PER_DAY = 10;
 const REPORT_REASONS = new Set(["spam", "harassment", "hate", "child", "sexual", "violence", "illegal", "other"]);
@@ -178,21 +181,122 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS relay_logins (username TEXT PRIMARY KEY, until INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, reporter TEXT NOT NULL, reporter_name TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, details TEXT NOT NULL, target TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)");
+    const reportColumns = new Set(this.sql.exec("PRAGMA table_info(reports)").toArray().map((c) => String(c.name)));
+    for (const [name, type] of [["user_key", "TEXT NOT NULL DEFAULT ''"], ["server", "TEXT NOT NULL DEFAULT ''"], ["action", "TEXT"], ["note", "TEXT"], ["handled_at", "INTEGER"]]) {
+      if (!reportColumns.has(name)) this.sql.exec(`ALTER TABLE reports ADD COLUMN ${name} ${type}`);
+    }
+    this.sql.exec("CREATE TABLE IF NOT EXISTS cloud_bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS blocked_tunnels (id TEXT PRIMARY KEY, name TEXT NOT NULL, at INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS admins (key TEXT PRIMARY KEY, username TEXT NOT NULL, added_by TEXT NOT NULL, at INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL)");
   }
 
   // ---------- reports, for whoever runs Hopp Cloud ----------
 
-  async fileReport(r: { reporter: string; reporter_name: string; kind: string; reason: string; details: string; target: string }) {
-    this.sql.exec("INSERT INTO reports (at, reporter, reporter_name, kind, reason, details, target) VALUES (?, ?, ?, ?, ?, ?, ?)", Date.now(), r.reporter, r.reporter_name, r.kind, r.reason, r.details, r.target);
+  async fileReport(r: { reporter: string; reporter_name: string; kind: string; reason: string; details: string; target: string; user_key: string; server: string }) {
+    this.sql.exec(
+      "INSERT INTO reports (at, reporter, reporter_name, kind, reason, details, target, user_key, server) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      Date.now(), r.reporter, r.reporter_name, r.kind, r.reason, r.details, r.target, r.user_key, r.server,
+    );
     this.sql.exec("DELETE FROM reports WHERE id <= (SELECT id FROM reports ORDER BY id DESC LIMIT 1 OFFSET ?)", MAX_REPORTS);
+    const { open, urgent } = await this.stats();
+    const keys = await adminKeys(this.env);
+    this.ctx.waitUntil(Promise.allSettled(keys.map((k) => accountOf(this.env, k).adminNotify(open, urgent))));
   }
 
-  async reports(open: boolean) {
-    return this.sql.exec(`SELECT * FROM reports ${open ? "WHERE done = 0" : ""} ORDER BY id DESC LIMIT 300`).toArray();
+  /** Reports for the admin page: open, handled or all, maybe one reason, one person or server, or matching words. */
+  async reports(f: { view: string; reason?: string; user?: string; server?: string; q?: string }) {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (f.view === "open") where.push("done = 0");
+    if (f.view === "done") where.push("done = 1");
+    if (f.reason) where.push("reason = ?"), args.push(f.reason);
+    if (f.user) where.push("(user_key = ? OR reporter = ?)"), args.push(f.user, f.user);
+    if (f.server) where.push("server = ?"), args.push(f.server);
+    if (f.q) where.push("(target LIKE ? OR details LIKE ? OR reporter_name LIKE ? OR note LIKE ?)"), args.push(...Array(4).fill(`%${f.q}%`));
+    const rows = this.sql.exec(`SELECT * FROM reports ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY done, CASE WHEN done = 0 AND reason IN ('child', 'violence') THEN 0 ELSE 1 END, id DESC LIMIT 200`, ...args).toArray();
+    // How often the same person or server has been reported, and how many reports each reporter sent.
+    const count = (col: string, values: string[]) => {
+      const out: Record<string, number> = {};
+      for (const v of new Set(values.filter(Boolean))) out[v] = Number(this.sql.exec(`SELECT count(*) AS n FROM reports WHERE ${col} = ?`, v).one().n);
+      return out;
+    };
+    const keys = rows.flatMap((r) => [String(r.user_key), String(r.reporter)]);
+    return {
+      rows,
+      aboutUser: count("user_key", rows.map((r) => String(r.user_key))),
+      aboutServer: count("server", rows.map((r) => String(r.server))),
+      byReporter: count("reporter", rows.map((r) => String(r.reporter))),
+      banned: Object.fromEntries(keys.filter((k) => k && this.isBannedHere(k)).map((k) => [k, true])),
+      blocked: Object.fromEntries(this.sql.exec("SELECT id FROM blocked_tunnels").toArray().map((r) => [String(r.id), true])),
+    };
   }
 
-  async markReport(id: number, done: boolean) {
-    this.sql.exec("UPDATE reports SET done = ? WHERE id = ?", done ? 1 : 0, id);
+  async stats() {
+    const n = (q: string, ...a: unknown[]) => Number(this.sql.exec(q, ...a).one().n);
+    const byReason = Object.fromEntries(this.sql.exec("SELECT reason, count(*) AS n FROM reports WHERE done = 0 GROUP BY reason").toArray().map((r) => [String(r.reason), Number(r.n)]));
+    return {
+      open: n("SELECT count(*) AS n FROM reports WHERE done = 0"),
+      urgent: n("SELECT count(*) AS n FROM reports WHERE done = 0 AND reason IN ('child', 'violence')"),
+      today: n("SELECT count(*) AS n FROM reports WHERE at > ?", Date.now() - 86_400_000),
+      handled: n("SELECT count(*) AS n FROM reports WHERE done = 1"),
+      bans: n("SELECT count(*) AS n FROM cloud_bans"),
+      blocked: n("SELECT count(*) AS n FROM blocked_tunnels"),
+      byReason,
+    };
+  }
+
+  /** Marks a report handled (saying what was done) or open again, or keeps a note on it. */
+  async settleReport(id: number, change: { done?: boolean; action?: string; note?: string }) {
+    if (change.done !== undefined) this.sql.exec("UPDATE reports SET done = ?, handled_at = ? WHERE id = ?", change.done ? 1 : 0, change.done ? Date.now() : null, id);
+    if (change.action !== undefined) this.sql.exec("UPDATE reports SET action = ? WHERE id = ?", change.action || null, id);
+    if (change.note !== undefined) this.sql.exec("UPDATE reports SET note = ? WHERE id = ?", change.note.slice(0, 1000) || null, id);
+  }
+
+  /** Everything handled at once that's about the same person or server: one ban settles them all. */
+  async settleAllAbout(col: "user_key" | "server", value: string, action: string) {
+    if (!value) return;
+    this.sql.exec(`UPDATE reports SET done = 1, handled_at = ?, action = coalesce(action, ?) WHERE done = 0 AND ${col} = ?`, Date.now(), action, value);
+  }
+
+  private isBannedHere(key: string) {
+    return this.sql.exec("SELECT 1 FROM cloud_bans WHERE key = ?", key).toArray().length > 0;
+  }
+
+  async setCloudBan(key: string, on: boolean, name = "", reason = "") {
+    if (on) this.sql.exec("INSERT OR REPLACE INTO cloud_bans (key, name, reason, at) VALUES (?, ?, ?, ?)", key, name.slice(0, 64), reason.slice(0, 200), Date.now());
+    else this.sql.exec("DELETE FROM cloud_bans WHERE key = ?", key);
+  }
+
+  async cloudBans() {
+    return this.sql.exec("SELECT * FROM cloud_bans ORDER BY at DESC LIMIT 500").toArray();
+  }
+
+  async setTunnelBlocked(id: string, on: boolean, name = "") {
+    if (on) this.sql.exec("INSERT OR REPLACE INTO blocked_tunnels (id, name, at) VALUES (?, ?, ?)", id, name.slice(0, 100), Date.now());
+    else this.sql.exec("DELETE FROM blocked_tunnels WHERE id = ?", id);
+  }
+
+  async blockedTunnels() {
+    return this.sql.exec("SELECT * FROM blocked_tunnels ORDER BY at DESC LIMIT 500").toArray();
+  }
+
+  async logAdmin(action: string, subject: string, detail: string) {
+    this.sql.exec("INSERT INTO admin_log (at, action, subject, detail) VALUES (?, ?, ?, ?)", Date.now(), action, subject.slice(0, 300), detail.slice(0, 500));
+    this.sql.exec("DELETE FROM admin_log WHERE id <= (SELECT id FROM admin_log ORDER BY id DESC LIMIT 1 OFFSET 5000)");
+  }
+
+  async admins() {
+    return this.sql.exec("SELECT * FROM admins ORDER BY at").toArray();
+  }
+
+  async setAdmin(key: string, on: boolean, username = "", by = "") {
+    if (on) this.sql.exec("INSERT OR REPLACE INTO admins (key, username, added_by, at) VALUES (?, ?, ?, ?)", key, username, by, Date.now());
+    else this.sql.exec("DELETE FROM admins WHERE key = ?", key);
+  }
+
+  async adminLog() {
+    return this.sql.exec("SELECT * FROM admin_log ORDER BY id DESC LIMIT 300").toArray();
   }
 
   // ---------- the voice relay, for all of Hopp ----------
@@ -531,6 +635,7 @@ export class StromAccount extends DurableObject<Env> {
       }
     }
     if (!valid) return this.reject(ws, "Login failed: invalid signature.");
+    if (this.meta("cloud_banned")) return this.reject(ws, BANNED_MESSAGE);
 
     const wasOffline = this.devices().length === 0;
     if (!this.meta("key")) {
@@ -553,7 +658,12 @@ export class StromAccount extends DurableObject<Env> {
       inbox: this.inbox(),
       inbox_seen: Number(this.meta("inbox_seen") ?? 0),
       features: ["server-presence"],
+      admin: this.adminRole(),
     });
+    if (this.adminRole()) {
+      const stats = await directory(this.env).stats().catch(() => null);
+      if (stats) this.send(ws, { type: "admin_open", open: stats.open, urgent: stats.urgent });
+    }
     if (wasOffline) await this.announcePresence();
   }
 
@@ -840,6 +950,18 @@ export class StromAccount extends DurableObject<Env> {
         // Left a server: it no longer needs to hear from you (it drops you anyway).
         return this.tellServers(added);
       }
+      case "admin": {
+        // Running Hopp Cloud, for its owners and admins only; anyone else is told nothing.
+        const role = this.adminRole();
+        if (!role) return error("Unknown message type \"admin\".");
+        const req = msg.req ?? null;
+        try {
+          const answer = await adminRequest(this.env, { key: myKey, name: this.meta("username") ?? this.meta("display_name") ?? "an admin", role }, msg);
+          return this.send(ws, { type: "admin", op: msg.op, req, ...answer });
+        } catch (err) {
+          return this.send(ws, { type: "error", for: "admin", req, message: err instanceof Error ? err.message : String(err) });
+        }
+      }
       case "report": {
         // Something wrong, sent to Hopp: a few a day at most, so reports can't be used to flood.
         const today = new Date().toISOString().slice(0, 10);
@@ -858,7 +980,7 @@ export class StromAccount extends DurableObject<Env> {
           message: clip(msg.message, 4000),
           message_id: clip(msg.message_id, 40),
         };
-        await directory(this.env).fileReport({ reporter: myKey, reporter_name: this.meta("username") ?? "", kind, reason, details: clip(msg.details, 1000), target: JSON.stringify(target) });
+        await directory(this.env).fileReport({ reporter: myKey, reporter_name: this.meta("username") ?? "", kind, reason, details: clip(msg.details, 1000), target: JSON.stringify(target), user_key: target.user_key, server: target.server });
         this.setMeta("reports_day", today);
         this.setMeta("reports_count", String(used + 1));
         return this.send(ws, { type: "report_sent" });
@@ -1275,6 +1397,43 @@ export class StromAccount extends DurableObject<Env> {
   }
 
   /** Counts a server this account creates; false once it has made too many today. */
+  /** Owner (named in Hopp Cloud's settings), admin (made one by an owner) or neither. */
+  private adminRole(): AdminRole | null {
+    const key = this.meta("key");
+    if (key && owners(this.env).has(key)) return "owner";
+    return this.meta("admin") ? "admin" : null;
+  }
+
+  async setAdminFlag(on: boolean) {
+    this.setMeta("admin", on ? "1" : null);
+    this.toDevices({ type: "admin_role", role: this.adminRole() });
+  }
+
+  /** A new report came in: the admin's apps show how many are open. */
+  async adminNotify(open: number, urgent = 0) {
+    if (this.adminRole()) this.toDevices({ type: "admin_open", open, urgent });
+  }
+
+  /** Banned from Hopp Cloud: can't sign in, make or join servers on it; one ban covers every device. */
+  async isCloudBanned(): Promise<boolean> {
+    return !!this.meta("cloud_banned");
+  }
+
+  /** Who this is, for the admin page. */
+  async adminCard() {
+    return { username: this.meta("username"), display_name: this.meta("display_name"), created_at: Number(this.meta("created_at") ?? 0) };
+  }
+
+  /** Bans this account from Hopp Cloud, or lifts it: its devices and its servers are told. */
+  async setCloudBanned(on: boolean) {
+    this.setMeta("cloud_banned", on ? String(Date.now()) : null);
+    const key = this.meta("key");
+    if (key) await Promise.allSettled(this.serverIds().map((id) => this.env.SERVERS.get(this.env.SERVERS.idFromName(id)).setCloudBanned(key, on)));
+    if (!on) return;
+    for (const ws of this.ctx.getWebSockets()) this.reject(ws, BANNED_MESSAGE);
+    if (key) await this.announcePresence().catch(() => {});
+  }
+
   async allowNewServer(): Promise<boolean> {
     const day = new Date().toISOString().slice(0, 10);
     const [d, n] = (this.meta("servers_today") ?? "").split(" ");

@@ -5694,6 +5694,8 @@ listen("account", (e) => {
   if (onDmEvent(m)) return;
   switch (m.type) {
     case "welcome":
+      admin.role = m.admin ?? null;
+      renderAdminButton();
       warmServersSoon();
       state.me = m.me;
       state.friends = new Map(m.friends.map((f) => [f.key, f]));
@@ -5828,10 +5830,25 @@ listen("account", (e) => {
     case "report_sent":
       reportSent();
       return;
+    case "admin_open":
+      admin.open = Number(m.open) || 0;
+      admin.urgent = Number(m.urgent) || 0;
+      renderAdminButton();
+      if ($("admin-dialog").open && admin.tab === "reports") refreshAdminSoon();
+      return;
+    case "admin_role":
+      admin.role = m.role ?? null;
+      renderAdminButton();
+      if (!admin.role && $("admin-dialog").open) $("admin-dialog").close();
+      return;
+    case "admin":
+      adminAnswered(m);
+      return;
     case "error":
       // Read marks are best effort (an older cloud doesn't know them yet).
       if (m.for === "channel_read") return;
       if (m.for === "report") return reportFailed(m.message);
+      if (m.for === "admin") return adminAnswered(m);
       if (m.for === "friend_request") addFriendResult(m.message, true);
       else if (m.for === "claim_username" || m.for === "check_username") showUsernameError(m.message);
       else toast(m.message, true);
@@ -12133,6 +12150,389 @@ $("report-rules").addEventListener("click", (e) => {
   e.preventDefault();
   openUrl(cloudHttp() + "/rules");
 });
+
+// ---------- running Hopp Cloud ----------
+//
+// For Hopp Cloud's owners and admins (Hopp IDs, named in its settings or made admins by an
+// owner): the reports people send, and what can be done about them. Everything goes over
+// your own account connection, so there's no password or key to keep.
+
+const admin = { role: null, open: 0, urgent: 0, tab: "reports", view: "open", reason: "", q: "", user: "", server: "", last: null };
+const adminWaiting = new Map();
+const REPORT_REASONS = {
+  child: { label: "Child sexual content", level: "urgent" },
+  violence: { label: "Violence, terror or self-harm", level: "urgent" },
+  sexual: { label: "Sexual content without consent", level: "serious" },
+  harassment: { label: "Harassment or threats", level: "serious" },
+  hate: { label: "Hate", level: "serious" },
+  illegal: { label: "Something else illegal", level: "serious" },
+  spam: { label: "Spam or scams", level: "minor" },
+  other: { label: "Something else", level: "minor" },
+};
+
+/** Asks Hopp Cloud something as an admin; answers with what it said, or throws its message. */
+function adminAsk(op, extra = {}) {
+  const req = Math.random().toString(36).slice(2, 10);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      adminWaiting.delete(req);
+      reject(new Error("Hopp Cloud didn't answer. Try again in a moment."));
+    }, 15_000);
+    adminWaiting.set(req, (m) => {
+      clearTimeout(timer);
+      if (m.type === "error") reject(new Error(m.message));
+      else resolve(m);
+    });
+    invoke("account_send", { msg: { type: "admin", op, req, ...extra } }).catch((err) => {
+      clearTimeout(timer);
+      adminWaiting.delete(req);
+      reject(new Error(friendlyError(err)));
+    });
+  });
+}
+
+function adminAnswered(m) {
+  const done = adminWaiting.get(m.req);
+  adminWaiting.delete(m.req);
+  done?.(m);
+}
+
+function renderAdminButton() {
+  for (const b of document.querySelectorAll(".admin-btn")) {
+    b.hidden = !admin.role;
+    // Reports waiting: the shield becomes a small pill with how many; red when one is urgent.
+    const count = b.querySelector(".admin-count");
+    count.hidden = !admin.open;
+    count.textContent = admin.open > 99 ? "99+" : String(admin.open);
+    b.classList.toggle("waiting", admin.open > 0);
+    b.classList.toggle("urgent", admin.urgent > 0);
+    b.dataset.tip = admin.open ? `Hopp admin: ${admin.open} open report${admin.open === 1 ? "" : "s"}${admin.urgent ? `, ${admin.urgent} urgent` : ""}` : "Hopp admin: no open reports";
+  }
+  $("admin-tab-open").hidden = !admin.open;
+  $("admin-tab-open").textContent = String(admin.open);
+}
+
+for (const b of document.querySelectorAll(".admin-btn")) b.addEventListener("click", () => openAdmin());
+for (const t of document.querySelectorAll(".admin-tab")) t.addEventListener("click", () => showAdminTab(t.dataset.atab));
+
+function openAdmin(tab = admin.tab) {
+  if (!admin.role) return;
+  openModal($("admin-dialog"));
+  showAdminTab(tab);
+}
+
+function showAdminTab(tab) {
+  admin.tab = tab;
+  for (const t of document.querySelectorAll(".admin-tab")) t.classList.toggle("active", t.dataset.atab === tab);
+  $("admin-tab-open").hidden = !admin.open;
+  refreshAdmin();
+}
+
+let adminRefreshTimer = 0;
+function refreshAdminSoon() {
+  clearTimeout(adminRefreshTimer);
+  adminRefreshTimer = setTimeout(refreshAdmin, 400);
+}
+
+let adminDrawing = 0;
+async function refreshAdmin() {
+  const body = $("admin-body");
+  const mine = ++adminDrawing;
+  if (!body.firstChild) body.replaceChildren(el("p", "admin-empty", "Loading…"));
+  try {
+    const draw = { reports: drawAdminReports, bans: drawAdminBans, admins: drawAdminAdmins, log: drawAdminLog }[admin.tab];
+    const parts = await draw();
+    if (mine !== adminDrawing) return;
+    const keepScroll = body.scrollTop;
+    body.replaceChildren(...parts);
+    body.scrollTop = keepScroll;
+  } catch (err) {
+    if (mine === adminDrawing) body.replaceChildren(el("p", "admin-empty", err.message));
+  }
+}
+
+const adminAgo = (ms) => {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} days ago`;
+};
+const shortKey = (key) => (key ? key.slice(0, 8) + "…" : "");
+
+/** Runs an admin action: asks first when it can't be undone, then says how it went. */
+async function adminDo(op, extra, { confirm, done }) {
+  if (confirm && !(await confirmDialog(confirm))) return;
+  try {
+    await adminAsk(op, extra);
+    toast(done);
+    refreshAdmin();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function adminButton(label, iconName, onClick, kind = "") {
+  const b = el("button", `admin-act ${kind}`.trim());
+  b.type = "button";
+  b.append(icon(iconName, "xs"), el("span", null, label));
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+async function drawAdminReports() {
+  const found = await adminAsk("reports", { view: admin.view, reason: admin.reason, q: admin.q, user: admin.user, server: admin.server });
+  admin.last = found;
+  const s = found.stats;
+  admin.open = s.open;
+  admin.urgent = s.urgent;
+  renderAdminButton();
+
+  const stat = (n, label, kind = "") => {
+    const d = el("div", `admin-stat ${kind}`.trim());
+    d.append(el("strong", null, String(n)), el("span", null, label));
+    return d;
+  };
+  const stats = el("div", "admin-stats");
+  stats.append(stat(s.open, "open"), stat(s.urgent, "urgent", s.urgent ? "urgent" : ""), stat(s.today, "in the last day"), stat(s.bans, "banned"));
+
+  // Filters: which reports, what kind, words, and who it's about.
+  const filters = el("div", "admin-filters");
+  const views = el("div", "admin-seg");
+  for (const [v, label] of [["open", "Open"], ["done", "Handled"], ["all", "All"]]) {
+    const b = el("button", v === admin.view ? "active" : "", label);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      admin.view = v;
+      refreshAdmin();
+    });
+    views.append(b);
+  }
+  const reason = el("select", "admin-select");
+  reason.append(new Option("Every kind", ""));
+  for (const [k, r] of Object.entries(REPORT_REASONS)) reason.append(new Option(`${r.label}${s.byReason[k] ? ` (${s.byReason[k]})` : ""}`, k));
+  reason.value = admin.reason;
+  reason.addEventListener("change", () => {
+    admin.reason = reason.value;
+    refreshAdmin();
+  });
+  const search = el("input", "admin-search");
+  search.type = "search";
+  search.placeholder = "Search reports";
+  search.value = admin.q;
+  let typing = 0;
+  search.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => {
+      admin.q = search.value.trim();
+      refreshAdmin().then(() => document.querySelector(".admin-search")?.focus());
+    }, 350);
+  });
+  filters.append(views, reason, search);
+  const parts = [stats, filters];
+  if (admin.user || admin.server) {
+    const chip = el("div", "admin-chip");
+    chip.append(el("span", null, admin.user ? `Only reports about or from ${shortKey(admin.user)}` : `Only reports about ${admin.server}`));
+    const clear = el("button", "admin-chip-x");
+    clear.type = "button";
+    clear.append(icon("x", "xs"));
+    clear.setAttribute("aria-label", "Show all");
+    clear.addEventListener("click", () => {
+      admin.user = admin.server = "";
+      refreshAdmin();
+    });
+    chip.append(clear);
+    parts.push(chip);
+  }
+  if (!found.rows.length) {
+    const empty = el("div", "admin-empty");
+    empty.append(icon("check"), el("strong", null, admin.view === "open" && !admin.q && !admin.reason && !admin.user && !admin.server ? "Nothing to look at" : "No reports match"), el("span", null, admin.view === "open" ? "New reports show up here, and as a number on the shield." : ""));
+    parts.push(empty);
+    return parts;
+  }
+  parts.push(...found.rows.map((r) => adminReportCard(r, found)));
+  return parts;
+}
+
+function adminReportCard(r, found) {
+  let t = {};
+  try {
+    t = JSON.parse(r.target);
+  } catch {}
+  const why = REPORT_REASONS[r.reason] ?? { label: r.reason, level: "minor" };
+  const card = el("article", `admin-card ${why.level}${r.done ? " done" : ""}`);
+  const cloudId = /^cloud:(.+)$/.exec(t.server ?? "")?.[1];
+  const tunnelId = /tunnel:([0-9a-f]{32})/.exec(t.server ?? "")?.[1];
+  const info = cloudId ? found.servers[cloudId] : undefined;
+
+  const head = el("header", "admin-card-head");
+  head.append(el("span", `admin-reason ${why.level}`, why.label), el("span", "admin-kind", { message: "Message", user: "Person", server: "Server" }[r.kind] ?? r.kind), el("span", "admin-when", adminAgo(Number(r.at))));
+  const times = r.user_key ? found.aboutUser[r.user_key] : r.server ? found.aboutServer[r.server] : 0;
+  if (times > 1) {
+    const many = el("button", "admin-many", `Reported ${times} times`);
+    many.type = "button";
+    many.addEventListener("click", () => {
+      if (r.user_key) admin.user = r.user_key;
+      else admin.server = r.server;
+      admin.view = "all";
+      refreshAdmin();
+    });
+    head.append(many);
+  }
+  card.append(head);
+
+  // What and who.
+  const facts = el("dl", "admin-facts");
+  const fact = (k, ...v) => {
+    facts.append(el("dt", null, k));
+    const dd = el("dd");
+    dd.append(...v);
+    facts.append(dd);
+  };
+  if (r.user_key) {
+    const who = el("span", "admin-who", t.user_name || "Someone");
+    const key = el("button", "admin-key", shortKey(r.user_key));
+    key.type = "button";
+    key.dataset.tip = "Copy their Hopp ID";
+    key.addEventListener("click", () => navigator.clipboard.writeText(r.user_key).then(() => toast("Hopp ID copied."), () => toast("Couldn't copy.", true)));
+    fact("Who", who, key, ...(found.banned[r.user_key] ? [el("span", "admin-tag red", "Banned")] : []));
+  }
+  if (t.server === "dm") fact("Where", "A private conversation (encrypted, so this is what the reporter showed)");
+  else if (t.server) {
+    const where = [t.server_name || (tunnelId ? "A server on someone's computer" : t.server)];
+    if (t.channel) where.push(` · #${t.channel}`);
+    const extra = cloudId ? (info ? ` · ${info.members} member${info.members === 1 ? "" : "s"}, owner ${info.owner_name ?? "unknown"}` : " · no longer exists") : tunnelId ? " · through Hopp's tunnel" : " · on someone's own server";
+    fact("Where", el("span", null, where.join("")), el("span", "admin-quiet", extra), ...(tunnelId && found.blocked[tunnelId] ? [el("span", "admin-tag red", "Blocked")] : []));
+  }
+  card.append(facts);
+  if (t.message) card.append(el("blockquote", "admin-quote", t.message));
+  if (r.details) {
+    const said = el("p", "admin-said");
+    said.append(el("span", "admin-quiet", "Reporter says: "), r.details);
+    card.append(said);
+  }
+  const from = el("p", "admin-from");
+  from.append(el("span", "admin-quiet", "From "), el("span", null, r.reporter_name || "someone"));
+  const sent = found.byReporter[r.reporter] ?? 1;
+  if (sent > 1) {
+    from.append(" · ");
+    const all = el("button", "admin-link", `${sent} reports sent`);
+    all.type = "button";
+    all.addEventListener("click", () => {
+      admin.user = r.reporter;
+      admin.view = "all";
+      refreshAdmin();
+    });
+    from.append(all);
+  }
+  if (r.done && r.action) from.append(el("span", "admin-quiet", ` · ${r.action}${r.handled_at ? ", " + adminAgo(Number(r.handled_at)) : ""}`));
+  card.append(from);
+
+  // A note for the other admins, saved as you leave the box.
+  const note = el("textarea", "admin-note");
+  note.rows = 1;
+  note.maxLength = 1000;
+  note.placeholder = "Add a note for other admins";
+  note.value = r.note ?? "";
+  note.addEventListener("change", () => adminAsk("settle", { id: r.id, note: note.value }).then(() => toast("Note saved."), (err) => toast(err.message, true)));
+  card.append(note);
+
+  // What can be done.
+  const acts = el("div", "admin-acts");
+  const name = t.user_name || "this person";
+  if (!r.done) acts.append(adminButton("Handled", "check", () => adminDo("settle", { id: r.id, done: true }, { done: "Marked handled." }), "primary"));
+  else acts.append(adminButton("Open again", "undo", () => adminDo("settle", { id: r.id, done: false }, { done: "Open again." })));
+  if (r.kind === "message" && cloudId && info && t.message_id) {
+    acts.append(adminButton("Remove message", "trash", () => adminDo("delete_message", { id: r.id, server: t.server, server_name: t.server_name, message_id: t.message_id }, { confirm: { title: "Remove this message?", text: "It's deleted from the server for everyone, like a moderator deleting it.", ok: "Remove" }, done: "Message removed." }), "danger"));
+  }
+  if (r.user_key) {
+    if (found.banned[r.user_key]) acts.append(adminButton(`Unban ${name}`, "undo", () => adminDo("unban", { key: r.user_key, name: t.user_name }, { confirm: { title: `Unban ${name}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
+    else acts.append(adminButton(`Ban ${name}`, "ban", () => adminDo("ban", { key: r.user_key, name: t.user_name, reason: why.label }, { confirm: { title: `Ban ${name} from Hopp Cloud?`, text: "They're signed out everywhere and can't sign in, join or make servers on Hopp Cloud. Every open report about them is marked handled. You can unban them later.", ok: "Ban" }, done: `${name} is banned.` }), "danger"));
+  }
+  if (cloudId && info) {
+    if (info.owner && info.owner !== r.user_key && !found.banned[info.owner]) {
+      acts.append(adminButton("Ban the owner", "ban", () => adminDo("ban", { key: info.owner, name: info.owner_name, reason: why.label }, { confirm: { title: `Ban ${info.owner_name ?? "the owner"} from Hopp Cloud?`, text: `The owner of ${info.name}. They're signed out everywhere and can't use Hopp Cloud.`, ok: "Ban" }, done: "Owner banned." }), "danger"));
+    }
+    acts.append(adminButton("Take down server", "trash", () => adminDo("take_down", { server: t.server, server_name: info.name, reason: why.label }, { confirm: { title: `Take down ${info.name}?`, text: `The server is deleted for all ${info.members} members, with its messages and pictures. This can't be undone.`, ok: "Take down" }, done: "Server taken down." }), "danger"));
+  }
+  if (tunnelId) {
+    if (found.blocked[tunnelId]) acts.append(adminButton("Unblock tunnel", "undo", () => adminDo("unblock_tunnel", { server: t.server, server_name: t.server_name }, { done: "Tunnel unblocked." })));
+    else acts.append(adminButton("Block tunnel", "ban", () => adminDo("block_tunnel", { server: t.server, server_name: t.server_name }, { confirm: { title: "Block this server from Hopp's tunnel?", text: "It runs on someone's own computer, so Hopp can't delete it, but nobody can reach it through Hopp Cloud any more. You can unblock it later.", ok: "Block" }, done: "Tunnel blocked." }), "danger"));
+  }
+  card.append(acts);
+  return card;
+}
+
+async function drawAdminBans() {
+  const { bans, tunnels } = await adminAsk("bans");
+  const parts = [el("h3", "admin-h", "Banned from Hopp Cloud")];
+  if (!bans.length) parts.push(el("p", "admin-quiet admin-pad", "Nobody is banned."));
+  for (const b of bans) {
+    const row = el("div", "admin-row");
+    const who = el("div", "admin-row-main");
+    who.append(el("strong", null, b.name || shortKey(b.key)), el("span", "admin-quiet", `${b.reason ? b.reason + " · " : ""}${adminAgo(Number(b.at))}`));
+    row.append(who, adminButton("Unban", "undo", () => adminDo("unban", { key: b.key, name: b.name }, { confirm: { title: `Unban ${b.name || "them"}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
+    parts.push(row);
+  }
+  parts.push(el("h3", "admin-h", "Blocked from Hopp's tunnel"));
+  if (!tunnels.length) parts.push(el("p", "admin-quiet admin-pad", "No servers are blocked."));
+  for (const tn of tunnels) {
+    const row = el("div", "admin-row");
+    const what = el("div", "admin-row-main");
+    what.append(el("strong", null, tn.name || "A server on someone's computer"), el("span", "admin-quiet", adminAgo(Number(tn.at))));
+    row.append(what, adminButton("Unblock", "undo", () => adminDo("unblock_tunnel", { tunnel: tn.id, server_name: tn.name }, { done: "Tunnel unblocked." })));
+    parts.push(row);
+  }
+  return parts;
+}
+
+async function drawAdminAdmins() {
+  const { admins } = await adminAsk("admins");
+  const parts = [el("h3", "admin-h", "Who runs Hopp Cloud")];
+  for (const a of admins) {
+    const row = el("div", "admin-row");
+    const who = el("div", "admin-row-main");
+    who.append(el("strong", null, a.username ? "@" + a.username : a.display_name || shortKey(a.key)), el("span", "admin-quiet", a.role === "owner" ? "Owner" : `Admin${a.added_by ? ", added by " + a.added_by : ""}`));
+    row.append(who);
+    if (admin.role === "owner" && a.role !== "owner") {
+      row.append(adminButton("Remove", "x", () => adminDo("remove_admin", { key: a.key }, { confirm: { title: `Remove ${a.username ?? "this admin"}?`, text: "They won't see reports any more.", ok: "Remove" }, done: "Removed." })));
+    }
+    parts.push(row);
+  }
+  if (admin.role === "owner") {
+    const form = el("form", "admin-add");
+    const input = el("input", "admin-search");
+    input.placeholder = "Username";
+    input.maxLength = 40;
+    const add = el("button", "btn primary", "Make admin");
+    add.type = "submit";
+    form.append(input, add);
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const username = input.value.trim().replace(/^@/, "");
+      if (!username) return;
+      adminDo("add_admin", { username }, { confirm: { title: `Make @${username} an admin?`, text: "They'll see every report, with what was reported and who sent it, and can remove messages, ban people and take servers down. Only owners can add or remove admins.", ok: "Make admin", danger: false }, done: `@${username} is an admin.` });
+    });
+    parts.push(el("h3", "admin-h", "Add an admin"), form);
+  } else parts.push(el("p", "admin-quiet admin-pad", "Only owners can add or remove admins."));
+  return parts;
+}
+
+async function drawAdminLog() {
+  const { log } = await adminAsk("log");
+  const parts = [el("h3", "admin-h", "What admins did")];
+  if (!log.length) parts.push(el("p", "admin-quiet admin-pad", "Nothing yet."));
+  for (const l of log) {
+    const row = el("div", "admin-row log");
+    const what = el("div", "admin-row-main");
+    const line = el("span");
+    line.append(el("strong", null, l.action), ` ${l.subject}`);
+    what.append(line, el("span", "admin-quiet", `${l.detail} · ${adminAgo(Number(l.at))}`));
+    row.append(what);
+    parts.push(row);
+  }
+  return parts;
+}
 
 /** The cloud got the report. */
 function reportSent() {

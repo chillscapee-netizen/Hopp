@@ -762,13 +762,32 @@ test("online is online: a server's member list shows members who have Hopp open 
   owner.close();
 });
 
-test("reports reach Hopp: checked, kept, a few a day, and only the right key reads them", async () => {
+// The owner of Hopp Cloud in these tests: a fixed Hopp ID, named in HOPP_OWNERS when the Worker
+// starts (see OWNER_PUB below).
+const OWNER_SEED = "11".repeat(32);
+function keyFromSeed(seedHex) {
+  const privateKey = crypto.createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.from(seedHex, "hex")]), format: "der", type: "pkcs8" });
+  const pub = crypto.createPublicKey(privateKey).export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
+  return { pub, privateKey };
+}
+const OWNER = keyFromSeed(OWNER_SEED);
+const ownerConfigured = process.env.HOPP_OWNERS === OWNER.pub;
+
+/** Asks Hopp Cloud something as an admin and waits for the answer (or its error). */
+async function admin(d, op, extra = {}) {
+  const req = crypto.randomBytes(4).toString("hex");
+  d.send({ type: "admin", op, req, ...extra });
+  const m = await d.waitFor((m) => (m.type === "admin" || (m.type === "error" && m.for === "admin")) && m.req === req);
+  if (m.type === "error") throw new Error(m.message);
+  return m;
+}
+
+test("reports reach Hopp: checked, kept, a few a day", async () => {
   const a = await userWithName("reporter");
   const bad = newKey();
   a.d.send({ type: "report", kind: "message", reason: "nonsense", user_key: bad.pub });
   assert.match((await a.d.waitFor((m) => m.type === "error" && m.for === "report")).message, /wrong/);
-  const text = unique("buy cheap coins ");
-  a.d.send({ type: "report", kind: "message", reason: "spam", server: "crew.example:7700", server_name: "Crew", channel_name: "general", user_key: bad.pub, user_name: "Spammer", message: text, message_id: "0/5", details: "x".repeat(5000) });
+  a.d.send({ type: "report", kind: "message", reason: "spam", server: "crew.example:7700", server_name: "Crew", channel_name: "general", user_key: bad.pub, user_name: "Spammer", message: "buy coins", message_id: "0/5", details: "x".repeat(5000) });
   await a.d.waitFor((m) => m.type === "report_sent");
   for (let i = 1; i < 10; i++) {
     a.d.send({ type: "report", kind: "user", reason: "harassment", user_key: bad.pub, user_name: "Spammer" });
@@ -776,21 +795,73 @@ test("reports reach Hopp: checked, kept, a few a day, and only the right key rea
   }
   a.d.send({ type: "report", kind: "server", reason: "illegal", server: "x" });
   assert.match((await a.d.waitFor((m) => m.type === "error" && m.for === "report")).message, /tomorrow/);
-
-  // The page: nothing at all without the key, everything with it.
+  // Not an admin: asking is like asking for nothing at all.
+  a.d.send({ type: "admin", op: "overview", req: "1" });
+  assert.match((await a.d.waitFor((m) => m.type === "error")).message, /Unknown message type/);
+  assert.ok(!a.d.welcome.admin, "not an admin");
+  // There's no admin page on the web.
   assert.equal((await fetch(`${HTTP}/admin/reports`)).status, 404);
-  assert.equal((await fetch(`${HTTP}/admin/reports?token=wrong-but-long-enough`)).status, 404);
-  const token = process.env.ADMIN_TOKEN;
-  if (token) {
-    const page = await (await fetch(`${HTTP}/admin/reports?token=${encodeURIComponent(token)}`)).text();
-    assert.ok(page.includes(text), "the reported message is on the page");
-    assert.ok(page.includes(a.key.pub), "and who reported it");
-    assert.ok(!page.includes("x".repeat(1001)), "details are clipped");
-    const id = page.match(/#(\d+) · Spam or scams/)[1];
-    const done = await fetch(`${HTTP}/admin/reports/${id}/done?token=${encodeURIComponent(token)}`, { method: "POST", redirect: "manual" });
-    assert.equal(done.status, 303);
-    const open = await (await fetch(`${HTTP}/admin/reports?token=${encodeURIComponent(token)}`)).text();
-    assert.ok(!open.includes(text), "handled reports leave the open list");
-  }
   a.d.close();
+});
+
+test("admins in the app: see reports at once, remove a message, ban, take down, make admins", { skip: !ownerConfigured && "start the Worker with HOPP_OWNERS set to the test owner" }, async () => {
+  const owner = await Device.open(OWNER, "Owner");
+  assert.equal(owner.welcome.admin, "owner");
+  // A server on Hopp Cloud with a member who posts something bad.
+  const host = newKey();
+  const bad = await userWithName("baddie");
+  const serverId = crypto.randomBytes(12).toString("hex");
+  const hostWs = await joinServer(serverId, "Host", host, { create: "Bad place" });
+  hostWs.send({ type: "create_invite", max_uses: null, expires_in_hours: null });
+  const { invite } = await hostWs.waitFor((m) => m.type === "invite_created");
+  const badWs = await joinServer(serverId, "Baddie", bad.key, { invite: invite.code });
+  bad.d.send({ type: "set_servers", ids: [serverId] });
+  const general = hostWs.welcome.channels.find((c) => c.name === "general").id;
+  badWs.send({ type: "send_chat", channel: general, text: "something awful" });
+  const posted = await badWs.waitFor((m) => m.type === "chat" && m.message?.text === "something awful");
+
+  // Reported: the owner's app shows the number straight away.
+  const reporter = await userWithName("witness");
+  reporter.d.send({ type: "report", kind: "message", reason: "hate", server: `cloud:${serverId}`, server_name: "Bad place", channel_name: "general", user_key: bad.key.pub, user_name: "Baddie", message: "something awful", message_id: `${general}/${posted.message.id}` });
+  await reporter.d.waitFor((m) => m.type === "report_sent");
+  assert.ok((await owner.waitFor((m) => m.type === "admin_open")).open >= 1);
+
+  const list = await admin(owner, "reports", { view: "open", user: bad.key.pub });
+  const report = list.rows.find((r) => JSON.parse(r.target).message === "something awful");
+  assert.ok(report, "the report is listed");
+  assert.equal(list.servers[serverId].name, "Bad place");
+  assert.equal(list.aboutUser[bad.key.pub], 1);
+
+  // Remove the message: it's gone for everyone in the server, and the report is handled.
+  await admin(owner, "delete_message", { id: report.id, server: `cloud:${serverId}`, message_id: `${general}/${posted.message.id}` });
+  await hostWs.waitFor((m) => m.type === "message_deleted" && m.id === posted.message.id);
+  assert.ok((await admin(owner, "reports", { view: "done", user: bad.key.pub })).rows.some((r) => r.id === report.id));
+
+  // Ban them: thrown out of the server and their account, and can't come back.
+  await admin(owner, "ban", { key: bad.key.pub, reason: "hate" });
+  await bad.d.waitFor((m) => m.type === "error" && /banned from Hopp Cloud/.test(m.message));
+  await badWs.waitFor((m) => m.type === "error" && /banned from Hopp Cloud/.test(m.message));
+  await assert.rejects(Device.open(bad.key, "Baddie"), /banned/);
+  await assert.rejects(joinServer(serverId, "Baddie", bad.key), /banned/);
+  assert.ok((await admin(owner, "bans")).bans.some((b) => b.key === bad.key.pub));
+  await admin(owner, "unban", { key: bad.key.pub });
+  (await Device.open(bad.key, "Baddie")).close();
+
+  // Make someone else an admin by username: they see reports too, but can't make admins.
+  const helper = await userWithName("helper");
+  await admin(owner, "add_admin", { username: helper.name });
+  assert.equal((await helper.d.waitFor((m) => m.type === "admin_role")).role, "admin");
+  assert.ok((await admin(helper.d, "overview")).stats.open >= 0);
+  await assert.rejects(admin(helper.d, "add_admin", { username: reporter.name }), /Only an owner/);
+  await assert.rejects(admin(helper.d, "ban", { key: OWNER.pub }), /owner/);
+  assert.ok((await admin(owner, "admins")).admins.some((x) => x.key === helper.key.pub && x.role === "admin"));
+  await admin(owner, "remove_admin", { key: helper.key.pub });
+  assert.equal((await helper.d.waitFor((m) => m.type === "admin_role")).role, null);
+
+  // Take the server down: everyone is let go and it's gone.
+  await admin(owner, "take_down", { server: `cloud:${serverId}` });
+  await hostWs.waitFor((m) => m.type === "server_deleted");
+  await assert.rejects(joinServer(serverId, "Host", host), /doesn't exist/);
+  assert.ok((await admin(owner, "log")).log.some((l) => l.action === "took down server" && /Bad place/.test(l.subject)));
+  for (const d of [owner, bad.d, reporter.d, helper.d]) d.close();
 });

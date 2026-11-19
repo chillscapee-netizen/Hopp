@@ -44,6 +44,7 @@ export class HoppTunnel extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
     const url = new URL(request.url);
+    if (await this.ctx.storage.get<boolean>("blocked")) return new Response("This server has been blocked from Hopp's tunnel for breaking Hopp's rules.", { status: 403 });
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -70,6 +71,13 @@ export class HoppTunnel extends DurableObject<Env> {
     server.serializeAttachment({ conn } satisfies Guest);
     host.send(frame(OPEN, conn));
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Blocked by Hopp for breaking its rules: nobody gets through, the host neither. */
+  async setBlocked(on: boolean) {
+    if (!on) return void (await this.ctx.storage.delete("blocked"));
+    await this.ctx.storage.put("blocked", true);
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Blocked by Hopp.");
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
