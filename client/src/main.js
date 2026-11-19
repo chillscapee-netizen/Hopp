@@ -12378,6 +12378,29 @@ async function adminDo(op, extra, { confirm, done }) {
   }
 }
 
+/** A reported picture from a server on Hopp Cloud, sized before it loads; a click shows it big. */
+function adminPicture(url, width, height) {
+  const fit = Math.min(1, 360 / width, 260 / height);
+  const box = el("button", "msg-picture");
+  box.type = "button";
+  box.style.width = `${Math.max(48, Math.round(width * fit))}px`;
+  box.style.aspectRatio = `${width} / ${height}`;
+  const img = el("img");
+  img.alt = "Reported picture";
+  img.src = url;
+  img.addEventListener("error", () => {
+    box.classList.add("gone");
+    box.replaceChildren(icon("x", "xs"), el("span", "", "Picture no longer available"));
+  });
+  box.append(img);
+  box.addEventListener("click", () => {
+    if (box.closest(".veiled") || box.classList.contains("gone")) return;
+    $("lightbox-img").src = img.src;
+    $("lightbox").showModal();
+  });
+  return box;
+}
+
 function adminButton(label, iconName, onClick, kind = "") {
   const b = el("button", `admin-act ${kind}`.trim());
   b.type = "button";
@@ -12518,9 +12541,36 @@ function adminReportCard(r, found) {
   // While streaming, who reported and what was reported stay blurred: reporters are promised
   // the person never learns who they were.
   if (t.message) {
-    const quote = el("blockquote", "admin-quote", t.message);
-    quote.dataset.private = "";
-    card.append(quote);
+    // The picture itself, as it was sent: from the server on Hopp Cloud, or one sent between
+    // friends opened with the key in the message. Blurred first when it may be the worst kind.
+    const server = t.message.match(PICTURE);
+    const dm = t.message.match(DM_PICTURE);
+    let media = null;
+    if (server && cloudId) media = adminPicture(`${cloudHttp()}/servers/${cloudId}/images/${server[1]}`, Number(server[2]), Number(server[3]));
+    else if (dm) media = dmPictureView(dm[1], dm[2], dm[3], Number(dm[4]), Number(dm[5]));
+    if (media) {
+      const wrap = el("div", "admin-pic");
+      wrap.dataset.private = "";
+      wrap.append(media);
+      if (why.level === "urgent" || r.reason === "sexual") {
+        wrap.classList.add("veiled");
+        const show = el("button", "admin-pic-show", "Show picture");
+        show.type = "button";
+        show.addEventListener("click", (e) => {
+          e.stopPropagation();
+          wrap.classList.remove("veiled");
+          show.remove();
+        });
+        wrap.append(show);
+      }
+      card.append(wrap);
+    }
+    const words = media ? t.message.slice((server ?? dm)[0].length).trim() : previewText(t.message);
+    if (words) {
+      const quote = el("blockquote", "admin-quote", words);
+      quote.dataset.private = "";
+      card.append(quote);
+    }
   }
   if (r.details) {
     const said = el("p", "admin-said");

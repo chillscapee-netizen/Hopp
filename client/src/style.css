@@ -4281,3 +4281,9 @@ html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 12
 .safety-words textarea:focus { border-color: var(--border-focus); outline: none; }
 .safety-select { flex: none; width: auto; min-width: 140px; }
 .safety-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; }
+
+/* A reported picture: blurred first when it may be the worst kind, shown on purpose. */
+#admin-dialog .admin-pic { position: relative; display: inline-block; margin: 0 0 8px; border-radius: 8px; overflow: hidden; }
+#admin-dialog .admin-pic .msg-picture { display: block; margin: 0; }
+#admin-dialog .admin-pic.veiled .msg-picture img { filter: blur(28px) saturate(0.6); transform: scale(1.1); }
+#admin-dialog .admin-pic-show { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 6px 14px; border: none; border-radius: 999px; background: rgb(0 0 0 / 0.7); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

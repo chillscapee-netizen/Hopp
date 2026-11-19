@@ -9,7 +9,7 @@
   const reports = {
     rows: [
       { id: 7, at: Date.now() - 3_600_000, reporter: KEYS.sara, reporter_name: "sara", kind: "message", reason: "hate", details: "keeps doing it", target, user_key: KEYS.elin, server: "cloud:crew0001xyz", done: 0, note: null, action: null },
-      { id: 8, at: Date.now() - 60_000, reporter: KEYS.sara, reporter_name: "sara", kind: "server", reason: "child", details: "", target: JSON.stringify({ server: "tunnel:" + "ab".repeat(16), server_name: "Hidden place" }), user_key: "", server: "tunnel:" + "ab".repeat(16), done: 0 },
+      { id: 8, at: Date.now() - 60_000, reporter: KEYS.sara, reporter_name: "sara", kind: "message", reason: "child", details: "", target: JSON.stringify({ server: "cloud:crew0001xyz", server_name: "The Crew", user_key: KEYS.jonas, user_name: "Jonas", message: "hopp-image:" + "ef".repeat(16) + " 120x80\nlook at this", message_id: "0/101" }), user_key: KEYS.jonas, server: "cloud:crew0001xyz", done: 0 },
     ],
     aboutUser: { [KEYS.elin]: 3 },
     aboutServer: {},
@@ -45,9 +45,15 @@
   check("reported often: says so", /Reported 3 times/.test(msgCard.textContent));
   check("while streaming, who reported and what was said are blurred", msgCard.querySelector(".admin-from [data-private]")?.textContent === "sara" && msgCard.querySelector(".admin-quote")?.hasAttribute("data-private") && msgCard.querySelector(".admin-key")?.hasAttribute("data-private"));
   const urgent = cards.find((c) => c.classList.contains("urgent"));
-  check("child content stands out, and a tunnel server can be blocked", urgent && /Block tunnel/.test(urgent.textContent));
+  check("child content stands out, and its message can be removed", urgent && /Remove message/.test(urgent.textContent));
   const buttons = (card) => [...card.querySelectorAll(".admin-act")].map((b) => b.textContent);
   check("a message in a server on Hopp Cloud: remove it, ban them, ban the owner, take it down", ["Handled", "Remove message", "Ban Elin", "Ban the owner", "Take down server"].every((l) => buttons(msgCard).includes(l)), buttons(msgCard).join(", "));
+  // A reported picture: the picture itself, blurred first for the worst kinds, its caption as words.
+  const picCard = cards.find((c) => c.classList.contains("urgent"));
+  check("a picture report shows the picture, blurred first", !!picCard?.querySelector(".admin-pic.veiled .msg-picture") && !!picCard.querySelector(".admin-pic-show"));
+  check("and its caption, not its code", /look at this/.test(picCard?.querySelector(".admin-quote")?.textContent ?? "") && !/hopp-image/.test(picCard?.textContent ?? ""));
+  picCard?.querySelector(".admin-pic-show")?.click();
+  check("Show picture shows it", !picCard?.querySelector(".admin-pic.veiled"));
   check("an owner: Owner on top, and can delete a report", $("admin-role").textContent === "Owner" && buttons(msgCard).includes("Delete report"));
 
   // Ban asks first, then sends.
