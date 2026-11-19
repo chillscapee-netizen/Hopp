@@ -39,6 +39,8 @@ pub struct Host {
     starting: tokio::sync::Mutex<()>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     server: Mutex<Option<Arc<strom_server::Server>>>,
+    /// The tunnel's secret, which proves to Hopp Cloud that an invite link is this server's.
+    secret: Mutex<Option<String>>,
     status: Mutex<HostStatus>,
 }
 
@@ -85,6 +87,7 @@ pub async fn host_start(app: AppHandle, host: State<'_, Host>, name: String) -> 
     let tls = strom_server::tls::load_or_create(&dir).map_err(|e| format!("Couldn't make the server's key: {e}"))?;
     let tunnel = tunnel_id(&dir).map_err(|e| format!("Couldn't set up the server's tunnel: {e}"))?;
     let pin = tls.pin.clone();
+    *host.secret.lock().unwrap() = Some(tunnel.secret.clone());
     // Your own connection: on this computer only (nothing listens on the network).
     let mut bound = None;
     for port in PORTS {
@@ -169,6 +172,29 @@ pub fn clean_up(app: &AppHandle) {
     if let Ok(dir) = folder(app) {
         remove_deleted(&dir);
     }
+}
+
+/// A short link for one of this server's invites, as Hopp Cloud's servers have: Hopp Cloud
+/// keeps the code with the server's name, tunnel and key, so the link shows the name and reaches
+/// this server. Only this computer can make one (it knows the tunnel's secret).
+#[tauri::command]
+pub async fn host_register_invite(host: State<'_, Host>, cloud: String, code: String, expires_at: Option<f64>) -> CmdResult {
+    let status = host.status.lock().unwrap().clone();
+    let secret = host.secret.lock().unwrap().clone();
+    let (true, Some(secret)) = (status.running, secret) else { return Err("Your server isn't running.".into()) };
+    let url = format!("{}/tunnels/{}/invite", cloud.trim_end_matches('/'), status.tunnel);
+    let body = serde_json::json!({ "secret": secret, "code": code, "pin": status.pin, "name": status.name, "expires_at": expires_at });
+    let response = crate::cloud_http()
+        .post(url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Hopp Cloud: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Hopp Cloud said no ({}).", response.status()));
+    }
+    Ok(())
 }
 
 #[tauri::command]

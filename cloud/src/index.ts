@@ -58,6 +58,8 @@ const INVITE_PATH = /^\/invite\/([A-Za-z0-9]{6,16})$/;
 const USER_PATH = /^\/users\/([a-z0-9_.]{2,32})$/;
 const PROFILE_PATH = /^\/profiles\/([0-9a-f]{64})$/;
 const INVITE_PAGE = /^\/i\/([A-Za-z0-9]{6,16})\/?$/;
+/** A server on someone's computer registers a short link for one of its invites. */
+const TUNNEL_INVITE = /^\/tunnels\/([0-9a-f]{32})\/invite$/;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -85,6 +87,22 @@ export default {
       // Not kept in Cloudflare's cache: a deleted picture must be gone at once. The app keeps
       // its own copy, so each person fetches a picture only once.
       return stub.fetch(forwarded);
+    }
+
+    // A short link for an invite to a server on someone's computer, as Hopp Cloud's servers have:
+    // only its host can make one (it proves it with the tunnel's secret).
+    const hostedInvite = url.pathname.match(TUNNEL_INVITE);
+    if (hostedInvite && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const code = String(body.code ?? "").toUpperCase();
+      const pin = String(body.pin ?? "").toLowerCase();
+      const name = String(body.name ?? "").trim().slice(0, 40) || "A server";
+      const expires = body.expires_at == null ? null : Number(body.expires_at);
+      if (!/^[A-Z0-9]{6,16}$/.test(code) || !/^[0-9a-f]{32,64}$/.test(pin) || (expires !== null && !Number.isFinite(expires))) return json({ error: "Bad invite." }, 400);
+      const owner = await env.TUNNELS.get(env.TUNNELS.idFromName(hostedInvite[1])).ownedBy(String(body.secret ?? ""));
+      if (!owner) return json({ error: "Not this server's tunnel." }, 403);
+      if (!(await inviteIndex(env).registerHosted(code, hostedInvite[1], pin, name, expires))) return json({ error: "That code is taken." }, 409);
+      return json({ ok: true });
     }
 
     const tunnel = url.pathname.match(TUNNEL_PATH);
@@ -130,16 +148,22 @@ export default {
     const page = url.pathname.match(INVITE_PAGE);
     if (page && request.method === "GET") {
       const code = page[1].toUpperCase();
-      const serverId = await inviteIndex(env).lookup(code);
-      const preview = serverId ? await env.SERVERS.get(env.SERVERS.idFromName(serverId)).preview(code) : null;
+      const found = await inviteIndex(env).find(code);
+      const serverId = found?.server.startsWith("tunnel:") ? null : found?.server;
+      const preview = found?.server.startsWith("tunnel:")
+        ? { name: found.name, icon: null, members: null, online: null, inviter: null }
+        : serverId ? await env.SERVERS.get(env.SERVERS.idFromName(serverId)).preview(code) : null;
       return new Response(invitePage(code, preview), { status: preview ? 200 : 404, headers: { "content-type": "text/html; charset=utf-8" } });
     }
 
     const invite = url.pathname.match(INVITE_PATH);
     if (invite && request.method === "GET") {
       const code = invite[1].toUpperCase();
-      const serverId = await inviteIndex(env).lookup(code);
-      if (!serverId) return json({ error: "This invite is invalid or has expired." }, 404);
+      const found = await inviteIndex(env).find(code);
+      if (!found) return json({ error: "This invite is invalid or has expired." }, 404);
+      // A server on someone's computer: where to reach it and its key (it says itself who's in it).
+      if (found.server.startsWith("tunnel:")) return json({ name: found.name, icon: null, address: found.server, pin: found.pin, code, hosted: true });
+      const serverId = found.server;
       const preview = await env.SERVERS.get(env.SERVERS.idFromName(serverId)).preview(code);
       if (!preview) return json({ error: "This invite is invalid or has expired." }, 404);
       return json({ ...preview, server_id: serverId, code });
@@ -198,13 +222,13 @@ async function gifs(url: URL, env: Env, ctx: ExecutionContext): Promise<Response
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** The page an invite link opens in a browser. */
-function invitePage(code: string, p: { name: string | null; icon: string | null; members: number; online: number; inviter: string | null } | null): string {
+function invitePage(code: string, p: { name: string | null; icon: string | null; members: number | null; online: number | null; inviter: string | null } | null): string {
   const name = p?.name ? escapeHtml(p.name) : "";
   const icon = p?.icon && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(p.icon) ? `<img class="icon" src="${p.icon}" alt="">` : `<div class="icon letter">${name.slice(0, 1) || "?"}</div>`;
   const body = p
     ? `<p class="kicker">${p.inviter ? `${escapeHtml(p.inviter)} invited you to join` : "You've been invited to join"}</p>
        ${icon}<h1>${name}</h1>
-       <p class="counts"><span class="dot on"></span>${p.online} Online <span class="dot"></span>${p.members} ${p.members === 1 ? "Member" : "Members"}</p>
+       ${p.members === null ? `<p class="counts">A server on someone's own computer</p>` : `<p class="counts"><span class="dot on"></span>${p.online} Online <span class="dot"></span>${p.members} ${p.members === 1 ? "Member" : "Members"}</p>`}
        <a class="btn primary" href="hopp://${code}">Open in Hopp</a>
        <p class="small">Don't have Hopp yet?</p>
        <a class="btn" href="/download/Hopp-setup.exe">Download Hopp for Windows</a>

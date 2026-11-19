@@ -73,6 +73,13 @@ export class HoppTunnel extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /** Whether `secret` is this tunnel's host's (the server it belongs to). */
+  async ownedBy(secret: string): Promise<boolean> {
+    if (!/^[0-9a-f]{64}$/.test(secret)) return false;
+    const kept = await this.ctx.storage.get<string>("host");
+    return !!kept && kept === (await sha256hex(secret)) && !(await this.ctx.storage.get<boolean>("blocked"));
+  }
+
   /** Blocked by Hopp for breaking its rules: nobody gets through, the host neither. */
   async setBlocked(on: boolean) {
     if (!on) return void (await this.ctx.storage.delete("blocked"));

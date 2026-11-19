@@ -2100,6 +2100,7 @@ fn main() {
             host::host_stop,
             host::host_delete,
             host::host_status,
+            host::host_register_invite,
             set_memory_low,
             install_update,
             set_role,

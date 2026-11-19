@@ -336,7 +336,13 @@ function shortInviteCode(input) {
 }
 
 const previews = new Map();
-/** Looks up a short cloud invite: { name, icon, members, online, server_id, code }. Cached per code. */
+/** Where a short link's server is: on Hopp Cloud, or on someone's computer (reached by its tunnel). */
+function previewAddress(p) {
+  return p.address ?? `cloud:${p.server_id}`;
+}
+
+/** Looks up a short invite: { name, icon, members, online, server_id, code }, or for a server on
+ *  someone's computer { name, address, pin, code, hosted }. Cached per code. */
 function invitePreview(code) {
   if (!previews.has(code)) {
     const lookup = invoke("invite_preview", { cloud: prefs.cloudUrl.replace(/^ws/, "http"), code });
@@ -3074,7 +3080,7 @@ async function followInvite(link) {
   const code = shortInviteCode(link);
   let address = null;
   try {
-    address = code ? `cloud:${(await invitePreview(code)).server_id}` : parseInvite(link).address;
+    address = code ? previewAddress(await invitePreview(code)) : parseInvite(link).address;
   } catch (err) {
     toast(friendlyError(err), true);
     return;
@@ -3566,13 +3572,13 @@ function inviteEmbed(link) {
   // A server someone runs: no preview, just where it is.
   if (target.address) {
     const known = prefs.servers.find((x) => x.address === target.address);
-    show(inviteCardView({ name: target.address, icon: null, sub: "A server someone runs on their own computer", kicker: "Server invite" }, known, link));
+    show(inviteCardView({ name: target.address.includes("tunnel:") ? "Private server" : target.address, icon: null, sub: "A server someone runs on their own computer", kicker: "Server invite" }, known, link));
     return slot;
   }
   invitePreview(target.code).then(
     (p) => {
-      const known = prefs.servers.find((x) => x.address === `cloud:${p.server_id}`);
-      show(inviteCardView({ ...p, kicker: p.inviter ? `${p.inviter} invited you to join` : "You've been invited to join" }, known, link));
+      const known = prefs.servers.find((x) => x.address === previewAddress(p));
+      show(inviteCardView({ ...p, ...(p.hosted ? { sub: "A server someone runs on their own computer" } : {}), kicker: p.inviter ? `${p.inviter} invited you to join` : "You've been invited to join" }, known, link));
     },
     () => {
       const card = el("div", "invite-card invalid");
@@ -3811,7 +3817,7 @@ async function joinInvite(input) {
   if (code) {
     try {
       const p = await invitePreview(code);
-      addAndConnect(`cloud:${p.server_id}`, p.code, p.name);
+      addAndConnect(previewAddress(p), p.code, p.name, p.pin ?? undefined);
       return null;
     } catch (err) {
       return friendlyError(err);
@@ -4033,9 +4039,17 @@ async function showInvite(invite) {
   if (!$("invite-dialog").open) return;
   renderHost();
   const { address } = await shareableAddress();
-  // Cloud: strom://CODE. Self-hosted: strom://host:port/CODE.
-  // Cloud invites are web links anyone can click; they open Hopp, or help install it.
-  $("invite-link").value = address ? `hopp://${address}/${invite.code}` : `${prefs.cloudUrl.replace(/^ws/, "http")}/i/${invite.code}`;
+  const short = `${cloudHttp()}/i/${invite.code}`;
+  // Hosted here: a short link with your server's name, like Hopp Cloud's (Hopp Cloud keeps the
+  // code with the name, tunnel and key); the long link if that can't be done right now.
+  if (address?.includes("tunnel:")) {
+    const ok = await invoke("host_register_invite", { cloud: cloudHttp(), code: invite.code, expiresAt: invite.expires_at ?? null }).then(() => true, () => false);
+    if (!$("invite-dialog").open) return;
+    $("invite-link").value = ok ? short : `hopp://${address}/${invite.code}`;
+  } else {
+    // Cloud: a web link anyone can click (it opens Hopp, or helps install it). Elsewhere: hopp://host:port/CODE.
+    $("invite-link").value = address ? `hopp://${address}/${invite.code}` : short;
+  }
   $("invite-summary").textContent = inviteSummary(invite);
 }
 

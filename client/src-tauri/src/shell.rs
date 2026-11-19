@@ -217,7 +217,7 @@ pub fn window_splash(app: AppHandle) {
     let _ = w.set_min_size(None::<tauri::LogicalSize<f64>>);
     let _ = w.set_resizable(false);
     let _ = w.set_maximizable(false);
-    let _ = w.set_size(tauri::LogicalSize::new(320.0, 380.0));
+    let _ = w.set_size(tauri::LogicalSize::new(260.0, 300.0));
     let _ = w.center();
     reveal(&w);
 }

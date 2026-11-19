@@ -876,3 +876,24 @@ test("admins in the app: see reports at once, remove a message, ban, take down, 
   assert.ok((await admin(owner, "log")).log.some((l) => l.action === "took down server" && /Bad place/.test(l.subject)));
   for (const d of [owner, bad.d, reporter.d, helper.d]) d.close();
 });
+
+test("a server on someone's computer gets short invite links with its name, made only by its host", async () => {
+  const id = crypto.randomBytes(16).toString("hex");
+  const secret = crypto.randomBytes(32).toString("hex");
+  // The host opens its tunnel, which makes the tunnel its own.
+  const host = new WebSocket(`${BASE}/tunnels/${id}/host?secret=${secret}`);
+  await new Promise((resolve, reject) => {
+    host.addEventListener("open", resolve, { once: true });
+    host.addEventListener("error", reject, { once: true });
+  });
+  const code = "H" + crypto.randomBytes(4).toString("hex").toUpperCase().slice(0, 7);
+  const pin = "ab".repeat(16);
+  const register = (body) => fetch(`${HTTP}/tunnels/${id}/invite`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await register({ secret: crypto.randomBytes(32).toString("hex"), code, pin, name: "Fake" })).status, 403, "only the host");
+  assert.equal((await register({ secret, code, pin, name: "Marcus server", expires_at: null })).status, 200);
+  const preview = await (await fetch(`${HTTP}/invite/${code}`)).json();
+  assert.deepEqual([preview.name, preview.address, preview.pin, preview.hosted], ["Marcus server", `tunnel:${id}`, pin, true]);
+  const page = await (await fetch(`${HTTP}/i/${code}`)).text();
+  assert.ok(page.includes("Marcus server") && page.includes("own computer"), "the web page shows its name");
+  host.close();
+});
