@@ -6377,6 +6377,7 @@ function mergeSync(remote) {
       muted: { ...remote.notify.muted },
     };
     save("notify", JSON.stringify(prefs.notify));
+    wakeWhenMuteEnds();
   }
   save("servers", JSON.stringify(prefs.servers));
   save("rail", JSON.stringify(prefs.rail));
@@ -7252,7 +7253,8 @@ function notifyMention({ server, channel, author_key, author_name, channel_name,
   const s = prefs.servers.find((x) => x.address === server);
   if (!s || state.me?.status === "dnd") return;
   const level = serverLevel(s);
-  if (level === "none" || channelMuted(server, channel) || (!mention && (level !== "all" || serverMuted(s)))) return;
+  // Muting a channel or a server quiets everything but a mention of you (as the mention count shows).
+  if (level === "none" || (!mention && (level !== "all" || serverMuted(s) || channelMuted(server, channel)))) return;
   const looking = online() && s.id === state.activeId && state.view === channel && document.hasFocus();
   if (looking) return;
   playSound("message", author_name + (mention ? " mentioned you in #" : " wrote in #") + channel_name + ", " + s.label);
@@ -8639,10 +8641,12 @@ function setServerMuted(s, minutes) {
   wakeWhenMuteEnds();
 }
 
-/** When a mute runs out, the unread dot comes back by itself. */
+/** When a mute runs out, the unread dot comes back by itself (also for one set before a restart). */
 var muteTimer = 0;
+setTimeout(() => wakeWhenMuteEnds(), 0);
 function wakeWhenMuteEnds() {
   clearTimeout(muteTimer);
+  if (!prefs.notify) return;
   const ends = Object.values(prefs.notify.muted ?? {}).filter((t) => t > Date.now());
   if (!ends.length) return;
   muteTimer = setTimeout(() => {

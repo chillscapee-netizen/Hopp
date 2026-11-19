@@ -1,4 +1,4 @@
-// virtual-time: 120000
+// virtual-time: 300000
 // A sweep through every view, dialog, settings page and menu, on a Hopp Cloud server and on a
 // server on someone's computer: no errors thrown, nothing outside the window or cut off by its
 // box, no text cut off without "…", no button without a name, no broken picture, and no
@@ -132,6 +132,48 @@ async function sweep(label) {
   if (me) await view(`${label} my card`, () => openUserCard(me, document.querySelector(".user-panel") ?? document.body));
   await view(`${label} emoji picker`, () => openEmojiPicker(document.getElementById("emoji-btn"), () => {}, () => {}));
   await view(`${label} status`, () => openStatusDialog());
+  await view(`${label} inbox`, () => $("inbox-btn").click());
+  await view(`${label} pins`, () => $("pins-btn").click());
+  await view(`${label} search results`, () => runSearch("hello", {}));
+  await view(`${label} soundboard`, () => openSoundboard(document.getElementById("emoji-btn")));
+  if (msg && other) await view(`${label} report`, () => reportMessage({ ...msg, author_key: other.public_key }));
+  if (activeServer()) await view(`${label} report server`, () => reportServer(activeServer()));
+}
+
+/** The admin panel, with a report of each kind, for owners. */
+async function adminSweep(label) {
+  const send = commands.account_send;
+  const t = (o) => JSON.stringify(o);
+  const rows = [
+    { id: 1, at: Date.now() - 5e6, reporter: KEYS.sara, reporter_name: "W".repeat(32), kind: "message", reason: "harassment", details: "W".repeat(300), target: t({ server: "cloud:crew0001xyz", server_name: "W".repeat(40), channel: "w".repeat(32), user_key: KEYS.elin, user_name: "W".repeat(32), message: "W".repeat(2000), message_id: "0/1" }), user_key: KEYS.elin, server: "cloud:crew0001xyz", done: 0 },
+    { id: 2, at: Date.now(), reporter: KEYS.sara, reporter_name: "sara", kind: "server", reason: "child", details: "", target: t({ server: "tunnel:" + "ab".repeat(16), server_name: "Hidden" }), user_key: "", server: "tunnel:" + "ab".repeat(16), done: 1, action: "Handled by owner", handled_at: Date.now() },
+    { id: 3, at: Date.now(), reporter: KEYS.sara, reporter_name: "sara", kind: "user", reason: "spam", details: "", target: t({ server: "dm", user_key: KEYS.elin, user_name: "Elin" }), user_key: KEYS.elin, server: "dm", done: 0 },
+  ];
+  const answers = {
+    reports: { rows, aboutUser: { [KEYS.elin]: 4 }, aboutServer: {}, byReporter: { [KEYS.sara]: 3 }, banned: { [KEYS.elin]: true }, blocked: {}, servers: { crew0001xyz: { name: "W".repeat(40), owner: KEYS.sara, owner_name: "W".repeat(32), members: 999, created_at: 0 } }, stats: { open: 2, urgent: 0, today: 3, handled: 1, bans: 1, blocked: 0, byReason: { spam: 1, harassment: 1 } } },
+    bans: { bans: [{ key: KEYS.elin, name: "W".repeat(32), reason: "W".repeat(200), at: Date.now() }], tunnels: [{ id: "ab".repeat(16), name: "W".repeat(40), at: Date.now() }] },
+    admins: { admins: [{ key: "1".repeat(64), username: "w".repeat(32), role: "owner" }, { key: KEYS.sara, username: "sara", role: "admin", added_by: "w".repeat(32) }] },
+    log: { log: [{ at: Date.now(), action: "took down server", subject: "W".repeat(100), detail: "W".repeat(200) }] },
+  };
+  commands.account_send = (a) => {
+    if (a.msg.type !== "admin") return send(a);
+    setTimeout(() => emit("account", { type: "admin", req: a.msg.req, op: a.msg.op, ...(answers[a.msg.op] ?? { ok: true }) }), 5);
+    return null;
+  };
+  emit("account", { type: "admin_role", role: "owner" });
+  emit("account", { type: "admin_open", open: 123, urgent: 1 });
+  for (const tab of ["reports", "bans", "admins", "log"]) await view(`${label} admin ${tab}`, async () => {
+    openAdmin(tab);
+    await wait(150);
+  });
+  admin.view = "done";
+  await view(`${label} admin handled`, async () => {
+    openAdmin("reports");
+    await wait(150);
+  });
+  admin.view = "open";
+  emit("account", { type: "admin_role", role: null });
+  commands.account_send = send;
 }
 
 (async () => {
@@ -162,6 +204,17 @@ async function sweep(label) {
   emit("roster", long);
   await wait(300);
   await sweep("long names");
+
+  await adminSweep("long names");
+
+  // Every view again in a colour theme and in light grey: nothing unreadable or broken.
+  for (const theme of [GRADIENTS[0].id, "light"]) {
+    setTheme(theme);
+    await wait(100);
+    await sweep(`theme ${theme}`);
+    await adminSweep(`theme ${theme}`);
+  }
+  setTheme("mid");
 
   // Home: friends, messages, a group.
   for (const tab of ["online", "all", "pending", "blocked", "add"]) await view(`home ${tab}`, () => goHomeTab(tab));

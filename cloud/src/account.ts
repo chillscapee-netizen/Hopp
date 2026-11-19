@@ -572,6 +572,7 @@ export class StromAccount extends DurableObject<Env> {
     const time = Number(request.headers.get("X-Hopp-Time"));
     const signature = hexToBytes(request.headers.get("X-Hopp-Signature") ?? "");
     if (!owner || key !== owner || signature?.length !== 64) return fail("Not signed.", 401);
+    if (this.meta("cloud_banned")) return fail(BANNED_MESSAGE, 403);
     if (!Number.isFinite(time) || Math.abs(Date.now() - time) > 5 * 60_000) return fail("Your computer's clock is off. Check the time and try again.", 401);
     const data = new Uint8Array(await request.arrayBuffer());
     if (data.length < 29 || data.length > MAX_DM_IMAGE_BYTES) return fail("That picture is too big.");

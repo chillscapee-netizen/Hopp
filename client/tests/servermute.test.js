@@ -33,6 +33,19 @@
   notifyMention({ server: raid.address, channel: 0, author_key: KEYS.elin, author_name: "Elin", channel_name: "general", text: "hi @you", mention: true });
   window.playSound = play;
   check("a plain message stays quiet, a mention still gets through", sounds.length === 1 && /mentioned you/.test(sounds[0]), JSON.stringify(sounds));
+  // A muted channel, the same: quiet, except when someone mentions you.
+  setServerMuted(raid, null);
+  setServerLevel(raid, "all");
+  setChannelMuted(raid.address, 0, true);
+  sounds.length = 0;
+  window.playSound = (name, why) => sounds.push(why);
+  notifyMention({ server: raid.address, channel: 0, author_key: KEYS.elin, author_name: "Elin", channel_name: "general", text: "hi", mention: false });
+  notifyMention({ server: raid.address, channel: 0, author_key: KEYS.elin, author_name: "Elin", channel_name: "general", text: "hi @you", mention: true });
+  window.playSound = play;
+  check("a muted channel: quiet, but a mention gets through", sounds.length === 1 && /mentioned you/.test(sounds[0]), JSON.stringify(sounds));
+  setChannelMuted(raid.address, 0, false);
+  setServerLevel(raid, "mentions");
+  setServerMuted(raid, 60);
   openServerMenu(raid, 300, 300);
   await wait(30);
   check("the menu offers to unmute, saying until when", rows().some((r) => r.startsWith("Unmute server") && /Muted until/.test(r)), rows().join(", "));
