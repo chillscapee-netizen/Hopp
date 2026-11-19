@@ -1821,6 +1821,7 @@ async function connectTo(server, create, reconnecting) {
   state.outbox = [];
   // Another server's events don't show here (this one's come once it's connected).
   state.events = [];
+  state.eventsLoaded = false;
   eventsAsked = null;
   state.replyTo = null;
   state.editing = null;
@@ -10214,6 +10215,7 @@ listen("event-created", (e) => {
 
 listen("events", (e) => {
   state.events = e.payload ?? [];
+  state.eventsLoaded = true;
   keepReminders();
   // Cards on screen follow (who's coming, cancelled).
   for (const card of document.querySelectorAll(".event-card[data-event]")) card.replaceWith(eventView(Number(card.dataset.event)));
@@ -10237,7 +10239,8 @@ function eventView(id) {
   card.dataset.event = String(id);
   if (!ev) {
     card.classList.add("gone");
-    card.append(icon("calendar"), el("span", null, "This event is over or was cancelled."));
+    // Before the server has said which events there are, it isn't known to be gone.
+    card.append(icon("calendar"), el("span", null, eventsAsked === state.activeId && state.eventsLoaded ? "This event is over or was cancelled." : "Loading the event…"));
     return card;
   }
   const me = state.account?.publicKey;
