@@ -2376,13 +2376,16 @@ impl Core {
             let limit = num(&msg["user_limit"]).filter(|x| x.is_finite()).map(|x| x.floor() as i64).unwrap_or(0).clamp(0, cap);
             self.exec("UPDATE channels SET user_limit = ? WHERE id = ?", params![(limit > 0).then_some(limit), ch.id]);
         }
+        let mut changed_people = false;
         if !msg["private_roles"].is_null() {
             let known: HashSet<i64> = self.custom_roles().iter().map(|r| r.id).collect();
             let roles: Vec<i64> = msg["private_roles"].as_array().map(|a| a.iter().map(int).filter(|r| known.contains(r)).collect()).unwrap_or_default();
             let stored = (!roles.is_empty()).then(|| serde_json::to_string(&roles).unwrap_or_default());
             self.exec("UPDATE channels SET private_roles = ? WHERE id = ?", params![stored, ch.id]);
             self.audit(&user.name, "update_channel", Some(&name), Some(if roles.is_empty() { "public" } else { "private" }));
-            return self.channels_changed(true);
+            // Who sees it changed: everyone gets their list, and newcomers its history (once the
+            // rest of this change, slowmode too, is saved).
+            changed_people = true;
         }
         if !msg["slowmode"].is_null() {
             const STEPS: [i64; 14] = [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600];
@@ -2397,7 +2400,7 @@ impl Core {
             }
             self.exec("UPDATE channels SET afk_after = ? WHERE id = ?", params![(minutes > 0).then_some(minutes), ch.id]);
         }
-        self.channels_changed(false);
+        self.channels_changed(changed_people);
     }
 
     fn remove_member(&mut self, conn: ConnId, msg: &Value, user: &User, key: &str, my_rank: Rank, banned: bool) {

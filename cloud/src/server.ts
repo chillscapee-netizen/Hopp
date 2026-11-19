@@ -1589,14 +1589,15 @@ export class StromServer extends DurableObject<Env> {
           const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
           this.sql.exec("UPDATE channels SET user_limit = ? WHERE id = ?", limit || null, ch.id);
         }
+        let changedPeople = false;
         if (msg.private_roles != null) {
           const known = new Set(this.customRoles().map((r) => r.id));
           const roles = (Array.isArray(msg.private_roles) ? msg.private_roles : []).map(Number).filter((r: number) => known.has(r));
           this.sql.exec("UPDATE channels SET private_roles = ? WHERE id = ?", roles.length ? JSON.stringify(roles) : null, ch.id);
-          // Who sees it changed: everyone gets their list, and newcomers its history.
           this.audit(user.name, "update_channel", name, roles.length ? "private" : "public");
-          this.channelsChanged(true);
-          return;
+          // Who sees it changed: everyone gets their list, and newcomers its history (once the
+          // rest of this change, slowmode too, is saved).
+          changedPeople = true;
         }
         if (msg.slowmode != null) {
           const allowedSteps = [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600];
@@ -1609,7 +1610,7 @@ export class StromServer extends DurableObject<Env> {
           if (minutes) this.sql.exec("UPDATE channels SET afk_after = NULL");
           this.sql.exec("UPDATE channels SET afk_after = ? WHERE id = ?", minutes || null, ch.id);
         }
-        return this.channelsChanged();
+        return this.channelsChanged(changedPeople);
       }
       case "reorder_channels": {
         if (!allowed("admin")) return;

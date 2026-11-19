@@ -949,8 +949,11 @@ test("roles: colours and levels, and private channels nobody else sees", async (
   owner.send({ type: "create_channel", name: "crew-only", kind: "text" });
   const listed = await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "crew-only"));
   const secret = listed.channels.find((c) => c.name === "crew-only").id;
-  owner.send({ type: "update_channel", channel: secret, name: "crew-only", private_roles: [crew.id] });
+  // Private and slowmode in one save: both stick.
+  owner.send({ type: "update_channel", channel: secret, name: "crew-only", private_roles: [crew.id], slowmode: 30 });
   await carol.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === secret));
+  const seen = await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.id === secret && c.private_roles?.length));
+  assert.equal(seen.channels.find((c) => c.id === secret).slowmode, 30, "slowmode saved with the privacy change");
   await bob.waitFor((m) => m.type === "chat_history" && m.channel === secret);
   bob.send({ type: "send_chat", channel: secret, text: "crew plans" });
   await bob.waitFor((m) => m.type === "chat" && m.message.text === "crew plans");
