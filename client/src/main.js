@@ -6285,7 +6285,8 @@ function renderAccountSettings() {
 }
 
 $("profile-username-btn").addEventListener("click", () => openUsernameDialog(false));
-$("privacy-requests").addEventListener("change", (e) => accountSend({ type: "set_privacy", requests: e.target.value }).catch(() => {}));
+// Not saved (offline): the choice goes back to what really holds.
+$("privacy-requests").addEventListener("change", (e) => accountSend({ type: "set_privacy", requests: e.target.value }).catch(() => (e.target.value = state.me?.privacy ?? "everyone")));
 $("avatar-upload").addEventListener("click", () => $("avatar-file").click());
 $("avatar-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
