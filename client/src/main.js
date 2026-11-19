@@ -1196,7 +1196,20 @@ function railFolder(f) {
 }
 
 var railOpening = null;
-/** A folder just closed: its closed tile grows in instead of popping. */
+/** How a closed folder looks (its tile's size, colour and edge), to fold an open one into. */
+function closedFolderLook(box) {
+  const tile = el("span", "rail-icon folder-closed");
+  tile.style.position = "absolute";
+  tile.style.visibility = "hidden";
+  box.append(tile);
+  const c = getComputedStyle(tile);
+  const r = tile.getBoundingClientRect();
+  const look = { width: r.width || 48, height: r.height || 48, background: c.backgroundColor, shadow: c.boxShadow };
+  tile.remove();
+  return look;
+}
+
+/** A folder just closed: only its little servers fade in (the tile itself is already there). */
 var railSettling = null;
 
 /**
@@ -1224,11 +1237,18 @@ function toggleFolder(f, head) {
     const servers = [...box.querySelectorAll(":scope > .rail-item:not(.folder-head)")].reverse();
     servers.forEach((s, i) => s.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-8px) scale(0.9)" }], { duration: 140, delay: i * 18, easing: "ease-in", fill: "forwards" }));
     head.querySelector(".folder-glyph")?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: 80, fill: "forwards" });
+    // It becomes exactly the closed folder: its size, place, colour and edge, so when the closed
+    // folder takes its place, nothing changes but the little servers fading in.
+    const closed = closedFolderLook(box);
     const look = getComputedStyle(box);
-    box.animate([{ backgroundColor: look.backgroundColor, boxShadow: look.boxShadow }, { backgroundColor: "transparent", boxShadow: "none" }], { duration: 200, easing: ease, fill: "forwards" });
-    // Down to exactly the closed folder's height (a server tile's), so nothing jumps after.
-    const closedHeight = $("home-btn")?.getBoundingClientRect().height || 48;
-    box.animate([{ height: from + "px" }, { height: closedHeight + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(() => {
+    const rect = box.getBoundingClientRect();
+    box.animate(
+      [
+        { height: from + "px", width: rect.width + "px", backgroundColor: look.backgroundColor, boxShadow: look.boxShadow },
+        { height: closed.height + "px", width: closed.width + "px", backgroundColor: closed.background, boxShadow: closed.shadow },
+      ],
+      { duration: 220, easing: ease, fill: "forwards" },
+    ).finished.then(() => {
       railSettling = f;
       done();
     }, done);

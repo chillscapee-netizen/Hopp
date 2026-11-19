@@ -4117,5 +4117,7 @@ html.wallpaper body::after { content: ""; position: fixed; inset: 0; z-index: 21
 html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpaper #server-settings .settings-content::-webkit-scrollbar-thumb { background: rgb(128 128 128 / 0.4); border-color: transparent; background-clip: padding-box; }
 
 /* A folder just closed: its tile with the little servers grows in, in the same place. */
-.folder-closed.settling { animation: folder-settle 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-@keyframes folder-settle { from { opacity: 0; transform: scale(0.82); } }
+.folder-closed.settling .folder-mini { animation: folder-settle 160ms ease-out both; }
+.folder-closed.settling .folder-mini:nth-child(2) { animation-delay: 30ms; }
+.folder-closed.settling .folder-mini:nth-child(n+3) { animation-delay: 60ms; }
+@keyframes folder-settle { from { opacity: 0; } }
