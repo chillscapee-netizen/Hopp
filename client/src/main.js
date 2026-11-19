@@ -1576,6 +1576,8 @@ function samePlace(a, b) {
 /** Called after anything that may have moved you: a new place goes on the list. */
 function notePlace() {
   if (!state.account || typeof nav === "undefined" || !nav) return;
+  // Another account on this computer starts with nothing behind it.
+  if (nav.owner !== state.account.publicKey) Object.assign(nav, { list: [], at: -1, owner: state.account.publicKey });
   const here = currentPlace();
   const last = nav.list[nav.at];
   if (samePlace(here, last)) return;
