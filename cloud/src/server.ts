@@ -8,9 +8,9 @@ import type { Env } from "./index";
 import { inviteIndex } from "./invites";
 import { accountOf } from "./account";
 
-/** What a member list shows of someone who's in Hopp but not in this server right now. */
 const CLOUD_BANNED = "This Hopp ID has been banned from Hopp Cloud for breaking Hopp's rules.";
 const CLOUD_TAKEN_DOWN = "This server was taken down by Hopp for breaking Hopp's rules.";
+/** What a member list shows of someone who's in Hopp but not in this server right now. */
 const MEMBER_STATUSES = new Set(["online", "idle", "dnd", "offline"]);
 /** Up to this many members, the list goes out again when someone comes or goes. */
 const PRESENCE_PUSH_LIMIT = 300;
@@ -393,7 +393,8 @@ export class StromServer extends DurableObject<Env> {
       }
     }
     // Without a name the server no longer exists: nobody can join it again.
-    for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta"]) this.sql.exec(`DELETE FROM ${table}`);
+    // Everything, as on a server people run themselves: roles, emojis, the audit log and all.
+    for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit", "outbox", "cloud_bans"]) this.sql.exec(`DELETE FROM ${table}`);
   }
 
   // ---------- for whoever runs Hopp Cloud ----------
@@ -503,6 +504,15 @@ export class StromServer extends DurableObject<Env> {
       total -= Number(oldest.size);
     }
     return Response.json({ id });
+  }
+
+  /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
+  private dropChannel(id: number) {
+    // "hopp-image:" and "hopp-voice:" are the same length: the stored id follows either.
+    this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", id);
+    this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
+    this.sql.exec("DELETE FROM notified WHERE channel = ?", id);
+    this.sql.exec("DELETE FROM channels WHERE id = ?", id);
   }
 
   /** A message being deleted: its picture goes too. */
@@ -1496,14 +1506,16 @@ export class StromServer extends DurableObject<Env> {
       }
       case "leave_server": {
         if (owner) return this.error(ws, "You own this server, so you can't leave it.");
-        this.sql.exec("DELETE FROM accounts WHERE key = ?", s.key!);
-        this.sql.exec("DELETE FROM notified WHERE key = ?", s.key!);
+        // Gone for real, roles too: coming back with an invite starts fresh, as after a kick.
+        for (const table of ["accounts", "member_roles", "notified", "member_status"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, s.key!);
         for (const [lws, ls] of this.members().filter(([, m]) => m.key === s.key)) {
           this.send(lws, { type: "left" });
           lws.serializeAttachment({ stage: "removed" } satisfies Session);
           this.broadcast({ type: "user_left", session_id: ls.user!.session_id }, lws);
           lws.close(1000, "left");
         }
+        const list = this.memberList();
+        for (const [mws] of this.members()) this.send(mws, { type: "members", members: list });
         return;
       }
       case "delete_message": {
@@ -1553,8 +1565,7 @@ export class StromServer extends DurableObject<Env> {
         const threads = this.channels().filter((c) => c.parent !== undefined);
         if (threads.length >= MAX_THREADS) {
           const quietest = threads.sort((a, b) => (a.last_at ?? 0) - (b.last_at ?? 0))[0];
-          this.sql.exec("DELETE FROM channels WHERE id = ?", quietest.id);
-          this.sql.exec("DELETE FROM messages WHERE channel = ?", quietest.id);
+          this.dropChannel(quietest.id);
         }
         this.sql.exec("INSERT INTO channels (name, kind, parent, starter, creator) VALUES (?, 'text', ?, ?, ?)", name, parent.id, from?.id ?? null, s.key!);
         return this.channelsChanged();
@@ -1615,14 +1626,9 @@ export class StromServer extends DurableObject<Env> {
         if (!(target?.parent !== undefined && (myRank >= RANK.mod || target.creator === s.key)) && !allowed("admin")) return;
         if (!target) return this.error(ws, "That channel doesn't exist.");
         // Its threads go with it.
-        for (const t of this.channels().filter((c) => c.parent === id)) {
-          this.sql.exec("DELETE FROM channels WHERE id = ?", t.id);
-          this.sql.exec("DELETE FROM messages WHERE channel = ?", t.id);
-        }
+        for (const t of this.channels().filter((c) => c.parent === id)) this.dropChannel(t.id);
         this.audit(user.name, "delete_channel", this.channel(id)!.name, null);
-        this.sql.exec("DELETE FROM channels WHERE id = ?", id);
-        this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND text LIKE 'hopp-image:%')", id);
-        this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
+        this.dropChannel(id);
         for (const [mws, m] of this.members()) {
           if (m.user!.voice_channel === id) this.updateUser(mws, m, (u) => (u.voice_channel = null));
         }
@@ -1658,10 +1664,7 @@ export class StromServer extends DurableObject<Env> {
           }
         }
         // Out of the server for real: they're no longer a member, so coming back takes a new invite.
-        this.sql.exec("DELETE FROM accounts WHERE key = ?", key);
-        this.sql.exec("DELETE FROM member_roles WHERE key = ?", key);
-        this.sql.exec("DELETE FROM notified WHERE key = ?", key);
-        this.sql.exec("DELETE FROM timeouts WHERE key = ?", key);
+        for (const table of ["accounts", "member_roles", "notified", "timeouts", "member_status"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, key);
         this.audit(user.name, banned ? "ban" : "kick", name, removed ? `deleted ${removed} messages` : null);
         // Every device of theirs goes.
         for (const [ows, os] of this.members().filter(([, m]) => m.key === key)) {

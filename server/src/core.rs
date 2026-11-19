@@ -1809,13 +1809,19 @@ impl Core {
                 if owner {
                     return self.error(conn, "You own this server, so you can't leave it.");
                 }
-                self.exec("DELETE FROM accounts WHERE key = ?", [&key]);
-                self.exec("DELETE FROM notified WHERE key = ?", [&key]);
+                // Gone for real, roles too: coming back with an invite starts fresh, as after a kick.
+                for table in ["accounts", "member_roles", "notified", "member_status"] {
+                    self.exec(&format!("DELETE FROM {table} WHERE key = ?"), [&key]);
+                }
                 for id in self.conns_of(&key) {
                     self.send(id, &json!({ "type": "left" }));
                     let sid = self.user_of(id).session_id;
                     self.hang_up(id);
                     self.broadcast(&json!({ "type": "user_left", "session_id": sid }), Some(id));
+                }
+                let msg = json!({ "type": "members", "members": self.member_list() });
+                for id in self.members() {
+                    self.send(id, &msg);
                 }
             }
             "delete_message" => {
@@ -1892,8 +1898,7 @@ impl Core {
                 if threads.len() >= MAX_THREADS {
                     threads.sort_by_key(|c| c.last_at.unwrap_or(0));
                     let quietest = threads[0].id;
-                    self.exec("DELETE FROM channels WHERE id = ?", [quietest]);
-                    self.exec("DELETE FROM messages WHERE channel = ?", [quietest]);
+                    self.drop_channel(quietest);
                 }
                 self.exec("INSERT INTO channels (name, kind, parent, starter, creator) VALUES (?, 'text', ?, ?, ?)", params![name, parent.id, from.map(|f| f.id as i64), key]);
                 self.channels_changed(false);
@@ -1926,13 +1931,10 @@ impl Core {
                 }
                 let Some(target) = target else { return self.error(conn, "That channel doesn't exist.") };
                 for t in self.channels().into_iter().filter(|c| c.parent == Some(id)) {
-                    self.exec("DELETE FROM channels WHERE id = ?", [t.id]);
-                    self.exec("DELETE FROM messages WHERE channel = ?", [t.id]);
+                    self.drop_channel(t.id);
                 }
                 self.audit(&user.name, "delete_channel", Some(&target.name), None);
-                self.exec("DELETE FROM channels WHERE id = ?", [id]);
-                self.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND text LIKE 'hopp-image:%')", [id]);
-                self.exec("DELETE FROM messages WHERE channel = ?", [id]);
+                self.drop_channel(id);
                 for m in self.members() {
                     if self.conns[&m].user.as_ref().and_then(|u| u.voice_channel).map(i64::from) == Some(id) {
                         self.update_user(m, |u| u.voice_channel = None);
@@ -2464,6 +2466,17 @@ impl Core {
         for id in self.members() {
             self.send(id, &msg);
         }
+    }
+}
+
+impl Core {
+    /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
+    fn drop_channel(&self, id: i64) {
+        // "hopp-image:" and "hopp-voice:" are the same length: the stored id follows either.
+        self.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", [id]);
+        self.exec("DELETE FROM messages WHERE channel = ?", [id]);
+        self.exec("DELETE FROM notified WHERE channel = ?", [id]);
+        self.exec("DELETE FROM channels WHERE id = ?", [id]);
     }
 }
 

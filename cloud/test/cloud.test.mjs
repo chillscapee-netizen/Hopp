@@ -476,11 +476,24 @@ test("leaving a server for good", async () => {
   assert.match(await errorOf(owner), /own this server/);
   const key = newKey();
   const bob = await join(id, "bob", { invite, key });
+  // An admin role, given before leaving.
+  owner.send({ type: "create_role", name: "Bosses", level: "admin" });
+  const role = (await owner.waitFor((m) => m.type === "roles_updated")).roles[0];
+  owner.send({ type: "assign_role", public_key: key.pub, role: role.id, on: true });
+  await owner.waitFor((m) => m.type === "user_updated" && m.user.public_key === key.pub && m.user.role === "admin");
   bob.send({ type: "leave_server" });
   assert.equal((await bob.waitFor((m) => m.type === "left")).type, "left");
   await owner.waitFor((m) => m.type === "user_left" && m.session_id === bob.id);
-  // Coming back needs an invite again.
+  // Everyone's member list follows at once.
+  await owner.waitFor((m) => m.type === "members" && !m.members.some((x) => x.public_key === key.pub));
+  // Coming back needs an invite again, and starts fresh: no roles, no admin rights.
   assert.match(await loginError(id, "bob", { key }), /invite/);
+  const back = await join(id, "bob", { invite, key });
+  const me = back.welcome.users.find((u) => u.public_key === key.pub);
+  assert.ok(!me.roles?.length && !me.role, `back without old roles, got ${JSON.stringify(me)}`);
+  back.send({ type: "create_channel", name: "sneaky", kind: "text" });
+  assert.match(await errorOf(back), /admins/);
+  back.close();
   owner.close();
 });
 
@@ -783,6 +796,16 @@ test("voice messages: WebM audio uploads, is sent as hopp-voice and served back;
   // Someone else's upload can't be sent as yours.
   owner.send({ type: "send_chat", channel: general, text: `hopp-voice:${"ab".repeat(16)} 1000` });
   assert.match(await errorOf(owner), /didn't upload/);
+  // A channel deleted takes its voice messages along, not just its pictures.
+  owner.send({ type: "create_channel", name: "voice-notes", kind: "text" });
+  const notes = (await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "voice-notes"))).channels.find((c) => c.name === "voice-notes").id;
+  const { id: noteId } = await upload(Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), crypto.randomBytes(2000)]), "audio/webm");
+  owner.send({ type: "send_chat", channel: notes, text: `hopp-voice:${noteId} 1500` });
+  await owner.waitFor((m) => m.type === "chat" && m.message.channel === notes);
+  assert.equal((await fetch(`${HTTP}/servers/${id}/images/${noteId}`)).status, 200);
+  owner.send({ type: "delete_channel", channel: notes });
+  await owner.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === notes));
+  assert.equal((await fetch(`${HTTP}/servers/${id}/images/${noteId}`)).status, 404, "the voice message is gone too");
   owner.close();
 });
 
