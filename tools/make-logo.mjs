@@ -28,9 +28,12 @@ export function mark(color, id = "hopp-shine") {
   );
 }
 
-/** The app icon: the white H on a dark rounded square. */
-const appIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2e33"/><stop offset="1" stop-color="#18181b"/></linearGradient></defs><rect width="1024" height="1024" rx="232" fill="url(#bg)"/><rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="12"/><g transform="translate(236 222) scale(6)">${mark("#fff")}</g></svg>`;
-const siteLogo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="230" fill="#2a2d31"/><g transform="translate(236 222) scale(6)">${mark("#f2f2f4")}</g></svg>`;
+/** Hopp's colours: a strong red top left turning to a deep blue bottom right. */
+const brand = `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e3263f"/><stop offset=".55" stop-color="#9b1f6e"/><stop offset="1" stop-color="#2346c8"/></linearGradient>`;
+
+/** The app icon: the white H on a rounded square in Hopp's colours. */
+const appIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>${brand}</defs><rect width="1024" height="1024" rx="232" fill="url(#bg)"/><rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="12"/><g transform="translate(236 222) scale(6)">${mark("#fff")}</g></svg>`;
+const siteLogo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>${brand}</defs><rect width="1024" height="1024" rx="230" fill="url(#bg)"/><g transform="translate(236 222) scale(6)">${mark("#fff")}</g></svg>`;
 
 writeFileSync(join(root, "client/src-tauri/icons/hopp.svg"), appIcon);
 writeFileSync(join(root, "cloud/public/site/logo.svg"), siteLogo);
@@ -59,7 +62,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["tauri", "icon",
 const tile = (size) => `<img src="data:image/svg+xml;base64,${Buffer.from(appIcon).toString("base64")}" width="${size}" height="${size}" style="display:block">`;
 const sidebar = shoot(
   "sidebar",
-  `<div style="box-sizing:border-box;width:328px;height:628px;padding:72px 44px 0;background:radial-gradient(circle at 30% 18%,#2c2c31,#19191c 70%);font-family:'Segoe UI',sans-serif;color:#f2f2f4;position:relative">
+  `<div style="box-sizing:border-box;width:328px;height:628px;padding:72px 44px 0;background:radial-gradient(circle at 30% 18%,#4a1230,#1a1236 72%);font-family:'Segoe UI',sans-serif;color:#f2f2f4;position:relative">
     ${tile(96)}
     <div style="margin-top:28px;font-size:48px;font-weight:700;letter-spacing:-1px">Hopp</div>
     <div style="margin-top:8px;font-size:21px;line-height:1.45;color:#c9c9d0">Voice and chat for you and your friends.</div>

@@ -7,7 +7,7 @@
 .beta-pill:hover { background: rgb(255 255 255 / 0.1); }
 .beta-pill b { color: var(--text); font-weight: 600; }
 .beta-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 4px rgb(255 255 255 / 0.12); }
-.kicker { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
+.kicker { display: block; width: fit-content; margin-bottom: 10px; background: linear-gradient(90deg, var(--brand-red), var(--brand-blue)); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 13px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
 .section-title { margin-bottom: 26px; font-size: clamp(28px, 3.2vw, 38px); line-height: 1.1; }
 .more-link { display: inline-block; margin-top: 16px; color: var(--text); font-weight: 600; text-decoration: none; }
 .more-link::after { content: " →"; color: var(--muted); }
