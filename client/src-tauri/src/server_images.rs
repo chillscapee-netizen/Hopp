@@ -122,6 +122,11 @@ impl Cache {
     }
 }
 
+/// Picture ids are 32 hex characters.
+pub fn valid_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,9 +146,4 @@ mod tests {
         list.push(done);
         assert_eq!(list.len(), 1);
     }
-}
-
-/// Picture ids are 32 hex characters.
-pub fn valid_id(id: &str) -> bool {
-    id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
