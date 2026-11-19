@@ -13447,6 +13447,8 @@ var GRADIENTS = [
   // Each wanders through neighbouring shades at an even, deep lightness, strongly coloured, so
   // the window glows without ever going pale or muddy. Twilight is indigo through violet,
   // magenta and wine to amber.
+  // Hero: a deep red that turns to a strong blue.
+  { id: "hero", name: "Hero", stops: ["#6a0c1a", "#620d2c", "#4d1248", "#2f1a66", "#142670"] },
   { id: "twilight", name: "Twilight", stops: ["#201d70", "#390c70", "#4b0370", "#57124f", "#5a2238", "#5c2a1c", "#5c3602"] },
   { id: "sunset", name: "Sunset", stops: ["#122a72", "#1d2272", "#2c1a72", "#3d1170", "#4b0a6a"] },
   { id: "dusk", name: "Dusk", stops: ["#33116e", "#45096c", "#560f62", "#62164f", "#6a1f40"] },
@@ -13454,8 +13456,6 @@ var GRADIENTS = [
   { id: "forest", name: "Forest", stops: ["#0a4a26", "#0b5232", "#0c5640", "#0b574c", "#0a5257"] },
   { id: "ember", name: "Ember", stops: ["#5a0c25", "#5e121b", "#601d12", "#5e290c", "#5a3408"] },
   { id: "aurora", name: "Aurora", stops: ["#07564c", "#0a4a62", "#123a70", "#22226e", "#38136e"] },
-  // Hero: a deep red that turns to a strong blue.
-  { id: "hero", name: "Hero", stops: ["#6a0c1a", "#620d2c", "#4d1248", "#2f1a66", "#142670"] },
   { id: "dawn", name: "Dawn", stops: ["#f6dce8", "#ecdcf6", "#e3dcfb"] },
 ];
 
