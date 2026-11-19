@@ -5773,8 +5773,12 @@ listen("account", (e) => {
       renderAll();
       return;
     case "group_removed":
+      // Left the group (here or on another device): its call ends here too.
+      if (state.call?.group === m.id) endCall("left");
+      state.groupCalls?.delete(m.id);
       state.groups.delete(m.id);
       state.conversations.delete(m.id);
+      state.dmMessages.delete(m.id);
       if (state.openDm === m.id) state.openDm = null;
       renderAll();
       return;

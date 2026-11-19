@@ -83,5 +83,16 @@
 
   // A call with a friend still works the old way alongside.
   check("friend calls are untouched", typeof startCall === "function" && !state.call);
+
+  // Leaving the group while in its call: the call ends here too.
+  openDm(G);
+  await wait(100);
+  document.getElementById("dm-call-btn").click();
+  await wait(300);
+  check("in the group's call again", state.call?.group === G);
+  sent.length = 0;
+  emit("account", { type: "group_removed", id: G });
+  await wait(100);
+  check("left the group: the call is over here", !state.call && sent.some((m) => m.type === "end_call"));
   report();
 })();
