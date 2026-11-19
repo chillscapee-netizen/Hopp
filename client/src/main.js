@@ -5822,6 +5822,8 @@ listen("account", (e) => {
       const before = state.friends.get(m.friend.key);
       state.friends.set(m.friend.key, m.friend);
       if ((before?.state === "blocked") !== (m.friend.state === "blocked")) blockChanged();
+      // Blocked mid-call: the call with them ends.
+      if (m.friend.state === "blocked" && state.call && !state.call.group && state.call.peer === m.friend.key) endCall();
       if (before?.avatar !== m.friend.avatar || (before?.name_color ?? null) !== (m.friend.name_color ?? null)) {
         renderPictures();
         if (state.openDm) renderDmAreas(state.openDm);
@@ -5839,6 +5841,8 @@ listen("account", (e) => {
       break;
     }
     case "friend_removed":
+      // No longer friends mid-call: calls are between friends, so it ends (they can't hear us anyway).
+      if (state.call && !state.call.group && state.call.peer === m.key && state.friends.get(m.key)?.state === "friend") endCall("remote");
       if (state.friends.get(m.key)?.state === "blocked") {
         state.friends.delete(m.key);
         blockChanged();

@@ -40,5 +40,22 @@
   check("someone else ringing then hears busy", busy.length === 1 && state.call.id === "aaaa1111-0002");
   commands.account_send = send;
   await endCall();
+
+  // No longer friends, or blocked, mid-call: the call ends.
+  await startCall(KEYS.elin);
+  await wait(50);
+  state.call.status = "live";
+  const elin = state.friends.get(KEYS.elin);
+  emit("account", { type: "friend_removed", key: KEYS.elin });
+  await wait(50);
+  check("unfriended mid-call: the call ends", !state.call);
+  emit("account", { type: "friend", friend: elin });
+  await wait(50);
+  await startCall(KEYS.elin);
+  await wait(50);
+  emit("account", { type: "friend", friend: { ...elin, state: "blocked" } });
+  await wait(50);
+  check("blocked mid-call: the call ends", !state.call);
+  emit("account", { type: "friend", friend: elin });
   report();
 })();
