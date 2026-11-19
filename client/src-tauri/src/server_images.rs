@@ -80,6 +80,9 @@ pub async fn fetch(waits: &Shared, control: &strom_voice::Control, id: &str) -> 
     let first = {
         let mut w = waits.lock().unwrap();
         let list = w.fetches.entry(id.to_string()).or_default();
+        // Askers that gave up (no answer came, say the connection dropped) don't count: with
+        // only them left, it's asked again, or the picture would never load this session.
+        list.retain(|waiting| !waiting.is_closed());
         list.push(done);
         list.len() == 1
     };
@@ -116,6 +119,27 @@ impl Cache {
                 self.bytes -= b.len();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_picture_that_never_came_is_asked_for_again() {
+        let waits: Shared = Arc::default();
+        // Someone asked and gave up waiting.
+        let (gave_up, answer) = oneshot::channel::<Option<Picture>>();
+        waits.lock().unwrap().fetches.entry("ab".repeat(16)).or_default().push(gave_up);
+        drop(answer);
+        // The next asker is the first again (so the server is asked), not left waiting behind it.
+        let (done, _answer) = oneshot::channel();
+        let mut w = waits.lock().unwrap();
+        let list = w.fetches.get_mut(&"ab".repeat(16)).unwrap();
+        list.retain(|waiting| !waiting.is_closed());
+        list.push(done);
+        assert_eq!(list.len(), 1);
     }
 }
 
