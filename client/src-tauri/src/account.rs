@@ -94,10 +94,15 @@ async fn run(app: AppHandle, identity: Identity, cloud: String) {
             Err(e) => {
                 tracing::info!("account connection failed: {e:#}");
                 let _ = app.emit("account-state", json!({ "connected": false, "error": e.to_string() }));
+                // Banned from Hopp Cloud: asking again every half minute changes nothing and costs
+                // the cloud; once an hour (or a restart) is enough to notice a lifted ban.
+                if e.to_string().contains("banned from Hopp Cloud") {
+                    pause = 3600;
+                }
             }
         }
         tokio::time::sleep(Duration::from_secs(pause)).await;
-        pause = (pause * 2).min(30);
+        pause = if pause >= 3600 { 1 } else { (pause * 2).min(30) };
     }
 }
 
