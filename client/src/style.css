@@ -4170,9 +4170,9 @@ html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpa
 .admin-chip { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 4px 4px 4px 12px; border-radius: 999px; background: var(--hover); font-size: 13px; }
 .admin-chip-x { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--text); cursor: pointer; }
 .admin-chip-x:hover { background: var(--hover); }
-.admin-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 60px 20px; color: var(--muted); text-align: center; }
-.admin-empty .i { width: 28px; height: 28px; color: var(--green); }
-.admin-empty strong { color: var(--text); font-size: 15px; }
+#admin-dialog .admin-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 60px 20px; color: var(--muted); text-align: center; }
+#admin-dialog .admin-empty .i { width: 28px; height: 28px; color: var(--green); }
+#admin-dialog .admin-empty strong { color: var(--text); font-size: 15px; }
 .admin-card { position: relative; margin-bottom: 10px; padding: 12px 16px 12px 18px; border-radius: 10px; background: var(--layer); overflow: hidden; }
 .admin-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--border-strong); }
 .admin-card.urgent::before { background: var(--red); }
@@ -4212,7 +4212,7 @@ html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpa
 .admin-h { margin: 6px 0 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .admin-h:not(:first-child) { margin-top: 22px; }
 .admin-pad { margin: 0 0 8px; font-size: 13.5px; }
-.admin-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 6px; border-radius: 10px; background: var(--layer); }
+#admin-dialog .admin-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 6px; border-radius: 10px; background: var(--layer); }
 .admin-role { padding: 1px 7px; border-radius: 6px; background: var(--layer-2); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .admin-role.owner { background: color-mix(in srgb, #e8b33d 22%, transparent); color: #f0c25a; }
 .admin-add { margin-bottom: 14px; }
@@ -4221,7 +4221,7 @@ html.wallpaper .admin-head { border-bottom-color: var(--hover); }
 html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 128 / 0.4); border-color: transparent; background-clip: padding-box; }
 .admin-row-main { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .admin-row-main .admin-quiet { font-size: 12.5px; }
-.admin-row.log { padding: 8px 14px; }
+#admin-dialog .admin-row.log { padding: 8px 14px; }
 .admin-add { display: flex; gap: 8px; max-width: 600px; }
 .admin-add .btn { height: 32px; }
 @media (max-width: 640px) { .admin-stats { grid-template-columns: repeat(2, 1fr); } .admin-head { flex-wrap: wrap; gap: 4px; } }

@@ -846,6 +846,10 @@ async function logout() {
   state.inboxSeen = 0;
   renderInboxBadge();
   state.openDm = null;
+  // Hopp admin is the account's, not the computer's: the shield goes until the next one says.
+  Object.assign(admin, { role: null, open: 0, urgent: 0 });
+  if ($("admin-dialog").open) $("admin-dialog").close();
+  renderAdminButton();
   state.readsLoaded = false;
   accountScope = null;
   prefs.servers = [];
