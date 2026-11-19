@@ -44,8 +44,12 @@ const icons = join(root, "client", "src-tauri", "icons");
 for (const f of ["Square44x44Logo.png", "Square71x71Logo.png", "Square150x150Logo.png", "Square310x310Logo.png", "StoreLogo.png"]) {
   copyFileSync(join(icons, f), join(layout, "Assets", f));
 }
-// The taskbar and Start list use the small one without a plate behind it.
-for (const size of [44]) copyFileSync(join(icons, "Square44x44Logo.png"), join(layout, "Assets", `Square44x44Logo.targetsize-${size}_altform-unplated.png`));
+// The taskbar and Start list use the small one without a plate behind it, in the size they need
+// (drawn at each size by make-logo.mjs, so Windows doesn't shrink one and blur it).
+for (const f of readdirSync(join(icons, "msix"))) {
+  copyFileSync(join(icons, "msix", f), join(layout, "Assets", f));
+  copyFileSync(join(icons, "msix", f), join(layout, "Assets", f.replace("_altform-unplated", "")));
+}
 
 const xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const protocols = conf.plugins["deep-link"].desktop.schemes

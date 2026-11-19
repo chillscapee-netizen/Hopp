@@ -1553,6 +1553,121 @@ $("home-btn").addEventListener("click", () => {
   if (state.openDm) closeDm();
 });
 
+// ---------- back and forward ----------
+//
+// Like a browser: every place you go (Home, a conversation, a server and its channel, Discover)
+// is remembered in order, and the arrows above Hopp's logo (or Alt + arrows, or the mouse's side
+// buttons when they aren't bound to something) walk back and forth through them.
+
+var nav = { list: [], at: -1, going: false };
+
+/** Where you are now. */
+function currentPlace() {
+  if (state.atNews) return { at: "news" };
+  const id = state.activeId ?? state.connectingId ?? null;
+  if (state.openDm || state.atHome || !id) return { at: "home", dm: state.openDm ?? null };
+  return { at: "server", id, view: state.view ?? null };
+}
+
+function samePlace(a, b) {
+  return !!a && !!b && a.at === b.at && (a.dm ?? null) === (b.dm ?? null) && (a.id ?? null) === (b.id ?? null) && (a.view ?? null) === (b.view ?? null);
+}
+
+/** Called after anything that may have moved you: a new place goes on the list. */
+function notePlace() {
+  if (!state.account || typeof nav === "undefined" || !nav) return;
+  const here = currentPlace();
+  const last = nav.list[nav.at];
+  if (samePlace(here, last)) return;
+  // Arriving where the arrows took you, or a server settling on its channel: the same step.
+  if (nav.going || (last?.at === "server" && here.at === "server" && last.id === here.id && last.view === null)) nav.list[nav.at] = here;
+  else {
+    nav.list.splice(nav.at + 1);
+    nav.list.push(here);
+    if (nav.list.length > 60) nav.list.shift();
+    nav.at = nav.list.length - 1;
+  }
+  renderNav();
+}
+
+function renderNav() {
+  $("nav-back").disabled = nav.at <= 0;
+  $("nav-forward").disabled = nav.at >= nav.list.length - 1;
+}
+
+/** Goes to a remembered place; false if it's gone (a server you've since left). */
+function goPlace(p) {
+  if (p.at === "news") {
+    openDiscover();
+    return true;
+  }
+  state.atNews = false;
+  if (p.at === "home") {
+    if (p.dm) {
+      if (!state.conversations.has(p.dm) && !state.dmMessages.has(p.dm)) return false;
+      openDm(p.dm);
+      return true;
+    }
+    if (state.connectingId) disconnect();
+    state.openDm = null;
+    if (state.activeId) state.atHome = true;
+    closePopovers();
+    renderAll();
+    return true;
+  }
+  const server = prefs.servers.find((s) => s.id === p.id);
+  if (!server) return false;
+  state.openDm = null;
+  if (server.id === state.activeId) {
+    state.atHome = false;
+    if (p.view !== null && state.view !== p.view) openTextChannel(p.view);
+    renderAll();
+  } else {
+    if (p.view !== null) {
+      lastViews.set(server.id, p.view);
+      saveLastViews();
+    }
+    connectTo(server);
+  }
+  return true;
+}
+
+function stepPlace(step) {
+  let at = nav.at + step;
+  while (at >= 0 && at < nav.list.length) {
+    nav.at = at;
+    nav.going = true;
+    try {
+      if (goPlace(nav.list[at])) break;
+    } finally {
+      nav.going = false;
+    }
+    // Gone: dropped, and on to the one beyond it.
+    nav.list.splice(at, 1);
+    if (step < 0) at -= 1;
+    nav.at = Math.min(at, nav.list.length - 1);
+  }
+  nav.at = Math.max(0, Math.min(nav.at, nav.list.length - 1));
+  renderNav();
+}
+$("nav-back").addEventListener("click", () => stepPlace(-1));
+$("nav-forward").addEventListener("click", () => stepPlace(1));
+window.addEventListener("keydown", (e) => {
+  if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  if (!state.account || document.querySelector("dialog[open]")) return;
+  e.preventDefault();
+  stepPlace(e.key === "ArrowLeft" ? -1 : 1);
+});
+/** The mouse's side buttons go back and forward, unless push-to-talk or a shortcut uses them. */
+function sideButtonsFree() {
+  if (prefs.pttKey === 5 || prefs.pttKey === 6) return false;
+  return !Object.values(prefs.keybinds ?? {}).some((b) => b?.key === 5 || b?.key === 6);
+}
+window.addEventListener("mouseup", (e) => {
+  if ((e.button !== 3 && e.button !== 4) || !state.account || document.querySelector("dialog[open]") || !sideButtonsFree()) return;
+  stepPlace(e.button === 3 ? -1 : 1);
+});
+
 /** Home on screen while the server stays connected: going back is instant, voice goes on. */
 function goHome() {
   dropRecording();
@@ -2438,6 +2553,7 @@ function renderAll() {
   renderSidebar();
   renderVoicePanel();
   renderUserPanel();
+  notePlace();
   if (on) renderChannelView();
   else if (loading) renderLoading();
   else renderHome();
@@ -2698,6 +2814,7 @@ function openTextChannel(id) {
   restoreDraft();
   renderSidebar();
   renderChannelView();
+  notePlace();
   // Another channel eases in, so the change reads as a change and not a flicker.
   if (changed) {
     const list = $("messages");
@@ -13553,12 +13670,6 @@ function applyTheme() {
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
   document.documentElement.classList.toggle("wallpaper", !!(prefs.theme !== "mid" && prefs.theme && specTokens(themeSpec())["app-bg"]));
-  // Hopp's logo top left takes the theme's colours (Hero: red into blue), bright and clear.
-  const fade = document.documentElement.classList.contains("wallpaper");
-  const spec = themeSpec();
-  const ends = spec.stops ?? spec.own ?? [spec.a, spec.b ?? spec.a];
-  if (fade) root.setProperty("--logo-bg", "linear-gradient(135deg, " + swatchColor(ends[0]) + ", " + swatchColor(ends.at(-1)) + ")");
-  else root.removeProperty("--logo-bg");
   const font = (typeof APP_FONTS !== "undefined" && APP_FONTS[prefs.appFont]) || '"Inter"';
   document.documentElement.style.setProperty("--app-font", font);
   if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
