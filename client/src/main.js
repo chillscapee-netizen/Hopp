@@ -3786,6 +3786,12 @@ document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("clic
 function addAndConnect(address, invite, label, pin) {
   if (!address) return;
   let server = prefs.servers.find((s) => s.address === address);
+  // A server we already know answers to its own key: a link with another key for the same
+  // address is someone else's, and is never taken over silently.
+  if (server?.pin && pin && server.pin !== pin) {
+    toast("That link has a different key than the server you already have at that address, so it wasn't used. If they made a new server, remove the old one from your list first, then use the link.", true);
+    return;
+  }
   if (!server) {
     server = newServer(address, "", invite);
     if (label) server.label = label;
