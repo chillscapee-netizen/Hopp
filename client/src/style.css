@@ -4340,3 +4340,7 @@ html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 12
 .watch-by { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; }
 .watch-frame { flex: 1; min-height: 0; }
 .watch-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+/* Hopp's logo in a colour theme: the theme's own colours, with the logo in white. */
+html.wallpaper .rail-item.home .rail-icon, html.wallpaper .rail-item.home.active .rail-icon { background: var(--logo-bg, var(--layer-2)); color: #fff; }
+html.wallpaper .rail-item.home.active .rail-icon { box-shadow: 0 0 0 2px rgb(255 255 255 / 0.85); }

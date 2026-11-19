@@ -13553,6 +13553,12 @@ function applyTheme() {
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
   document.documentElement.classList.toggle("wallpaper", !!(prefs.theme !== "mid" && prefs.theme && specTokens(themeSpec())["app-bg"]));
+  // Hopp's logo top left takes the theme's colours (Hero: red into blue), bright and clear.
+  const fade = document.documentElement.classList.contains("wallpaper");
+  const spec = themeSpec();
+  const ends = spec.stops ?? spec.own ?? [spec.a, spec.b ?? spec.a];
+  if (fade) root.setProperty("--logo-bg", "linear-gradient(135deg, " + swatchColor(ends[0]) + ", " + swatchColor(ends.at(-1)) + ")");
+  else root.removeProperty("--logo-bg");
   const font = (typeof APP_FONTS !== "undefined" && APP_FONTS[prefs.appFont]) || '"Inter"';
   document.documentElement.style.setProperty("--app-font", font);
   if (typeof syncWindowColor === "function") setTimeout(syncWindowColor, 0);
