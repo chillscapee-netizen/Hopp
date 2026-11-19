@@ -4089,6 +4089,9 @@ function openServerSettings() {
   $("server-settings-name").textContent = activeServer()?.label ?? state.roster.server_name;
   $("server-settings-icon").replaceChildren(serverIcon("settings-server-icon server-tint", activeServer()?.label ?? state.roster.server_name, state.roster.server_icon));
   resetOverview();
+  // An emoji half added in another server's settings doesn't carry over.
+  emojiDraft = null;
+  $("emoji-new").hidden = true;
   showServerTab("overview");
   $("invite-list").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("ban-list").replaceChildren(el("li", "admin-empty", "Loading…"));

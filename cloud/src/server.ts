@@ -487,7 +487,9 @@ export class StromServer extends DurableObject<Env> {
     const member = this.sql.exec("SELECT 1 FROM accounts WHERE key = ?", key).toArray().length > 0;
     const banned = this.sql.exec("SELECT 1 FROM bans WHERE key = ? UNION SELECT 1 FROM cloud_bans WHERE key = ?", key, key).toArray().length > 0;
     if (!member || banned) return fail("You're not a member of this server.", 403);
-    if (this.meta("pictures_off") === "1" && type.startsWith("image/")) return fail("Pictures are turned off in this server.", 403);
+    // Pictures off: none in chat, but admins still upload the server's own emojis (a picture
+    // sent in chat is refused when it's sent, admins too).
+    if (this.meta("pictures_off") === "1" && type.startsWith("image/") && rank(this.roleOf(key)) < RANK.admin) return fail("Pictures are turned off in this server.", 403);
     const now = Date.now();
     const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE uploader = ? AND created_at > ?", key, now - 86_400_000).one().n);
     if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);

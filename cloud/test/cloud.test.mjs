@@ -1060,9 +1060,22 @@ test("emojis: admins add a server's own from an uploaded picture, everyone uses 
   const emoji = added.emojis[0];
   owner.send({ type: "create_emoji", name: "pog", image: await upload(owner) });
   assert.match(await errorOf(owner), /already/);
+  // Pictures turned off in the server: no pictures in chat, but admins still add emojis.
+  owner.send({ type: "update_server", name: "Test server", icon: null, pictures_off: true });
+  await owner.waitFor((m) => m.type === "server_updated" && m.pictures_off === true);
+  assert.equal(await upload(bob), undefined, "a member can't upload a picture");
+  const withPicturesOff = await upload(owner);
+  assert.match(String(withPicturesOff), /^[0-9a-f]{32}$/, "an admin can, for an emoji");
+  owner.send({ type: "send_chat", channel: channelId(owner, "general"), text: `hopp-image:${withPicturesOff} 128x128` });
+  assert.match(await errorOf(owner), /turned off/, "but not send it as a picture in chat");
+  // (A picture refused in chat is thrown away, so the emoji gets a fresh one.)
+  owner.send({ type: "create_emoji", name: "offpog", image: await upload(owner) });
+  await bob.waitFor((m) => m.type === "emojis_updated" && m.emojis.some((e) => e.name === "offpog"));
+  owner.send({ type: "update_server", name: "Test server", icon: null, pictures_off: false });
+  await owner.waitFor((m) => m.type === "server_updated" && m.pictures_off === false);
   // Someone joining later gets them.
   const carol = await join(id, "carol", { invite });
-  assert.deepEqual(carol.welcome.emojis.map((e) => e.name), ["pog"]);
+  assert.deepEqual(carol.welcome.emojis.map((e) => e.name), ["offpog", "pog"]);
   // A reaction with it.
   const general = channelId(owner, "general");
   bob.send({ type: "send_chat", channel: general, text: `gg <:pog:${emoji.id}>` });
@@ -1072,7 +1085,7 @@ test("emojis: admins add a server's own from an uploaded picture, everyone uses 
   assert.equal(r.reactions[0].emoji, `<:pog:${emoji.id}>`);
   // Removed: gone from the list, and its picture with it.
   owner.send({ type: "delete_emoji", id: emoji.id });
-  assert.deepEqual((await bob.waitFor((m) => m.type === "emojis_updated" && m.emojis.length === 0)).emojis, []);
+  assert.deepEqual((await bob.waitFor((m) => m.type === "emojis_updated" && !m.emojis.some((e) => e.name === "pog"))).emojis.map((e) => e.name), ["offpog"]);
   assert.equal((await fetch(`${HTTP}/servers/${id}/images/${emoji.image}`)).status, 404);
   owner.close();
   bob.close();
