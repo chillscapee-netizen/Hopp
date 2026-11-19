@@ -245,6 +245,24 @@ pub struct Ban {
     pub banned_at: u64,
 }
 
+/// An event planned in a server: when, where, and who's coming.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerEvent {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub channel: i64,
+    pub starts_at: i64,
+    pub creator: String,
+    #[serde(default)]
+    pub creator_name: String,
+    #[serde(default)]
+    pub going: Vec<String>,
+    #[serde(default)]
+    pub maybe: Vec<String>,
+}
+
 /// Someone who belongs to a server, online or not.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Member {
@@ -497,6 +515,22 @@ pub enum ClientMsg {
     Timeout { session_id: SessionId, minutes: u32 },
     /// Admins, on servers with "mod-tools": answered with `AuditLog`.
     GetAuditLog,
+    /// Events planned in the server.
+    GetEvents,
+    CreateEvent {
+        name: String,
+        description: String,
+        channel: ChannelId,
+        starts_at: u64,
+    },
+    DeleteEvent {
+        id: i64,
+    },
+    /// Going ("yes"), maybe, or no answer (None).
+    Rsvp {
+        id: i64,
+        answer: Option<String>,
+    },
     /// AutoMod and paused invites (admins).
     GetAutomod,
     SetAutomod {
@@ -627,6 +661,10 @@ pub enum ServerMsg {
     Bans { bans: Vec<Ban> },
     /// The newest audit log entries first.
     AuditLog { entries: Vec<AuditEntry> },
+    /// The events you may see, soonest first.
+    Events { events: Vec<ServerEvent> },
+    /// The event you planned is made.
+    EventCreated { id: i64 },
     /// The server's AutoMod rules, and whether new people may join.
     Automod {
         #[serde(default)]

@@ -644,6 +644,12 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::AuditLog { entries } => {
                     let _ = ui.emit("audit-log", entries);
                 }
+                ServerMsg::Events { events } => {
+                    let _ = ui.emit("events", events);
+                }
+                ServerMsg::EventCreated { id } => {
+                    let _ = ui.emit("event-created", id);
+                }
                 ServerMsg::Automod { words, mention_limit, block_repeats, invites_paused } => {
                     let _ = ui.emit("automod", serde_json::json!({ "words": words, "mention_limit": mention_limit, "block_repeats": block_repeats, "invites_paused": invites_paused }));
                 }
@@ -1331,6 +1337,26 @@ fn timeout_member(state: State<'_, AppState>, session_id: SessionId, minutes: u3
 #[tauri::command]
 fn get_audit_log(state: State<'_, AppState>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetAuditLog))
+}
+
+#[tauri::command]
+fn get_events(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::GetEvents))
+}
+
+#[tauri::command]
+fn create_event(state: State<'_, AppState>, name: String, description: String, channel: ChannelId, starts_at: u64) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::CreateEvent { name, description, channel, starts_at }))
+}
+
+#[tauri::command]
+fn delete_event(state: State<'_, AppState>, id: i64) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::DeleteEvent { id }))
+}
+
+#[tauri::command]
+fn rsvp(state: State<'_, AppState>, id: i64, answer: Option<String>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::Rsvp { id, answer }))
 }
 
 #[tauri::command]
@@ -2101,6 +2127,10 @@ fn main() {
             assign_role,
             set_nickname,
             get_audit_log,
+            get_events,
+            create_event,
+            delete_event,
+            rsvp,
             get_automod,
             set_automod,
             set_loopback,

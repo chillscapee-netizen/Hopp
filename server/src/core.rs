@@ -44,6 +44,10 @@ const MAX_CHAT_LEN: usize = 2000;
 const AUTOMOD_WORDS: usize = 200;
 const AUTOMOD_WORD_LEN: usize = 40;
 const AUTOMOD_REPEATS: usize = 3;
+/// Events: upcoming ones a server keeps, how far ahead they may be, and how long one stays after it starts.
+const MAX_EVENTS: i64 = 25;
+const EVENT_AHEAD_MS: i64 = 60 * 86_400_000;
+const EVENT_KEEP_MS: i64 = 12 * 3_600_000;
 const MAX_CHANNELS: usize = 50;
 const MAX_THREADS: usize = 300;
 const MAX_MEMBERS_ONLINE: usize = 500;
@@ -84,8 +88,8 @@ const MAX_IMAGE_STORE: i64 = 100_000_000;
 const IMAGES_PER_DAY: i64 = 40;
 pub const UPLOAD_CLOCK_SKEW_MS: u64 = 5 * 60_000;
 /// Hopp Cloud's features; a server on someone's computer has every one of them.
-const FEATURES: [&str; 17] = [
-    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod",
+const FEATURES: [&str; 18] = [
+    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events",
 ];
 
 static ENDPOINT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$").unwrap());
@@ -1300,6 +1304,49 @@ impl Core {
 
     /// Who may ping many at once: moderators may use @everyone, @here and any role; others only
     /// roles that allow it. Anything else stays in the text as plain words that ping nobody.
+    /// Events long past are let go.
+    fn prune_events(&self) {
+        let old = now_ms() as i64 - EVENT_KEEP_MS;
+        self.exec("DELETE FROM event_rsvp WHERE event IN (SELECT id FROM events WHERE starts_at < ?)", [old]);
+        self.exec("DELETE FROM events WHERE starts_at < ?", [old]);
+    }
+
+    /// The events someone may see (those in channels they can see), soonest first, with who's coming.
+    fn events_for(&self, key: &str) -> Vec<Value> {
+        self.prune_events();
+        let mut answers: HashMap<i64, (Vec<String>, Vec<String>)> = HashMap::new();
+        let rows: Vec<(i64, String, String)> = self
+            .db
+            .prepare_cached("SELECT event, key, answer FROM event_rsvp")
+            .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map(|rows| rows.flatten().collect()))
+            .unwrap_or_default();
+        for (event, who, answer) in rows {
+            let a = answers.entry(event).or_default();
+            if answer == "yes" { a.0.push(who) } else { a.1.push(who) }
+        }
+        let events: Vec<(i64, String, String, i64, i64, String, String)> = self
+            .db
+            .prepare_cached("SELECT id, name, description, channel, starts_at, creator, creator_name FROM events ORDER BY starts_at, id")
+            .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).map(|rows| rows.flatten().collect()))
+            .unwrap_or_default();
+        events
+            .into_iter()
+            .filter(|e| self.can_see(key, self.channel(e.3).as_ref()))
+            .map(|(id, name, description, channel, starts_at, creator, creator_name)| {
+                let (going, maybe) = answers.remove(&id).unwrap_or_default();
+                json!({ "id": id, "name": name, "description": description, "channel": channel, "starts_at": starts_at, "creator": creator, "creator_name": creator_name, "going": going, "maybe": maybe })
+            })
+            .collect()
+    }
+
+    /// An event was planned, changed or answered: everyone gets the events they may see.
+    fn events_changed(&self) {
+        for id in self.members() {
+            let events = self.events_for(&self.conns[&id].key);
+            self.send(id, &json!({ "type": "events", "events": events }));
+        }
+    }
+
     /// The server's AutoMod rules: blocked words, most mentions in a message (0: any), repeats held back.
     fn automod(&self) -> (Vec<String>, i64, bool) {
         let a: Value = self.meta("automod").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
@@ -1871,7 +1918,7 @@ impl Core {
                     return self.error(conn, "You own this server, so you can't leave it.");
                 }
                 // Gone for real, roles too: coming back with an invite starts fresh, as after a kick.
-                for table in ["accounts", "member_roles", "notified", "member_status"] {
+                for table in ["accounts", "member_roles", "notified", "member_status", "event_rsvp"] {
                     self.exec(&format!("DELETE FROM {table} WHERE key = ?"), [&key]);
                 }
                 for id in self.conns_of(&key) {
@@ -2132,7 +2179,7 @@ impl Core {
                     self.hang_up(id);
                 }
                 // Without a name the server no longer exists: nobody can join it again.
-                for table in ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit"] {
+                for table in ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit", "events", "event_rsvp"] {
                     self.exec(&format!("DELETE FROM {table}"), []);
                 }
             }
@@ -2164,6 +2211,70 @@ impl Core {
                     self.set_meta("pictures_off", if truthy(&msg["pictures_off"]) { "1" } else { "0" });
                 }
                 self.broadcast(&json!({ "type": "server_updated", "name": name, "icon": icon, "pictures_off": self.meta("pictures_off").as_deref() == Some("1") }), None);
+            }
+            "get_events" => {
+                let events = self.events_for(&key);
+                self.send(conn, &json!({ "type": "events", "events": events }));
+            }
+            "create_event" => {
+                if self.timed_out(conn) {
+                    return self.error(conn, "You're timed out, so you can't plan events right now.");
+                }
+                let name = text(&msg["name"]).split_whitespace().collect::<Vec<_>>().join(" ");
+                let description = text(&msg["description"]).trim().to_string();
+                let ch = self.channel(int(&msg["channel"]));
+                let starts_at = num(&msg["starts_at"]).filter(|x| x.is_finite()).map(|x| x as i64).unwrap_or(-1);
+                let now = now_ms() as i64;
+                if name.is_empty() || chars(&name) > 80 {
+                    return self.error(conn, "Give the event a name (up to 80 characters).");
+                }
+                if chars(&description) > 500 {
+                    return self.error(conn, "Keep the description under 500 characters.");
+                }
+                let Some(ch) = ch.filter(|c| c.parent.is_none() && self.can_see(&key, Some(c))) else { return self.error(conn, "Pick a channel for the event.") };
+                if starts_at < now - 60_000 || starts_at > now + EVENT_AHEAD_MS {
+                    return self.error(conn, "Pick a time from now up to 60 days ahead.");
+                }
+                self.prune_events();
+                let count: i64 = self.db.query_row("SELECT count(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
+                if count >= MAX_EVENTS {
+                    return self.error(conn, &format!("A server can plan up to {MAX_EVENTS} events at once."));
+                }
+                self.exec("INSERT INTO events (name, description, channel, starts_at, creator, creator_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", params![name, description, ch.id, starts_at, key, user.name, now]);
+                let id = self.db.last_insert_rowid();
+                // Whoever plans it is going.
+                self.exec("INSERT INTO event_rsvp (event, key, answer) VALUES (?, ?, 'yes')", params![id, key]);
+                self.send(conn, &json!({ "type": "event_created", "id": id }));
+                self.events_changed();
+            }
+            "delete_event" => {
+                let id = int(&msg["id"]);
+                let ev: Option<(String, String)> = self.db.query_row("SELECT creator, name FROM events WHERE id = ?", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten();
+                let Some((creator, name)) = ev else { return self.events_changed() };
+                if creator != key && my_rank < Rank::Mod {
+                    return self.error(conn, "Only whoever planned it, and moderators, can cancel an event.");
+                }
+                self.exec("DELETE FROM event_rsvp WHERE event = ?", [id]);
+                self.exec("DELETE FROM events WHERE id = ?", [id]);
+                if creator != key {
+                    self.audit(&user.name, "cancel_event", Some(&name), None);
+                }
+                self.events_changed();
+            }
+            "rsvp" => {
+                let id = int(&msg["id"]);
+                let channel: Option<i64> = self.db.query_row("SELECT channel FROM events WHERE id = ?", [id], |r| r.get(0)).optional().ok().flatten();
+                let visible = channel.is_some_and(|c| self.can_see(&key, self.channel(c).as_ref()));
+                if !visible {
+                    return self.error(conn, "That event is gone.");
+                }
+                let answer = text(&msg["answer"]);
+                if answer == "yes" || answer == "maybe" {
+                    self.exec("INSERT INTO event_rsvp (event, key, answer) VALUES (?, ?, ?) ON CONFLICT(event, key) DO UPDATE SET answer = excluded.answer", params![id, key, answer]);
+                } else {
+                    self.exec("DELETE FROM event_rsvp WHERE event = ? AND key = ?", params![id, key]);
+                }
+                self.events_changed();
             }
             "get_automod" => {
                 if !allowed(self, Rank::Admin) {
@@ -2547,7 +2658,7 @@ impl Core {
             }
         }
         // Out of the server for real: they're no longer a member, so coming back takes a new invite.
-        for table in ["accounts", "member_roles", "notified", "timeouts", "member_status"] {
+        for table in ["accounts", "member_roles", "notified", "timeouts", "member_status", "event_rsvp"] {
             self.exec(&format!("DELETE FROM {table} WHERE key = ?"), [&target]);
         }
         let detail = (removed > 0).then(|| format!("deleted {removed} messages"));
@@ -2574,6 +2685,8 @@ impl Core {
         self.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", [id]);
         self.exec("DELETE FROM messages WHERE channel = ?", [id]);
         self.exec("DELETE FROM notified WHERE channel = ?", [id]);
+        self.exec("DELETE FROM event_rsvp WHERE event IN (SELECT id FROM events WHERE channel = ?)", [id]);
+        self.exec("DELETE FROM events WHERE channel = ?", [id]);
         self.exec("DELETE FROM channels WHERE id = ?", [id]);
     }
 }
@@ -2590,6 +2703,8 @@ fn create_tables(db: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL, inviter TEXT);
          CREATE TABLE IF NOT EXISTS bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, banned_at INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, channel INTEGER NOT NULL, starts_at INTEGER NOT NULL, creator TEXT NOT NULL, creator_name TEXT NOT NULL, created_at INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS event_rsvp (event INTEGER NOT NULL, key TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY (event, key));
          CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0, mentionable INTEGER);
          CREATE TABLE IF NOT EXISTS member_roles (key TEXT NOT NULL, role INTEGER NOT NULL, PRIMARY KEY (key, role));
          CREATE TABLE IF NOT EXISTS member_status (key TEXT PRIMARY KEY, status TEXT NOT NULL, at INTEGER NOT NULL);

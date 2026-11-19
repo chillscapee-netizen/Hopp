@@ -1140,3 +1140,46 @@ test("AutoMod: blocked words, mass mentions and repeats held back for members (n
   back.close();
   owner.close();
 });
+
+test("events: planned by members, answered Going or Maybe, cancelled by whoever planned them or a moderator, private with their channel", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("events"));
+  const bob = await join(id, "bob", { invite });
+  const carol = await join(id, "carol", { invite });
+  const lobby = channelId(owner, "Lobby");
+  const at = Date.now() + 3_600_000;
+  // Checked: a name, a time ahead, a channel.
+  bob.send({ type: "create_event", name: "", description: "", channel: lobby, starts_at: at });
+  assert.match(await errorOf(bob), /name/);
+  bob.send({ type: "create_event", name: "Game night", description: "", channel: lobby, starts_at: Date.now() + 90 * 86_400_000 });
+  assert.match(await errorOf(bob), /60 days/);
+  bob.send({ type: "create_event", name: "Game night", description: "Bring snacks", channel: lobby, starts_at: at });
+  const made = await bob.waitFor((m) => m.type === "event_created");
+  const seen = await carol.waitFor((m) => m.type === "events" && m.events.some((e) => e.id === made.id));
+  const ev = seen.events.find((e) => e.id === made.id);
+  assert.deepEqual([ev.name, ev.description, ev.channel, ev.starts_at, ev.going, ev.maybe], ["Game night", "Bring snacks", lobby, at, [bob.key.pub], []]);
+  // Answers.
+  carol.send({ type: "rsvp", id: made.id, answer: "maybe" });
+  await owner.waitFor((m) => m.type === "events" && m.events.some((e) => e.id === made.id && e.maybe.includes(carol.key.pub)));
+  carol.send({ type: "rsvp", id: made.id, answer: "yes" });
+  await owner.waitFor((m) => m.type === "events" && m.events.some((e) => e.id === made.id && e.going.includes(carol.key.pub) && !e.maybe.length));
+  carol.send({ type: "rsvp", id: made.id, answer: null });
+  await owner.waitFor((m) => m.type === "events" && m.events.some((e) => e.id === made.id && !e.going.includes(carol.key.pub)));
+  // Only whoever planned it, or a moderator, cancels it.
+  carol.send({ type: "delete_event", id: made.id });
+  assert.match(await errorOf(carol), /Only whoever planned it/);
+  owner.send({ type: "delete_event", id: made.id });
+  await carol.waitFor((m) => m.type === "events" && !m.events.some((e) => e.id === made.id));
+  // In a private channel: only those who see the channel see the event.
+  owner.send({ type: "create_role", name: "Crew", level: null });
+  const crew = (await owner.waitFor((m) => m.type === "roles_updated")).roles[0];
+  owner.send({ type: "create_channel", name: "crew-room", kind: "voice" });
+  const room = (await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "crew-room"))).channels.find((c) => c.name === "crew-room").id;
+  owner.send({ type: "update_channel", channel: room, name: "crew-room", private_roles: [crew.id] });
+  await carol.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === room));
+  owner.send({ type: "create_event", name: "Crew meeting", description: "", channel: room, starts_at: at });
+  await owner.waitFor((m) => m.type === "events" && m.events.some((e) => e.name === "Crew meeting"));
+  carol.send({ type: "get_events" });
+  assert.ok(!(await carol.waitFor((m) => m.type === "events")).events.some((e) => e.name === "Crew meeting"), "carol can't see it");
+  for (const c of [owner, bob, carol]) c.close();
+});

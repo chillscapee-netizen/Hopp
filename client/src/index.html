@@ -34,6 +34,7 @@
     <symbol id="i-video-off" viewBox="0 0 24 24"><path d="M10.7 6H14a2 2 0 0 1 2 2v3.3l1 1L22 8v8M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/></symbol>
     <symbol id="i-pip" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1"/></symbol>
     <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
@@ -660,6 +661,28 @@
       <div class="modal-foot">
         <button type="button" class="btn-link close-dialog">Cancel</button>
         <button type="submit" id="poll-post" class="btn primary">Post</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="event-dialog" class="modal event-modal">
+    <form method="dialog" id="event-form">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2 class="forward-title">Plan an event</h2>
+        <label class="field-label" for="event-name">What's happening?</label>
+        <input id="event-name" type="text" maxlength="80" placeholder="Game night" autocomplete="off">
+        <div class="event-when">
+          <label><span class="field-label">When</span><input id="event-time" type="datetime-local"></label>
+          <label><span class="field-label">Where</span><select id="event-channel" class="row-select"></select></label>
+        </div>
+        <label class="field-label" for="event-description">More about it (optional)</label>
+        <textarea id="event-description" rows="3" maxlength="500" placeholder="What we'll play, what to bring"></textarea>
+        <p class="hint left">Everyone who says they're going or maybe gets a notification when it starts.</p>
+        <p id="event-error" class="error" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-link close-dialog">Cancel</button>
+        <button type="submit" id="event-post" class="btn primary">Post event</button>
       </div>
     </form>
   </dialog>

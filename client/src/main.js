@@ -1819,6 +1819,9 @@ async function connectTo(server, create, reconnecting) {
   state.olderDone.clear();
   state.loadingOlder = false;
   state.outbox = [];
+  // Another server's events don't show here (this one's come once it's connected).
+  state.events = [];
+  eventsAsked = null;
   state.replyTo = null;
   state.editing = null;
   state.latency = null;
@@ -1996,6 +1999,11 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
+  // A server's events, once per connection (they follow as they change).
+  if (state.roster.features?.includes("events") && eventsAsked !== state.activeId) {
+    eventsAsked = state.activeId;
+    invoke("get_events").catch(() => {});
+  }
   if (state.pendingThread?.server === state.activeId) {
     const p = state.pendingThread;
     const made = state.roster.channels.find((c) => c.parent === p.channel && (p.starter == null ? c.name === p.name : c.starter === p.starter));
@@ -3491,6 +3499,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
     if (state.editing?.id === m.id) li.append(messageEditor(m));
     else if (VOICE_MESSAGE.test(m.text)) li.append(voiceView(m.text.match(VOICE_MESSAGE)[1], Number(m.text.match(VOICE_MESSAGE)[2])));
     else if (pollOf(m.text)) li.append(pollView(m, pollOf(m.text)));
+    else if (EVENT_MESSAGE.test(m.text)) li.append(eventView(Number(m.text.match(EVENT_MESSAGE)[1])));
     else if (themeOf(m.text)) li.append(themeShareView(themeOf(m.text)));
     else if (forwardParts(m.text)) li.append(forwardView(forwardParts(m.text)));
     else if (PICTURE.test(m.text)) {
@@ -7156,6 +7165,8 @@ function previewText(text) {
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
   const poll = pollOf(text);
   if (poll) return "📊 " + (poll.question || "Poll");
+  const ev = text.match(EVENT_MESSAGE);
+  if (ev) return "📅 " + (eventById(Number(ev[1]))?.name ?? "Event");
   const theme = themeOf(text);
   if (theme) return "🎨 Theme: " + theme.name;
   if (VOICE_MESSAGE.test(text)) return "🎤 Voice message";
@@ -7565,7 +7576,7 @@ function messageActions(m) {
   button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
   button("reply", "Reply", () => setReply(m));
   if (canForward(m.text)) button("forward", "Forward", () => forwardMessage(m));
-  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text)) button("edit", "Edit", () => startEdit(m));
+  if (m.author_key === state.account?.publicKey && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !EVENT_MESSAGE.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text)) button("edit", "Edit", () => startEdit(m));
   if (canDelete(m)) button("trash", "Delete message", (e) => deleteMessage(m, e.shiftKey), "danger-hover");
   return actions;
 }
@@ -8979,7 +8990,7 @@ function openMessageMenu(m, e) {
       ...(threadsHere() && channel(m.channel)?.parent == null && channel(m.channel)?.kind === "text"
         ? [threadFrom(m) ? { label: "Open thread", icon: "message", action: () => openTextChannel(threadFrom(m).id) } : { label: "Start a thread", icon: "message", action: () => openThreadDialog(m) }]
         : []),
-      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
+      ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !EVENT_MESSAGE.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
       ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
@@ -9077,7 +9088,7 @@ function forwardParts(text) {
 }
 
 function canForward(text) {
-  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text) && !VOICE_MESSAGE.test(text);
+  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text) && !EVENT_MESSAGE.test(text) && !VOICE_MESSAGE.test(text);
 }
 
 /** The text to send: the original's own source when forwarding something forwarded. */
@@ -10143,6 +10154,182 @@ function pollView(m, p) {
   return card;
 }
 
+// ---------- events: a game night planned, who's coming, and a nudge when it starts ----------
+//
+// An event lives in the server (name, time, channel, who's going); a message "hopp-event:<id>"
+// shows its card wherever it was posted. Saying you're going (or maybe) sets a reminder here,
+// kept between runs, that rings when it starts while Hopp is open.
+
+var EVENT_MESSAGE = /^hopp-event:(\d{1,9})$/;
+var eventsAsked = null;
+state.events = [];
+
+function eventsHere() {
+  return online() && !!state.roster?.features?.includes("events");
+}
+
+function eventById(id) {
+  return state.events.find((e) => e.id === id);
+}
+
+function openEventDialog() {
+  $("event-name").value = "";
+  $("event-description").value = "";
+  $("event-error").hidden = true;
+  // An hour from now, on the hour, to start from.
+  const at = new Date(Date.now() + 3_600_000);
+  at.setMinutes(0, 0, 0);
+  const pad = (n) => String(n).padStart(2, "0");
+  $("event-time").value = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:00`;
+  const channels = (state.roster?.channels ?? []).filter((c) => c.parent == null);
+  $("event-channel").replaceChildren(...channels.map((c) => Object.assign(document.createElement("option"), { value: String(c.id), textContent: (c.kind === "voice" ? "🔊 " : "# ") + c.name })));
+  const voice = channels.find((c) => c.kind === "voice");
+  $("event-channel").value = String((voice ?? channels[0])?.id ?? "");
+  openModal($("event-dialog"));
+  $("event-name").focus();
+}
+
+var eventPostIn = null;
+$("event-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("event-name").value.trim();
+  const at = new Date($("event-time").value).getTime();
+  const fail = (text) => {
+    $("event-error").textContent = text;
+    $("event-error").hidden = false;
+  };
+  if (!name) return fail("Give it a name.");
+  if (!Number.isFinite(at) || at < Date.now() - 60_000) return fail("Pick a time that hasn't passed.");
+  // Its card goes in the channel you're in once the server has made it.
+  eventPostIn = { server: state.activeId, channel: state.view };
+  invoke("create_event", { name, description: $("event-description").value.trim(), channel: Number($("event-channel").value), startsAt: at }).catch((err) => fail(friendlyError(err)));
+  $("event-dialog").close();
+});
+
+listen("event-created", (e) => {
+  const where = eventPostIn;
+  eventPostIn = null;
+  if (where && where.server === state.activeId && where.channel !== null) sendChat(where.channel, `hopp-event:${e.payload}`, null);
+});
+
+listen("events", (e) => {
+  state.events = e.payload ?? [];
+  keepReminders();
+  // Cards on screen follow (who's coming, cancelled).
+  for (const card of document.querySelectorAll(".event-card[data-event]")) card.replaceWith(eventView(Number(card.dataset.event)));
+});
+
+/** When an event is: "Today at 20:00", "Tomorrow at 19:30", "Fri 21 Nov at 18:00". */
+function eventWhen(ms) {
+  const d = new Date(ms);
+  const day = new Date(d).setHours(0, 0, 0, 0);
+  const today = new Date().setHours(0, 0, 0, 0);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (day === today) return `Today at ${time}`;
+  if (day === today + 86_400_000) return `Tomorrow at ${time}`;
+  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) + ` at ${time}`;
+}
+
+/** An event's card: when, where, who's coming, and Going / Maybe. */
+function eventView(id) {
+  const ev = eventById(id);
+  const card = el("div", "event-card");
+  card.dataset.event = String(id);
+  if (!ev) {
+    card.classList.add("gone");
+    card.append(icon("calendar"), el("span", null, "This event is over or was cancelled."));
+    return card;
+  }
+  const me = state.account?.publicKey;
+  const mine = ev.going.includes(me) ? "yes" : ev.maybe.includes(me) ? "maybe" : null;
+  const now = Date.now();
+  const live = now >= ev.starts_at;
+  const ch = (state.roster?.channels ?? []).find((c) => c.id === ev.channel);
+  const head = el("div", "event-head");
+  head.append(el("span", "event-when" + (live ? " live" : ""), live ? "Happening now" : eventWhen(ev.starts_at)));
+  const title = el("strong", "event-name", ev.name);
+  const where = el("span", "event-where");
+  where.append(icon(ch?.kind === "voice" ? "volume" : "hash", "xs"), ch?.name ?? "a channel");
+  card.append(head, title, where);
+  if (ev.description) card.append(el("p", "event-description", ev.description));
+  const foot = el("div", "event-foot");
+  const faces = el("div", "event-faces");
+  for (const key of ev.going.slice(0, 5)) {
+    const p = profiles.get(key) ?? personFor(key);
+    const name = state.roster?.users.find((u) => u.public_key === key)?.name ?? p?.display_name ?? "Someone";
+    faces.append(avatar(name, "s24", undefined, pictureFor(key)));
+  }
+  const count = el("span", "event-count", `${ev.going.length} going${ev.maybe.length ? `, ${ev.maybe.length} maybe` : ""}`);
+  foot.append(faces, count);
+  const answer = (value, label) => {
+    const b = el("button", "btn sm event-answer" + (mine === value ? " active" : ""), label);
+    b.type = "button";
+    b.addEventListener("click", () => invoke("rsvp", { id, answer: mine === value ? null : value }).catch((err) => toast(friendlyError(err), true)));
+    return b;
+  };
+  const acts = el("div", "event-acts");
+  if (live && ch?.kind === "voice") {
+    const join = el("button", "btn sm primary", "Join");
+    join.type = "button";
+    join.addEventListener("click", () => joinVoice(ch.id));
+    acts.append(join);
+  }
+  acts.append(answer("yes", "Going"), answer("maybe", "Maybe"));
+  if (ev.creator === me || can("moderate")) {
+    const cancel = el("button", "event-cancel", "Cancel event");
+    cancel.type = "button";
+    cancel.addEventListener("click", async () => {
+      if (await confirmDialog({ title: `Cancel ${ev.name}?`, text: "It's taken off for everyone, and nobody is reminded.", ok: "Cancel event", cancel: "Keep it" })) invoke("delete_event", { id }).catch(() => {});
+    });
+    acts.append(cancel);
+  }
+  foot.append(acts);
+  card.append(foot);
+  return card;
+}
+
+// Reminders: kept here, for the events you're going (or maybe going) to, in every server.
+var eventTimers = new Map();
+function keepReminders() {
+  const server = activeServer();
+  if (!server) return;
+  const me = state.account?.publicKey;
+  const all = loadJson("eventReminders", {});
+  for (const k of Object.keys(all)) if (k.startsWith(server.address + "|")) delete all[k];
+  for (const ev of state.events) {
+    if (!ev.going.includes(me) && !ev.maybe.includes(me)) continue;
+    const ch = state.roster?.channels.find((c) => c.id === ev.channel);
+    all[`${server.address}|${ev.id}`] = { name: ev.name, at: ev.starts_at, server: server.address, label: server.label, channel: ev.channel, channel_name: ch?.name ?? "" };
+  }
+  for (const [k, r] of Object.entries(all)) if (r.at < Date.now() - 3_600_000) delete all[k];
+  save("eventReminders", JSON.stringify(all));
+  scheduleReminders();
+}
+
+function scheduleReminders() {
+  for (const t of eventTimers.values()) clearTimeout(t);
+  eventTimers.clear();
+  for (const [k, r] of Object.entries(loadJson("eventReminders", {}))) {
+    const wait = r.at - Date.now();
+    if (wait < -60_000 || wait > 2 ** 31 - 1) continue;
+    eventTimers.set(k, setTimeout(() => remindEvent(k, r), Math.max(0, wait)));
+  }
+}
+
+function remindEvent(k, r) {
+  const all = loadJson("eventReminders", {});
+  if (!all[k]) return;
+  delete all[k];
+  save("eventReminders", JSON.stringify(all));
+  if (state.me?.status === "dnd") return;
+  const where = r.channel_name ? `in ${r.channel_name}, ${r.label}` : r.label;
+  playSound("message", `${r.name} is starting ${where}`);
+  toast(`${r.name} is starting now ${where}.`);
+  const s = prefs.servers.find((x) => x.address === r.server);
+  desktopNotify({ display_name: r.name, avatar: null }, `Starting now ${where}`, s ? `channel:${s.id}:${r.channel}` : "home");
+}
+setTimeout(scheduleReminders, 1000);
+
 function openPollDialog() {
   $("poll-question").value = "";
   $("poll-multi").checked = false;
@@ -11115,6 +11302,7 @@ $("attach-btn").addEventListener("click", (e) => {
     [
       ...(picturesAllowed() ? [{ label: "Upload a picture", icon: "camera", action: () => $("attach-file").click() }] : []),
       { label: "Create a poll", icon: "grid", action: openPollDialog },
+      ...(eventsHere() ? [{ label: "Plan an event", icon: "calendar", action: openEventDialog }] : []),
     ],
     r.left,
     r.top - 8,

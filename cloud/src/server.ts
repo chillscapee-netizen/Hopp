@@ -17,6 +17,11 @@ const AUTOMOD_WORD_LEN = 40;
 /** The same message this many times within a minute is held back (with AutoMod's repeat rule). */
 const AUTOMOD_REPEATS = 3;
 interface Automod { words: string[]; mention_limit: number; block_repeats: boolean }
+/** Events: upcoming ones a server keeps, how far ahead they may be, and how long one stays after it starts. */
+const MAX_EVENTS = 25;
+const EVENT_AHEAD_MS = 60 * 86_400_000;
+const EVENT_KEEP_MS = 12 * 3_600_000;
+interface ServerEvent { id: number; name: string; description: string; channel: number; starts_at: number; creator: string; creator_name: string; going: string[]; maybe: string[] }
 const MEMBER_STATUSES = new Set(["online", "idle", "dnd", "offline"]);
 /** Up to this many members, the list goes out again when someone comes or goes. */
 const PRESENCE_PUSH_LIMIT = 300;
@@ -316,6 +321,8 @@ export class StromServer extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS notified (key TEXT NOT NULL, channel INTEGER NOT NULL, PRIMARY KEY (key, channel));
       CREATE TABLE IF NOT EXISTS emojis (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, image TEXT NOT NULL, creator TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, channel INTEGER NOT NULL, starts_at INTEGER NOT NULL, creator TEXT NOT NULL, creator_name TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS event_rsvp (event INTEGER NOT NULL, key TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY (event, key));
       CREATE TABLE IF NOT EXISTS images (
         id TEXT PRIMARY KEY, uploader TEXT NOT NULL, type TEXT NOT NULL, data BLOB NOT NULL,
         size INTEGER NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
@@ -402,7 +409,7 @@ export class StromServer extends DurableObject<Env> {
     }
     // Without a name the server no longer exists: nobody can join it again.
     // Everything, as on a server people run themselves: roles, emojis, the audit log and all.
-    for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit", "outbox", "cloud_bans"]) this.sql.exec(`DELETE FROM ${table}`);
+    for (const table of ["messages", "channels", "accounts", "invites", "bans", "notified", "images", "meta", "roles", "member_roles", "member_status", "emojis", "timeouts", "audit", "outbox", "cloud_bans", "events", "event_rsvp"]) this.sql.exec(`DELETE FROM ${table}`);
   }
 
   // ---------- for whoever runs Hopp Cloud ----------
@@ -522,7 +529,41 @@ export class StromServer extends DurableObject<Env> {
     this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", id);
     this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
     this.sql.exec("DELETE FROM notified WHERE channel = ?", id);
+    this.sql.exec("DELETE FROM event_rsvp WHERE event IN (SELECT id FROM events WHERE channel = ?)", id);
+    this.sql.exec("DELETE FROM events WHERE channel = ?", id);
     this.sql.exec("DELETE FROM channels WHERE id = ?", id);
+  }
+
+  /** Events long past are let go. */
+  private pruneEvents() {
+    const old = Date.now() - EVENT_KEEP_MS;
+    this.sql.exec("DELETE FROM event_rsvp WHERE event IN (SELECT id FROM events WHERE starts_at < ?)", old);
+    this.sql.exec("DELETE FROM events WHERE starts_at < ?", old);
+  }
+
+  /** The events someone may see (those in channels they can see), soonest first, with who's coming. */
+  private eventsFor(key: string | undefined): ServerEvent[] {
+    this.pruneEvents();
+    const answers = new Map<number, { going: string[]; maybe: string[] }>();
+    for (const r of this.sql.exec("SELECT event, key, answer FROM event_rsvp")) {
+      const a = answers.get(Number(r.event)) ?? { going: [], maybe: [] };
+      (r.answer === "yes" ? a.going : a.maybe).push(String(r.key));
+      answers.set(Number(r.event), a);
+    }
+    const channels = this.channels();
+    return this.sql
+      .exec("SELECT * FROM events ORDER BY starts_at, id")
+      .toArray()
+      .filter((r) => this.canSee(key, channels.find((c) => c.id === Number(r.channel))))
+      .map((r) => ({
+        id: Number(r.id), name: String(r.name), description: String(r.description), channel: Number(r.channel), starts_at: Number(r.starts_at),
+        creator: String(r.creator), creator_name: String(r.creator_name), ...(answers.get(Number(r.id)) ?? { going: [], maybe: [] }),
+      }));
+  }
+
+  /** An event was planned, changed or answered: everyone gets the events they may see. */
+  private eventsChanged() {
+    for (const [ws, s] of this.members()) this.send(ws, { type: "events", events: this.eventsFor(s.key) });
   }
 
   /** The server's AutoMod rules (none set: nothing held back). */
@@ -1027,7 +1068,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1558,7 +1599,7 @@ export class StromServer extends DurableObject<Env> {
       case "leave_server": {
         if (owner) return this.error(ws, "You own this server, so you can't leave it.");
         // Gone for real, roles too: coming back with an invite starts fresh, as after a kick.
-        for (const table of ["accounts", "member_roles", "notified", "member_status"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, s.key!);
+        for (const table of ["accounts", "member_roles", "notified", "member_status", "event_rsvp"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, s.key!);
         for (const [lws, ls] of this.members().filter(([, m]) => m.key === s.key)) {
           this.send(lws, { type: "left" });
           lws.serializeAttachment({ stage: "removed" } satisfies Session);
@@ -1716,7 +1757,7 @@ export class StromServer extends DurableObject<Env> {
           }
         }
         // Out of the server for real: they're no longer a member, so coming back takes a new invite.
-        for (const table of ["accounts", "member_roles", "notified", "timeouts", "member_status"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, key);
+        for (const table of ["accounts", "member_roles", "notified", "timeouts", "member_status", "event_rsvp"]) this.sql.exec(`DELETE FROM ${table} WHERE key = ?`, key);
         this.audit(user.name, banned ? "ban" : "kick", name, removed ? `deleted ${removed} messages` : null);
         // Every device of theirs goes.
         for (const [ows, os] of this.members().filter(([, m]) => m.key === key)) {
@@ -1838,6 +1879,45 @@ export class StromServer extends DurableObject<Env> {
         else this.setMeta("icon", icon);
         if (msg.pictures_off != null) this.setMeta("pictures_off", msg.pictures_off ? "1" : "0");
         return this.broadcast({ type: "server_updated", name, icon, pictures_off: this.meta("pictures_off") === "1" });
+      }
+      case "get_events":
+        return this.send(ws, { type: "events", events: this.eventsFor(s.key) });
+      case "create_event": {
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't plan events right now.");
+        const name = String(msg.name ?? "").replace(/\s+/g, " ").trim();
+        const description = String(msg.description ?? "").trim();
+        const ch = this.channel(Number(msg.channel));
+        const startsAt = Number(msg.starts_at);
+        const now = Date.now();
+        if (!name || [...name].length > 80) return this.error(ws, "Give the event a name (up to 80 characters).");
+        if ([...description].length > 500) return this.error(ws, "Keep the description under 500 characters.");
+        if (!ch || ch.parent !== undefined || !this.canSee(s.key, ch)) return this.error(ws, "Pick a channel for the event.");
+        if (!Number.isFinite(startsAt) || startsAt < now - 60_000 || startsAt > now + EVENT_AHEAD_MS) return this.error(ws, "Pick a time from now up to 60 days ahead.");
+        this.pruneEvents();
+        if (Number(this.sql.exec("SELECT count(*) AS n FROM events").one().n) >= MAX_EVENTS) return this.error(ws, `A server can plan up to ${MAX_EVENTS} events at once.`);
+        const row = this.sql.exec("INSERT INTO events (name, description, channel, starts_at, creator, creator_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", name, description, ch.id, startsAt, s.key!, user.name, now).one();
+        // Whoever plans it is going.
+        this.sql.exec("INSERT INTO event_rsvp (event, key, answer) VALUES (?, ?, 'yes')", Number(row.id), s.key!);
+        this.send(ws, { type: "event_created", id: Number(row.id) });
+        return this.eventsChanged();
+      }
+      case "delete_event": {
+        const ev = this.sql.exec("SELECT creator, name FROM events WHERE id = ?", Number(msg.id)).toArray()[0];
+        if (!ev) return this.eventsChanged();
+        if (ev.creator !== s.key && myRank < RANK.mod) return this.error(ws, "Only whoever planned it, and moderators, can cancel an event.");
+        this.sql.exec("DELETE FROM event_rsvp WHERE event = ?", Number(msg.id));
+        this.sql.exec("DELETE FROM events WHERE id = ?", Number(msg.id));
+        if (ev.creator !== s.key) this.audit(user.name, "cancel_event", String(ev.name), null);
+        return this.eventsChanged();
+      }
+      case "rsvp": {
+        const id = Number(msg.id);
+        const ev = this.sql.exec("SELECT channel FROM events WHERE id = ?", id).toArray()[0];
+        if (!ev || !this.canSee(s.key, this.channel(Number(ev.channel)))) return this.error(ws, "That event is gone.");
+        const answer = msg.answer === "yes" || msg.answer === "maybe" ? msg.answer : null;
+        if (answer) this.sql.exec("INSERT INTO event_rsvp (event, key, answer) VALUES (?, ?, ?) ON CONFLICT(event, key) DO UPDATE SET answer = excluded.answer", id, s.key!, answer);
+        else this.sql.exec("DELETE FROM event_rsvp WHERE event = ? AND key = ?", id, s.key!);
+        return this.eventsChanged();
       }
       case "get_automod":
         if (!allowed("admin")) return;
