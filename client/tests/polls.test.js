@@ -67,6 +67,7 @@
   const live = () => document.querySelector('.msg[data-id="9952"] .poll');
   check("still open: it can be voted on", !live().querySelector(".poll-answer").disabled);
   await wait(1200);
+  check("an hour left reads as 1 h, not 60 min", pollTimeLeft(Date.now() + 3_600_000 - 200) === "1 h left" && pollTimeLeft(Date.now() + 59 * 60_000) === "59 min left");
   check("closed while shown: results, no voting", live().querySelector(".poll-answer").disabled && live().querySelector(".poll-foot").textContent.includes("Closed"));
   report();
 })();

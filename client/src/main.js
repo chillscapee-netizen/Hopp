@@ -10100,10 +10100,12 @@ function pollsHere() {
 function pollTimeLeft(end) {
   const left = end - Date.now();
   if (left <= 0) return "Closed";
-  const h = left / 3_600_000;
+  // Rounded once, in minutes, so an hour never reads as "60 min".
+  const minutes = Math.max(1, Math.round(left / 60_000));
+  if (minutes < 60) return minutes + " min left";
+  const h = minutes / 60;
   if (h >= 48) return Math.round(h / 24) + " days left";
-  if (h >= 1) return Math.round(h) + " h left";
-  return Math.max(1, Math.round(left / 60_000)) + " min left";
+  return Math.round(h) + " h left";
 }
 
 function pollView(m, p) {
@@ -13343,8 +13345,8 @@ function themePicture(spec) {
   } else if (spec.b || spec.saturation > 55) {
     pic.style.background = "linear-gradient(in oklch 135deg, " + swatchColor(spec.a) + ", " + swatchColor(spec.b ?? spec.a) + ")";
   } else {
-    const t = specTokens(spec);
-    pic.style.background = t["app-solid"];
+    // A grey shows the grey it is (Mid grey isn't nearly black).
+    pic.style.background = spec.base ?? specTokens(spec)["app-solid"];
   }
   return pic;
 }
@@ -13616,7 +13618,7 @@ function renderThemes() {
     b.addEventListener("click", () => setTheme(id));
     return b;
   };
-  list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, b: null, contrast: 50, saturation: 50 })));
+  list.replaceChildren(...THEMES.map((t) => card(t.id, t.name, { a: t.base, base: t.base, b: null, contrast: 50, saturation: 50 })));
   // Colour themes fade between two colours.
   $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 })));
   // Your own: a row of its own with a rainbow edge, so it's never missed; its colours open below.
