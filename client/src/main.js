@@ -13586,6 +13586,11 @@ function saveCustom(change) {
 /** A theme as a small round swatch: a grey as it is, a colour theme in clear, bright colours. */
 function themePicture(spec) {
   const pic = el("span", "theme-pic");
+  // A theme of yours: its own colours exactly (not brightened), so Ember looks red and yellow.
+  if (spec.raw) {
+    pic.style.background = spec.own.length > 1 ? "linear-gradient(in oklch 135deg, " + spec.own.join(", ") + ")" : spec.own[0];
+    return pic;
+  }
   if (spec.stops || spec.own?.length > 1) {
     pic.style.background = "linear-gradient(in oklch 135deg, " + (spec.stops ?? spec.own).map(swatchColor).join(", ") + ")";
   } else if (spec.b || spec.saturation > 55) {
@@ -13747,18 +13752,54 @@ function saveSavedThemes() {
 var keepTimer = 0;
 var usingTheme = false;
 function keepEditedTheme() {
-  // Picking or trying a theme isn't editing one (trying a shared one saves nothing).
+  // Picking or trying a theme isn't editing one; editing shows at once and waits for Save.
   if (applyingSettings || usingTheme) return;
-  let t = prefs.savedThemes.find((x) => x.id === prefs.custom.editing);
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(markUnsaved, 30);
+}
+
+/** The theme being edited, as it's saved (null: none of yours yet). */
+function editedTheme() {
+  return prefs.savedThemes.find((x) => x.id === prefs.custom.editing) ?? null;
+}
+
+/** What's on screen differs from what's saved: Save and Cancel say so. */
+function themeUnsaved() {
+  const t = editedTheme();
+  const name = $("own-name")?.value.trim() || t?.name || "";
+  if (!t) return prefs.theme === "custom";
+  return !sameTheme(t, currentOwnTheme()) || name !== t.name;
+}
+
+function markUnsaved() {
+  const dirty = prefs.theme === "custom" && themeUnsaved();
+  if ($("own-unsaved")) {
+    $("own-unsaved").hidden = !dirty;
+    $("own-cancel").hidden = !dirty || !editedTheme();
+    $("own-save").disabled = !dirty;
+  }
+}
+
+/** Save: the theme being edited keeps what's on screen (one of yours is made if it's new). */
+function saveEditedTheme() {
+  let t = editedTheme();
   if (!t) {
-    if (prefs.savedThemes.length >= MAX_SAVED_THEMES) return;
+    if (prefs.savedThemes.length >= MAX_SAVED_THEMES) return toast(`You can keep up to ${MAX_SAVED_THEMES} themes. Delete one to make room.`, true);
     t = { id: crypto.randomUUID(), name: nextThemeName() };
     prefs.savedThemes.push(t);
     prefs.custom.editing = t.id;
+    save("themeCustom", JSON.stringify(prefs.custom));
   }
-  Object.assign(t, { colors: [...ownColours()], mode: prefs.custom.mode ?? "dark", saturation: prefs.custom.saturation ?? 50 });
-  clearTimeout(keepTimer);
-  keepTimer = setTimeout(saveSavedThemes, 250);
+  Object.assign(t, { name: $("own-name").value.trim().slice(0, 32) || t.name || "My theme", colors: [...ownColours()], mode: prefs.custom.mode ?? "dark", saturation: prefs.custom.saturation ?? 50 });
+  saveSavedThemes();
+  markUnsaved();
+  toast(`Saved "${t.name}".`);
+}
+
+/** Leaving a theme with changes not saved: asked first. True to go on. */
+async function leaveUnsaved() {
+  if (prefs.theme !== "custom" || !themeUnsaved()) return true;
+  return confirmDialog({ title: "Leave without saving?", text: "Your changes to this theme aren't saved.", ok: "Leave", cancel: "Keep editing" });
 }
 
 function nextThemeName() {
@@ -13767,7 +13808,8 @@ function nextThemeName() {
 }
 
 /** A new theme of your own, next to the others, to make as you like. */
-function newOwnTheme() {
+async function newOwnTheme() {
+  if (!(await leaveUnsaved())) return;
   if (prefs.savedThemes.length >= MAX_SAVED_THEMES) return toast(`You can keep up to ${MAX_SAVED_THEMES} themes. Delete one to make room.`, true);
   // One calm colour to start from: + adds more, and they fade across the window.
   const t = { id: crypto.randomUUID(), name: nextThemeName(), colors: ["#5b4bd6"], mode: "dark", saturation: 50 };
@@ -13821,8 +13863,14 @@ function shareTheme(t) {
 function renderSavedThemes() {
   const box = $("saved-themes");
   if (!box) return;
-  $("saved-themes-group").hidden = !prefs.savedThemes.length;
+  $("saved-themes-group").hidden = false;
   const editing = prefs.theme === "custom" ? prefs.custom.editing : null;
+  const add = el("button", "theme-card saved-theme own-new");
+  add.type = "button";
+  const plus = el("span", "theme-pic");
+  plus.append(icon("plus"));
+  add.append(plus, el("span", "theme-name", "New theme"));
+  add.addEventListener("click", newOwnTheme);
   box.replaceChildren(
     ...prefs.savedThemes.map((t) => {
       const b = el("button", "theme-card saved-theme");
@@ -13830,9 +13878,12 @@ function renderSavedThemes() {
       b.dataset.tip = "Click to use, right-click for more";
       const check = el("span", "theme-check");
       check.append(icon("check"));
-      b.append(themePicture({ a: t.colors[0], b: t.colors.at(-1), own: t.colors, saturation: t.saturation }), check, el("span", "theme-name ellipsis", t.name));
+      b.append(themePicture({ own: t.colors, raw: true }), check, el("span", "theme-name ellipsis", t.name));
       b.classList.toggle("active", !!editing && t.id === editing);
-      b.addEventListener("click", () => useTheme(t));
+      b.addEventListener("click", async () => {
+        if (t.id === prefs.custom.editing && prefs.theme === "custom") return;
+        if (await leaveUnsaved()) useTheme(t);
+      });
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         openMenu(
@@ -13860,6 +13911,7 @@ function renderSavedThemes() {
       });
       return b;
     }),
+    add,
   );
 }
 
@@ -13912,15 +13964,7 @@ function renderThemes() {
   // Colour themes fade between two colours.
   $("gradient-list").replaceChildren(...GRADIENTS.map((g) => card(g.id, g.name, { a: g.stops[0], b: g.stops.at(-1), stops: g.stops, contrast: 50, saturation: 100 })));
   // Your own: a row of its own with a rainbow edge, so it's never missed; its colours open below.
-  const own = card("new", "Make a new theme", { own: ["#ff5f6d", "#ffc371", "#47e891", "#4facfe", "#b06ab3"] });
-  own.classList.add("own-card");
-  const words = el("span", "own-card-text");
-  words.append(own.querySelector(".theme-name"), el("span", "own-card-sub", "Any colours you like, fading across the window. Make as many as you want."));
-  own.append(words);
-  // Not a theme of its own: it makes a new one among yours.
-  const make = own.cloneNode(true);
-  make.addEventListener("click", newOwnTheme);
-  $("own-theme-card").replaceChildren(make);
+  // Your own themes, and a New one, are in their own grid below.
   syncThemePage();
 }
 
@@ -13936,6 +13980,8 @@ function syncThemePage() {
   // The name of the theme you're editing.
   const editing = prefs.savedThemes.find((t) => t.id === prefs.custom.editing);
   if ($("own-name") && document.activeElement !== $("own-name")) $("own-name").value = editing?.name ?? "";
+  if ($("own-delete")) $("own-delete").hidden = !editing;
+  markUnsaved();
   const c = prefs.custom;
   renderOwnColours();
   renderSavedThemes();
@@ -13982,12 +14028,31 @@ $("chat-compact").addEventListener("change", (e) => {
 $("theme-saturation").addEventListener("input", (e) => saveCustom({ saturation: Number(e.target.value) }));
 prefs.savedThemes = loadSavedThemes();
 // Naming the theme you're editing, as you type.
-$("own-name").addEventListener("input", (e) => {
-  const t = prefs.savedThemes.find((x) => x.id === prefs.custom.editing);
+$("own-name").addEventListener("input", markUnsaved);
+$("own-name").addEventListener("keydown", (e) => e.key === "Enter" && !$("own-save").disabled && saveEditedTheme());
+$("own-save").addEventListener("click", saveEditedTheme);
+// Cancel: back to the theme as it's saved.
+$("own-cancel").addEventListener("click", () => {
+  const t = editedTheme();
+  if (t) useTheme(t);
+  markUnsaved();
+});
+$("own-duplicate").addEventListener("click", () => {
+  if (prefs.savedThemes.length >= MAX_SAVED_THEMES) return toast(`You can keep up to ${MAX_SAVED_THEMES} themes. Delete one to make room.`, true);
+  const from = currentOwnTheme($("own-name").value.trim() || "My theme");
+  const copy = { ...from, id: crypto.randomUUID(), name: (from.name + " copy").slice(0, 32) };
+  prefs.savedThemes.push(copy);
+  saveSavedThemes();
+  useTheme(copy);
+});
+$("own-delete").addEventListener("click", async () => {
+  const t = editedTheme();
   if (!t) return;
-  t.name = e.target.value.trim().slice(0, 32) || "My theme";
-  clearTimeout(keepTimer);
-  keepTimer = setTimeout(saveSavedThemes, 300);
+  if (!(await confirmDialog({ title: `Delete ${t.name}?`, text: "It's gone from your themes on all your devices.", ok: "Delete" }))) return;
+  prefs.savedThemes = prefs.savedThemes.filter((x) => x !== t);
+  prefs.custom.editing = null;
+  saveSavedThemes();
+  setTheme("mid");
 });
 $("own-share").addEventListener("click", () => shareTheme(currentOwnTheme(prefs.savedThemes.find((t) => t.id === prefs.custom.editing)?.name ?? "My theme")));
 $("chat-size").addEventListener("input", (e) => {

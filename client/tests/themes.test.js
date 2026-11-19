@@ -12,8 +12,8 @@
 
   openSettings("appearance");
   await wait(50);
-  const cards = [...document.querySelectorAll(".theme-card")];
-  check("a card for each theme, the colour ones, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,twilight,sunset,dusk,ocean,forest,ember,aurora,hero,dawn,new" && cards.every((c) => c.querySelector(".theme-pic") && c.querySelector(".theme-name").textContent.trim()));
+  const cards = [...document.querySelectorAll("#theme-list .theme-card, #gradient-list .theme-card")];
+  check("a card for each theme, the colour ones, and your own", cards.map((c) => c.dataset.theme).join() === "mid,dark,midnight,light,twilight,sunset,dusk,ocean,forest,ember,aurora,hero,dawn" && cards.every((c) => c.querySelector(".theme-pic") && c.querySelector(".theme-name").textContent.trim()));
   check("the chosen one is marked", document.querySelector(".theme-card.active")?.dataset.theme === "mid");
 
   cards.find((c) => c.dataset.theme === "light").click();
@@ -27,7 +27,7 @@
   check("the card follows", document.querySelector(".theme-card.active")?.dataset.theme === "light");
 
   // Your own colours: round colours that open the colour picker, + adds one, × takes one away.
-  document.querySelector('.theme-card[data-theme="new"]').click();
+  document.querySelector(".own-new").click();
   await wait(120);
   check("your own colours show when you pick Your own", !$("theme-editor").hidden && document.querySelectorAll("#own-colours .own-colour input[type=color]").length >= 1);
   const picker = document.querySelector("#own-colours .own-colour input");

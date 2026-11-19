@@ -9,25 +9,30 @@
   document.querySelector('.settings-tab[data-tab="appearance"]').click();
   await wait(50);
   // A new theme of your own: made, picked, and edited; every change is kept in it.
-  document.querySelector('.theme-card[data-theme="new"]').click();
+  document.querySelector(".own-new").click();
   await wait(50);
   check("Make a new theme makes one among yours, and opens it", prefs.savedThemes.length === 1 && !$("theme-editor").hidden && !$("saved-themes-group").hidden && $("saved-themes-group").textContent === "Your themes");
   setOwnColours(["#2a3ad6", "#9b2ad6"]);
   $("own-name").value = "Night drive";
   $("own-name").dispatchEvent(new Event("input"));
-  await wait(400);
-  check("its colours and name are kept as you go", prefs.savedThemes[0].name === "Night drive" && prefs.savedThemes[0].colors.join() === "#2a3ad6,#9b2ad6");
+  await wait(100);
+  check("changes show at once and wait for Save", !$("own-unsaved").hidden && !$("own-save").disabled && prefs.savedThemes[0].colors.join() !== "#2a3ad6,#9b2ad6");
+  $("own-save").click();
+  await wait(300);
+  check("Save keeps its colours and name", prefs.savedThemes[0].name === "Night drive" && prefs.savedThemes[0].colors.join() === "#2a3ad6,#9b2ad6");
   check("kept for next time (and your other devices)", JSON.parse(localStorage.getItem("savedThemes"))[0].colors.join() === "#2a3ad6,#9b2ad6" && SYNCED_SETTINGS.includes("savedThemes"));
   check("and marked as the one in use", document.querySelector("#saved-themes .saved-theme").classList.contains("active"));
   keepTheme(currentOwnTheme("Again"));
   check("the same colours aren't saved twice", prefs.savedThemes.length === 1);
 
   // A second one, then back to the first: each keeps its own colours.
-  document.querySelector('.theme-card[data-theme="new"]').click();
+  document.querySelector(".own-new").click();
   await wait(50);
   setOwnColours(["#d6402a"]);
-  await wait(400);
-  check("several of your own, side by side", prefs.savedThemes.length === 2 && document.querySelectorAll("#saved-themes .saved-theme").length === 2 && prefs.savedThemes[0].colors.join() === "#2a3ad6,#9b2ad6" && prefs.savedThemes[1].colors.join() === "#d6402a");
+  await wait(100);
+  $("own-save").click();
+  await wait(300);
+  check("several of your own, side by side", prefs.savedThemes.length === 2 && document.querySelectorAll("#saved-themes .saved-theme:not(.own-new)").length === 2 && prefs.savedThemes[0].colors.join() === "#2a3ad6,#9b2ad6" && prefs.savedThemes[1].colors.join() === "#d6402a");
   check("the new one is the one in use", document.querySelectorAll("#saved-themes .saved-theme")[1].classList.contains("active") && !document.querySelectorAll("#saved-themes .saved-theme")[0].classList.contains("active"));
   document.querySelectorAll("#saved-themes .saved-theme")[0].click();
   await wait(30);

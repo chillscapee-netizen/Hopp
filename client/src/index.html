@@ -1661,22 +1661,23 @@
           <div id="theme-list" class="theme-grid" role="radiogroup" aria-label="Grey themes"></div>
           <div class="theme-group">Gradients</div>
           <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Colour themes"></div>
-          <div id="own-theme-card"></div>
-          <div id="saved-themes-group" class="theme-group" hidden>Your themes</div>
-          <div id="saved-themes" class="theme-grid"></div>
+          <div id="saved-themes-group" class="theme-group">Your themes</div>
+          <div id="saved-themes" class="theme-grid own-grid"></div>
 
 
           <div id="theme-editor" class="card theme-editor">
+            <div class="own-head">
+              <input id="own-name" class="own-name" type="text" maxlength="32" placeholder="Name this theme" aria-label="Theme name" spellcheck="false">
+              <span id="own-unsaved" class="own-unsaved" hidden>Unsaved changes</span>
+              <button type="button" id="own-cancel" class="btn sm" hidden>Cancel</button>
+              <button type="button" id="own-save" class="btn primary sm" disabled>Save</button>
+            </div>
             <div class="theme-own">
               <span class="row-label">
-                <span class="row-title">Your colours</span>
+                <span class="row-title">Colours</span>
                 <span class="row-sub">Click a colour to change it, + to add another. With two or more, they fade across the whole window.</span>
               </span>
               <div id="own-colours" class="own-colours"></div>
-              <div class="own-actions">
-                <input id="own-name" class="own-name" type="text" maxlength="32" placeholder="Name this theme" aria-label="Theme name" spellcheck="false">
-                <button type="button" id="own-share" class="btn-link sm">Copy to share</button>
-              </div>
             </div>
             <div class="row">
               <span class="row-title">Light or dark</span>
@@ -1689,6 +1690,11 @@
               <span class="row-title">Colourfulness</span>
               <span class="row-control slider-control"><input id="theme-saturation" type="range" min="0" max="100" step="5"><output id="theme-saturation-value"></output></span>
             </label>
+            <div class="own-foot">
+              <button type="button" id="own-duplicate" class="btn-link sm">Duplicate</button>
+              <button type="button" id="own-share" class="btn-link sm">Copy to share</button>
+              <button type="button" id="own-delete" class="btn-link sm danger-soft">Delete theme</button>
+            </div>
           </div>
 
           <div class="card-title">Chat</div>
