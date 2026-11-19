@@ -1581,10 +1581,10 @@
           <div class="card-title">Theme</div>
           <div class="theme-group">Greys</div>
           <div id="theme-list" class="theme-grid" role="radiogroup" aria-label="Grey themes"></div>
-          <div class="theme-group">Colours</div>
+          <div class="theme-group">Gradients</div>
           <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Colour themes"></div>
           <div id="own-theme-card"></div>
-          <div id="saved-themes-group" class="theme-group" hidden>Saved</div>
+          <div id="saved-themes-group" class="theme-group" hidden>Your themes</div>
           <div id="saved-themes" class="theme-grid"></div>
 
 
@@ -1596,7 +1596,7 @@
               </span>
               <div id="own-colours" class="own-colours"></div>
               <div class="own-actions">
-                <button type="button" id="own-save" class="btn sm"><svg class="i"><use href="#i-check"/></svg>Save theme</button>
+                <input id="own-name" class="own-name" type="text" maxlength="32" placeholder="Name this theme" aria-label="Theme name" spellcheck="false">
                 <button type="button" id="own-share" class="btn-link sm">Copy to share</button>
               </div>
             </div>
