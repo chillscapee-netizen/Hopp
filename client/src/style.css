@@ -4188,7 +4188,7 @@ html.wallpaper #settings .settings-content::-webkit-scrollbar-thumb, html.wallpa
 .admin-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0 0 8px; font-size: 13.5px; }
 .admin-facts dt { color: var(--muted); }
 .admin-facts dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; min-width: 0; }
-.admin-who { font-weight: 600; }
+#admin-dialog .admin-who { font-weight: 600; }
 .admin-key { padding: 0 6px; border: none; border-radius: 4px; background: var(--hover); color: var(--muted); font: 12px ui-monospace, monospace; cursor: pointer; }
 .admin-key:hover { color: var(--text); }
 .admin-tag { padding: 0 6px; border-radius: 4px; font-size: 11.5px; font-weight: 700; }

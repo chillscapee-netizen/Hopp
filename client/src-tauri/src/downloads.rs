@@ -99,7 +99,9 @@ pub fn download_cancel(downloads: State<'_, Downloads>, id: String) {
 pub fn show_download(app: AppHandle, path: String) -> CmdResult {
     let dir = downloads_dir(&app)?;
     let path = PathBuf::from(path);
-    if !path.starts_with(&dir) || !path.exists() {
+    // In Downloads for real: "Downloads\..\.." would pass a plain starts_with.
+    let climbs = path.components().any(|c| matches!(c, std::path::Component::ParentDir));
+    if climbs || !path.starts_with(&dir) || !path.exists() {
         return Err("That file isn't in your Downloads anymore.".into());
     }
     // Through Windows' own "show this file" call: no extra program is started for it.
