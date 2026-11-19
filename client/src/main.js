@@ -2117,6 +2117,8 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
+  // Out of the channel that was watching together: what it watches is told afresh on coming back.
+  if (state.watch && myVoice() !== state.watch.channel) state.watch = null;
   // A server's events, once per connection (they follow as they change).
   if (state.roster.features?.includes("events") && eventsAsked !== state.activeId) {
     eventsAsked = state.activeId;
@@ -2486,6 +2488,8 @@ function personRow(m, i, status) {
 }
 
 listen("disconnected", () => {
+  // The connection is gone: what was being watched is told afresh on coming back.
+  state.watch = null;
   const server = activeServer();
   // We just left this server on purpose.
   if (!server && state.justLeft) {
@@ -10444,10 +10448,14 @@ function remindEvent(k, r) {
   delete all[k];
   save("eventReminders", JSON.stringify(all));
   if (state.me?.status === "dnd") return;
+  // A server you've left, or an event called off there (known when you're in it): no ring.
+  const s = prefs.servers.find((x) => x.address === r.server);
+  if (!s) return;
+  const id = Number(k.split("|").at(-1));
+  if (s.id === state.activeId && state.eventsLoaded && !state.events.some((ev) => ev.id === id)) return;
   const where = r.channel_name ? `in ${r.channel_name}, ${r.label}` : r.label;
   playSound("message", `${r.name} is starting ${where}`);
   toast(`${r.name} is starting now ${where}.`);
-  const s = prefs.servers.find((x) => x.address === r.server);
   desktopNotify({ display_name: r.name, avatar: null }, `Starting now ${where}`, s ? `channel:${s.id}:${r.channel}` : "home");
 }
 setTimeout(scheduleReminders, 1000);

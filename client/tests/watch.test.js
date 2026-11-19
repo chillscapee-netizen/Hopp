@@ -48,6 +48,15 @@
     $("watch-stop").click();
     await wait(80);
     check("Stop ends it for everyone", sent.some((m) => m.video === null) && $("watch-stage").hidden && !frame());
+
+    // Leaving the channel: it's forgotten here (if they stop it while you're away, you'd never hear).
+    emit("watch", { channel: 1, video: "bbbbbbbbbbb", position: 0, playing: true, at_ago: 0, by: "Elin" });
+    await wait(50);
+    const out = structuredClone(state.roster);
+    out.users.find((u) => u.session_id === out.me).voice_channel = null;
+    emit("roster", out);
+    await wait(80);
+    check("leaving the channel forgets what it was watching", state.watch === null && $("watch-stage").hidden);
   } catch (e) {
     check("no crash: " + e.message + " " + String(e.stack).slice(0, 200), false);
   }
