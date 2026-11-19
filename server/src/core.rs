@@ -88,8 +88,8 @@ const MAX_IMAGE_STORE: i64 = 100_000_000;
 const IMAGES_PER_DAY: i64 = 40;
 pub const UPLOAD_CLOCK_SKEW_MS: u64 = 5 * 60_000;
 /// Hopp Cloud's features; a server on someone's computer has every one of them.
-const FEATURES: [&str; 18] = [
-    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events",
+const FEATURES: [&str; 19] = [
+    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch",
 ];
 
 static ENDPOINT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$").unwrap());
@@ -875,11 +875,16 @@ impl Core {
             return Some(format!("{} is full ({MAX_VOICE_PEERS} people).", ch.name));
         }
         let channel = ch.id as u32;
+        // Watching together starts over when a channel fills up again.
+        if others.is_empty() {
+            self.exec("DELETE FROM meta WHERE key = ?", [format!("watch:{}", ch.id)]);
+        }
         if !self.mesh {
             self.update_user(conn, |u| {
                 u.voice_channel = Some(channel);
                 u.sharing = false;
             });
+            self.send_watch(conn, ch.id);
             return None;
         }
         // A fresh key whenever a channel fills up again, so people who left can't listen in later.
@@ -906,6 +911,7 @@ impl Core {
             })
             .collect();
         self.send(conn, &json!({ "type": "voice_session", "channel": ch.id, "key": key, "peers": peers }));
+        self.send_watch(conn, ch.id);
         None
     }
 
@@ -1304,6 +1310,16 @@ impl Core {
 
     /// Who may ping many at once: moderators may use @everyone, @here and any role; others only
     /// roles that allow it. Anything else stays in the text as plain words that ping nobody.
+    /// What the others in a voice channel are watching together, for someone joining it.
+    fn send_watch(&self, conn: ConnId, channel: i64) {
+        let Some(watch) = self.meta(&format!("watch:{channel}")).and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { return };
+        let mut out = watch.clone();
+        out["type"] = json!("watch");
+        out["channel"] = json!(channel);
+        out["at_ago"] = json!(now_ms().saturating_sub(watch["at"].as_u64().unwrap_or(0)));
+        self.send(conn, &out);
+    }
+
     /// Events long past are let go.
     fn prune_events(&self) {
         let old = now_ms() as i64 - EVENT_KEEP_MS;
@@ -2211,6 +2227,34 @@ impl Core {
                     self.set_meta("pictures_off", if truthy(&msg["pictures_off"]) { "1" } else { "0" });
                 }
                 self.broadcast(&json!({ "type": "server_updated", "name": name, "icon": icon, "pictures_off": self.meta("pictures_off").as_deref() == Some("1") }), None);
+            }
+            "watch_set" => {
+                // Watching a YouTube video together, in the voice channel you're in.
+                let Some(channel) = user.voice_channel else { return self.error(conn, "Join a voice channel to watch together.") };
+                if self.timed_out(conn) {
+                    return self.error(conn, "You're timed out, so you can't do that right now.");
+                }
+                let video = if msg["video"].is_null() { None } else { Some(text(&msg["video"])) };
+                if let Some(v) = &video {
+                    if v.len() != 11 || !v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                        return self.error(conn, "That isn't a YouTube video.");
+                    }
+                }
+                let position = num(&msg["position"]).filter(|x| x.is_finite()).unwrap_or(0.0).clamp(0.0, 864_000.0);
+                let watch = json!({ "video": video, "position": position, "playing": truthy(&msg["playing"]), "at": now_ms(), "by": user.name });
+                let meta_key = format!("watch:{channel}");
+                if video.is_none() {
+                    self.exec("DELETE FROM meta WHERE key = ?", [&meta_key]);
+                } else {
+                    self.set_meta(&meta_key, &watch.to_string());
+                }
+                let mut out = watch;
+                out["type"] = json!("watch");
+                out["channel"] = json!(channel);
+                out["at_ago"] = json!(0);
+                for id in self.voice_members(channel as i64) {
+                    self.send(id, &out);
+                }
             }
             "get_events" => {
                 let events = self.events_for(&key);

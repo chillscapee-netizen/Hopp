@@ -644,6 +644,9 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::AuditLog { entries } => {
                     let _ = ui.emit("audit-log", entries);
                 }
+                ServerMsg::Watch { channel, video, position, playing, at_ago, by } => {
+                    let _ = ui.emit("watch", serde_json::json!({ "channel": channel, "video": video, "position": position, "playing": playing, "at_ago": at_ago, "by": by }));
+                }
                 ServerMsg::Events { events } => {
                     let _ = ui.emit("events", events);
                 }
@@ -1337,6 +1340,12 @@ fn timeout_member(state: State<'_, AppState>, session_id: SessionId, minutes: u3
 #[tauri::command]
 fn get_audit_log(state: State<'_, AppState>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetAuditLog))
+}
+
+/// Watching together: what plays in your voice channel, where, and whether it's playing.
+#[tauri::command]
+fn watch_set(state: State<'_, AppState>, video: Option<String>, position: f64, playing: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::WatchSet { video, position, playing }))
 }
 
 #[tauri::command]
@@ -2127,6 +2136,7 @@ fn main() {
             assign_role,
             set_nickname,
             get_audit_log,
+            watch_set,
             get_events,
             create_event,
             delete_event,

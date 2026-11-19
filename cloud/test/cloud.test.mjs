@@ -1183,3 +1183,41 @@ test("events: planned by members, answered Going or Maybe, cancelled by whoever 
   assert.ok(!(await carol.waitFor((m) => m.type === "events")).events.some((e) => e.name === "Crew meeting"), "carol can't see it");
   for (const c of [owner, bob, carol]) c.close();
 });
+
+test("watching together: a YouTube video shared in a voice channel, joined where it is, and over when the channel empties", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("watch"));
+  const bob = await join(id, "bob", { invite });
+  const lobby = channelId(owner, "Lobby");
+  // Only from inside a voice channel.
+  owner.send({ type: "watch_set", video: "dQw4w9WgXcQ", position: 0, playing: true });
+  assert.match(await errorOf(owner), /voice channel/);
+  owner.send({ type: "join_voice", channel: lobby });
+  await owner.waitFor((m) => m.type === "voice_session");
+  owner.send({ type: "watch_set", video: "not a video", position: 0, playing: true });
+  assert.match(await errorOf(owner), /YouTube/);
+  owner.send({ type: "watch_set", video: "dQw4w9WgXcQ", position: 42, playing: true });
+  const w = await owner.waitFor((m) => m.type === "watch");
+  assert.deepEqual([w.channel, w.video, w.position, w.playing, w.by], [lobby, "dQw4w9WgXcQ", 42, true, "owner"]);
+  // Bob joins: told what's playing, and how long ago it was where.
+  await sleep(300);
+  bob.send({ type: "join_voice", channel: lobby });
+  const joined = await bob.waitFor((m) => m.type === "watch");
+  assert.equal(joined.video, "dQw4w9WgXcQ");
+  assert.ok(joined.at_ago >= 250, `told how long ago (${joined.at_ago} ms)`);
+  // Paused by Bob: the owner hears it.
+  bob.send({ type: "watch_set", video: "dQw4w9WgXcQ", position: 50, playing: false });
+  const paused = await owner.waitFor((m) => m.type === "watch" && m.playing === false);
+  assert.deepEqual([paused.position, paused.by], [50, "bob"]);
+  // Everyone leaves: next time the channel starts afresh.
+  owner.send({ type: "leave_voice" });
+  bob.send({ type: "leave_voice" });
+  await sleep(200);
+  bob.inbox.length = 0;
+  bob.send({ type: "join_voice", channel: lobby });
+  await bob.waitFor((m) => m.type === "voice_session");
+  await sleep(300);
+  assert.ok(!bob.inbox.some((m) => m.type === "watch"), "nothing playing in a channel that emptied");
+  owner.close();
+  bob.close();
+});

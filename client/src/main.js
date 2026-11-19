@@ -15043,6 +15043,8 @@ function renderVoiceStage() {
   // Leaving the voice view in full screen would leave an empty black screen.
   if (!show && document.fullscreenElement === stage) document.exitFullscreen().catch(() => {});
   if (!show) {
+    // Watching together shows only in its voice view.
+    placeWatch();
     // Watching from a text channel: the screen sits above that chat, where it always did.
     if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
     return;
@@ -15058,8 +15060,9 @@ function renderVoiceStage() {
   // A camera in the middle while a screen plays: the screen waits in the row below, a click away.
   chat.classList.toggle("screen-aside", watchingHere && camFocus);
   // Screens being shared that you aren't watching: offered big, in the middle.
-  const offers = screenFocus || camFocus ? [] : here.filter((u) => u.sharing && u.session_id !== state.roster.me);
-  const focused = screenFocus || camFocus || offers.length > 0;
+  const together = watchHere();
+  const offers = screenFocus || camFocus || together ? [] : here.filter((u) => u.sharing && u.session_id !== state.roster.me);
+  const focused = screenFocus || camFocus || offers.length > 0 || together;
   const tiles = el("div", "voice-tiles" + (focused ? " strip" : ""));
   const main = focused ? el("div", "stage-main") : null;
   for (const u of here) {
@@ -15121,7 +15124,12 @@ function renderVoiceStage() {
     }
     main.append(cards);
   }
-  if (screenFocus) {
+  if (together && !camFocus) {
+    main.append(el("div", "watch-slot"));
+    // Once the view is laid out, the player goes over its place (and starts again if it had stopped).
+    setTimeout(() => (watchPlayer.frame ? placeWatch() : applyWatch()), 0);
+  } else setTimeout(() => placeWatch(), 0);
+  if (screenFocus && !together) {
     main.append(screen);
     screen.querySelector("video")?.play?.().catch(() => {});
   } else if (screen.parentElement !== chat) chat.insertBefore(screen, stage);
@@ -15173,6 +15181,136 @@ function renderVoiceStage() {
  * The buttons for being in voice, in the middle under everyone: microphone, sound, camera,
  * screen, invite and leave (the soundboard stays bottom left). They work like the ones by your name (bottom left).
  */
+// ---------- watching together ----------
+//
+// Someone in a voice channel starts a YouTube video and everyone there sees it at the same
+// moment: playing, pausing and skipping on anyone's player is shared through the server, and
+// a player that drifts a few seconds away is put back where the others are. It sits in the
+// middle of the voice view, in a player that stays put while the tiles around it change.
+
+state.watch = null; // { channel, video, position, playing, by, receivedAt }
+var watchPlayer = { frame: null, video: null, time: 0, state: -1, quietUntil: 0 };
+
+function watchHere() {
+  const w = state.watch;
+  return !!w?.video && online() && state.view === w.channel && myVoice() === w.channel;
+}
+
+/** Where the shared video should be now, in seconds. */
+function watchExpected() {
+  const w = state.watch;
+  return w.position + (w.playing ? (Date.now() - w.receivedAt) / 1000 : 0);
+}
+
+function watchCommand(func, args = []) {
+  watchPlayer.frame?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+}
+
+async function startWatching() {
+  const link = await askText({ title: "Watch together", label: "A YouTube link", value: "", ok: "Watch", hint: "Everyone in this voice channel sees it with you, at the same moment." });
+  if (!link?.trim()) return;
+  const video = youtubeId(link.trim());
+  if (!video) return toast("That isn't a YouTube link.", true);
+  invoke("watch_set", { video, position: youtubeStart(link.trim()) || 0, playing: true }).catch((err) => toast(friendlyError(err), true));
+}
+
+function watchMenu() {
+  const b = document.querySelector('#voice-stage [data-vc="watch"]');
+  const r = (b ?? document.body).getBoundingClientRect();
+  openMenu([
+    { label: "Change video", icon: "play", action: startWatching },
+    { label: "Stop watching together", icon: "x", danger: true, action: stopWatchTogether },
+  ], r.left, r.top - 8, true);
+}
+
+function stopWatchTogether() {
+  invoke("watch_set", { video: null, position: 0, playing: false }).catch(() => {});
+}
+$("watch-change").addEventListener("click", startWatching);
+$("watch-stop").addEventListener("click", stopWatchTogether);
+
+listen("watch", (e) => {
+  const w = e.payload ?? {};
+  state.watch = w.video ? { channel: w.channel, video: w.video, position: Number(w.position) || 0, playing: !!w.playing, by: w.by ?? "", receivedAt: Date.now() - (Number(w.at_ago) || 0) } : null;
+  renderVoiceStage();
+  applyWatch();
+});
+
+/** The player follows what's shared: the video, where it is, playing or paused. */
+function applyWatch() {
+  const w = state.watch;
+  if (!watchHere()) return placeWatch();
+  $("watch-by").textContent = w.by ? `Watching together · started by ${w.by}` : "Watching together";
+  if (watchPlayer.video !== w.video || !watchPlayer.frame) {
+    watchPlayer.frame?.remove();
+    const frame = el("iframe");
+    frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    frame.title = "Watching together";
+    frame.src = `https://www.youtube-nocookie.com/embed/${w.video}?enablejsapi=1&autoplay=1&playsinline=1&rel=0&start=${Math.floor(watchExpected())}`;
+    frame.addEventListener("load", () => {
+      // Ask it to tell us how it's doing.
+      frame.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: "watch", channel: "widget" }), "*");
+      watchPlayer.quietUntil = Date.now() + 2500;
+      setTimeout(() => (state.watch?.playing ? watchCommand("playVideo") : watchCommand("pauseVideo")), 800);
+    });
+    $("watch-frame").replaceChildren(frame);
+    Object.assign(watchPlayer, { frame, video: w.video, time: watchExpected(), state: -1, quietUntil: Date.now() + 4000 });
+  } else {
+    // Someone played, paused or skipped: here too, without telling it back.
+    watchPlayer.quietUntil = Date.now() + 1500;
+    if (Math.abs(watchPlayer.time - watchExpected()) > 2) watchCommand("seekTo", [watchExpected(), true]);
+    watchCommand(w.playing ? "playVideo" : "pauseVideo");
+  }
+  placeWatch();
+}
+
+/** The player sits over its place in the voice view (it isn't moved, so it never reloads). */
+function placeWatch() {
+  const box = $("watch-stage");
+  const slot = document.querySelector("#voice-stage .watch-slot");
+  if (!watchHere() || !slot) {
+    box.hidden = true;
+    // Left the channel or the view: the video stops here.
+    if (!watchHere() && watchPlayer.frame) {
+      watchPlayer.frame.remove();
+      Object.assign(watchPlayer, { frame: null, video: null, state: -1 });
+    }
+    return;
+  }
+  const holder = box.offsetParent ?? box.parentElement;
+  const a = slot.getBoundingClientRect();
+  const b = holder.getBoundingClientRect();
+  Object.assign(box.style, { left: a.left - b.left + "px", top: a.top - b.top + "px", width: a.width + "px", height: a.height + "px" });
+  box.hidden = false;
+}
+
+// What the player says it's doing; your own play, pause or skip is shared with the others.
+window.addEventListener("message", (e) => {
+  if (!watchPlayer.frame || e.source !== watchPlayer.frame.contentWindow || !/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(e.origin)) return;
+  let data;
+  try {
+    data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+  } catch {
+    return;
+  }
+  const info = data?.info;
+  if (data?.event === "onStateChange" && typeof info === "number") watchPlayer.state = info;
+  if (info && typeof info === "object") {
+    if (typeof info.playerState === "number") watchPlayer.state = info.playerState;
+    if (typeof info.currentTime === "number") watchPlayer.time = info.currentTime;
+  }
+  const w = state.watch;
+  if (!w || !watchHere() || Date.now() < watchPlayer.quietUntil) return;
+  const share = (playing) => {
+    watchPlayer.quietUntil = Date.now() + 1500;
+    invoke("watch_set", { video: w.video, position: watchPlayer.time, playing }).catch(() => {});
+  };
+  if (watchPlayer.state === 1 && !w.playing) return share(true);
+  if (watchPlayer.state === 2 && w.playing) return share(false);
+  // Skipped ahead or back on this player (more than a hiccup would): everyone goes there.
+  if (watchPlayer.state === 1 && Math.abs(watchPlayer.time - watchExpected()) > 4) share(true);
+});
+
 function voiceControls() {
   const bar = el("div", "voice-controls");
   const add = (id, iconName, label, onClick, cls = "") => {
@@ -15192,6 +15330,7 @@ function voiceControls() {
     add("cam", "video-off", "Turn on camera", () => $("cam-btn").click());
     add("share", "monitor", "Share your screen", () => $("share-btn").click());
   }
+  if (state.roster?.features?.includes("watch")) add("watch", "play", "Watch together", () => (watchHere() ? watchMenu() : startWatching()));
   add("invite", "user-plus", "Invite friends", () => openInvite());
   bar.append(el("span", "vc-sep"));
   add("leave", "phone-off", "Leave voice", () => $("hangup-btn").click(), "danger");
@@ -15244,7 +15383,10 @@ function fitTiles(box = document.querySelector("#voice-stage .voice-tiles")) {
   for (let i = sizes.length - 1; i >= 0; i--) if (sizes[i] >= top * 0.9) { best = sizes[i]; break; }
   box.style.setProperty("--tile-w", Math.floor(Math.max(120, Math.min(best, 720))) + "px");
 }
-new ResizeObserver(() => fitTiles()).observe($("voice-stage"));
+new ResizeObserver(() => {
+  fitTiles();
+  placeWatch();
+}).observe($("voice-stage"));
 document.addEventListener("fullscreenchange", () => {
   if (document.fullscreenElement === $("voice-stage") || !document.fullscreenElement) renderVoiceStage();
 });

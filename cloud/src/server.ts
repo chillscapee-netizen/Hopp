@@ -865,6 +865,8 @@ export class StromServer extends DurableObject<Env> {
     // Everyone sends to everyone directly, so a channel can only hold so many.
     if (others.length >= MAX_VOICE_PEERS) return `${ch.name} is full (${MAX_VOICE_PEERS} people).`;
     // A fresh key whenever a channel fills up again, so people who left can't listen in later.
+    // Watching together starts over when a channel fills up again.
+    if (others.length === 0) this.sql.exec("DELETE FROM meta WHERE key = ?", `watch:${ch.id}`);
     let key = this.meta(`voice_key:${ch.id}`);
     if (!key || others.length === 0) {
       key = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
@@ -877,6 +879,9 @@ export class StromServer extends DurableObject<Env> {
     });
     const peers = others.filter(([, o]) => o.endpoint).map(([, o]) => ({ session_id: o.user!.session_id, ...o.endpoint }));
     this.send(ws, { type: "voice_session", channel: ch.id, key, peers });
+    // What the others are watching together, so a newcomer joins in where they are.
+    const watch = this.meta(`watch:${ch.id}`);
+    if (watch) this.send(ws, { type: "watch", channel: ch.id, ...JSON.parse(watch), at_ago: Date.now() - Number(JSON.parse(watch).at) });
     return null;
   }
 
@@ -1068,7 +1073,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1879,6 +1884,21 @@ export class StromServer extends DurableObject<Env> {
         else this.setMeta("icon", icon);
         if (msg.pictures_off != null) this.setMeta("pictures_off", msg.pictures_off ? "1" : "0");
         return this.broadcast({ type: "server_updated", name, icon, pictures_off: this.meta("pictures_off") === "1" });
+      }
+      case "watch_set": {
+        // Watching a YouTube video together, in the voice channel you're in.
+        const channel = user.voice_channel;
+        if (channel === null) return this.error(ws, "Join a voice channel to watch together.");
+        if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't do that right now.");
+        const video = msg.video == null ? null : String(msg.video);
+        if (video !== null && !/^[A-Za-z0-9_-]{11}$/.test(video)) return this.error(ws, "That isn't a YouTube video.");
+        const position = Math.max(0, Math.min(864_000, Number(msg.position) || 0));
+        const now = Date.now();
+        const watch = { video, position, playing: !!msg.playing, at: now, by: user.name };
+        if (video === null) this.sql.exec("DELETE FROM meta WHERE key = ?", `watch:${channel}`);
+        else this.setMeta(`watch:${channel}`, JSON.stringify(watch));
+        for (const [mws] of this.voiceMembers(channel)) this.send(mws, { type: "watch", channel, ...watch, at_ago: 0 });
+        return;
       }
       case "get_events":
         return this.send(ws, { type: "events", events: this.eventsFor(s.key) });

@@ -515,6 +515,12 @@ pub enum ClientMsg {
     Timeout { session_id: SessionId, minutes: u32 },
     /// Admins, on servers with "mod-tools": answered with `AuditLog`.
     GetAuditLog,
+    /// Watching a YouTube video together in your voice channel (`video: None` stops it).
+    WatchSet {
+        video: Option<String>,
+        position: f64,
+        playing: bool,
+    },
     /// Events planned in the server.
     GetEvents,
     CreateEvent {
@@ -661,6 +667,19 @@ pub enum ServerMsg {
     Bans { bans: Vec<Ban> },
     /// The newest audit log entries first.
     AuditLog { entries: Vec<AuditEntry> },
+    /// What your voice channel is watching together: where it was `at_ago` ms ago.
+    Watch {
+        channel: i64,
+        video: Option<String>,
+        #[serde(default)]
+        position: f64,
+        #[serde(default)]
+        playing: bool,
+        #[serde(default)]
+        at_ago: u64,
+        #[serde(default)]
+        by: String,
+    },
     /// The events you may see, soonest first.
     Events { events: Vec<ServerEvent> },
     /// The event you planned is made.
