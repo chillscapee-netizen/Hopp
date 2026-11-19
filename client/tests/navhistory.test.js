@@ -1,4 +1,4 @@
-// Back and forward: the arrows above Hopp's logo (and Alt + arrows) walk through the places
+// Back and forward: the arrows in the title bar (and Alt + arrows) walk through the places
 // you've been, like a browser; going somewhere new after going back drops what was ahead.
 
 (async () => {

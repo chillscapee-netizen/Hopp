@@ -85,6 +85,10 @@
 
   <div id="shell" class="shell locked offline">
     <header class="topbar" data-tauri-drag-region>
+      <div class="topbar-nav">
+        <button id="nav-back" type="button" class="nav-arrow" data-tip="Back (Alt + ←)" aria-label="Back" disabled><svg class="i"><use href="#i-chevron-left"/></svg></button>
+        <button id="nav-forward" type="button" class="nav-arrow" data-tip="Forward (Alt + →)" aria-label="Forward" disabled><svg class="i"><use href="#i-chevron-right"/></svg></button>
+      </div>
       <button id="streamer-pill" type="button" class="streamer-pill" aria-label="Streamer mode is on: click to turn it off" hidden>Streamer mode</button>
       <button id="backup-pill" class="backup-pill" hidden>
         <svg class="i sm"><use href="#i-shield"/></svg> Back up your account
@@ -198,10 +202,6 @@
 
     <!-- ---------- app ---------- -->
     <nav class="rail" aria-label="Servers">
-      <div class="rail-nav">
-        <button id="nav-back" type="button" class="rail-nav-btn" data-tip="Back (Alt + ←)" data-tip-pos="right" aria-label="Back" disabled><svg class="i"><use href="#i-chevron-left"/></svg></button>
-        <button id="nav-forward" type="button" class="rail-nav-btn" data-tip="Forward (Alt + →)" data-tip-pos="right" aria-label="Forward" disabled><svg class="i"><use href="#i-chevron-right"/></svg></button>
-      </div>
       <button id="home-btn" class="rail-item home" data-tip="Home" data-tip-pos="right">
         <span class="rail-icon"><svg class="i"><use href="#i-logo"/></svg></span>
       </button>
