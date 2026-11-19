@@ -6347,6 +6347,10 @@ function mergeSync(remote) {
   for (const [address, at] of Object.entries(prefs.removedServers)) removed[address] = Math.max(at, removed[address] ?? 0);
   const keepSince = Date.now() - 90 * 86_400_000;
   for (const [address, at] of Object.entries(removed)) if (at < keepSince) delete removed[address];
+  // Joined again here after it was removed somewhere (its id says when): it stays. Without
+  // this, joining while the account was offline would be undone by the older removal.
+  const addedAt = (server) => Number(String(server.id).split("-")[0]) || 0;
+  for (const server of prefs.servers) if (removed[server.address] && addedAt(server) > removed[server.address]) delete removed[server.address];
 
   const local = new Map(prefs.servers.map((s) => [s.address, s]));
   const servers = [];
@@ -10117,7 +10121,8 @@ state.inbox = [];
 state.inboxSeen = 0;
 
 function inboxItems() {
-  return state.inbox.filter((i) => !(i.crowd && crowdQuiet(i.server)));
+  // Not from people you blocked: their mentions never count.
+  return state.inbox.filter((i) => !(i.crowd && crowdQuiet(i.server)) && !isBlocked(i.author_key));
 }
 
 function renderInboxBadge() {

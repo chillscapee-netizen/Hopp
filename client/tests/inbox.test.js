@@ -32,6 +32,13 @@
   emit("account", { type: "channel_activity", server: "cloud:crew0001", channel: 0, id: 80, last_id: 80, last_at: Date.now() + 1000, read_id: 0, mentions: 1, server_name: "The Crew", channel_name: "general", author_key: KEYS.elin, author_name: "Elin", mention: true, crowd: false, preview: "@Marcus look" });
   await wait(50);
   check("a new mention counts at once", !badge().hidden && badge().textContent === "1", badge().textContent);
+  // From someone you blocked: never counted or listed.
+  emit("account", { type: "friend", friend: { key: KEYS.sara, username: "sara", display_name: "Sara", avatar: null, state: "blocked", status: "offline", activity: null } });
+  emit("account", { type: "channel_activity", server: "cloud:crew0001", channel: 0, id: 81, last_id: 81, last_at: Date.now() + 2000, read_id: 0, mentions: 1, server_name: "The Crew", channel_name: "general", author_key: KEYS.sara, author_name: "Sara", mention: true, crowd: false, preview: "@Marcus blocked hi" });
+  await wait(50);
+  check("a mention from someone you blocked doesn't count", badge().textContent === "1" && !inboxItems().some((i) => i.author_key === KEYS.sara), badge().textContent);
+  state.inbox = state.inbox.filter((i) => i.author_key !== KEYS.sara);
+  emit("account", { type: "friend_removed", key: KEYS.sara });
 
   // Removing one, then going to another.
   $("inbox-btn").click();
