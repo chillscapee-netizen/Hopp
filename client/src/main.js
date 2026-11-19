@@ -13451,6 +13451,8 @@ var GRADIENTS = [
   { id: "forest", name: "Forest", stops: ["#0a4a26", "#0b5232", "#0c5640", "#0b574c", "#0a5257"] },
   { id: "ember", name: "Ember", stops: ["#5a0c25", "#5e121b", "#601d12", "#5e290c", "#5a3408"] },
   { id: "aurora", name: "Aurora", stops: ["#07564c", "#0a4a62", "#123a70", "#22226e", "#38136e"] },
+  // Hero: a deep red that turns to a strong blue.
+  { id: "hero", name: "Hero", stops: ["#6a0c1a", "#620d2c", "#4d1248", "#2f1a66", "#142670"] },
   { id: "dawn", name: "Dawn", stops: ["#f6dce8", "#ecdcf6", "#e3dcfb"] },
 ];
 
