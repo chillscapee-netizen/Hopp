@@ -1990,7 +1990,7 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
-  if (state.pendingThread) {
+  if (state.pendingThread?.server === state.activeId) {
     const p = state.pendingThread;
     const made = state.roster.channels.find((c) => c.parent === p.channel && (p.starter == null ? c.name === p.name : c.starter === p.starter));
     if (made) {
@@ -8989,7 +8989,7 @@ $("thread-form").addEventListener("submit", (e) => {
     return;
   }
   if (!m) return;
-  state.pendingThread = { channel: m.channel, starter: m.id, name };
+  state.pendingThread = { server: state.activeId, channel: m.channel, starter: m.id, name };
   call("create_thread", { channel: m.channel, message: m.id, name });
   $("thread-dialog").close();
 });
