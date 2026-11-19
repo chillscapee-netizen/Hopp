@@ -13819,6 +13819,7 @@ async function newOwnTheme() {
   prefs.savedThemes.push(t);
   saveSavedThemes();
   useTheme(t);
+  showThemeTab("yours");
   setTimeout(() => $("own-name")?.select(), 50);
 }
 
@@ -13971,10 +13972,30 @@ function renderThemes() {
   syncThemePage();
 }
 
+// Kinds of theme as tabs, one grid at a time: the page stays the same size however many there are.
+var themeTab = null;
+function showThemeTab(tab) {
+  themeTab = tab;
+  for (const b of document.querySelectorAll("[data-ttab]")) {
+    b.classList.toggle("active", b.dataset.ttab === tab);
+    b.setAttribute("aria-selected", String(b.dataset.ttab === tab));
+  }
+  for (const p of document.querySelectorAll("[data-tpanel]")) p.hidden = p.dataset.tpanel !== tab;
+  if ($("theme-editor")) $("theme-editor").hidden = tab !== "yours" || prefs.theme !== "custom";
+}
+for (const b of document.querySelectorAll("[data-ttab]")) b.addEventListener("click", () => showThemeTab(b.dataset.ttab));
+
+/** The tab the theme in use belongs to. */
+function themeTabOf(id) {
+  return id === "custom" ? "yours" : GRADIENTS.some((g) => g.id === id) ? "gradients" : "greys";
+}
+
 /** The page follows the settings without being rebuilt. */
 function syncThemePage() {
   // Your own colours show when you pick "Your own"; the ready themes need nothing more.
-  if ($("theme-editor")) $("theme-editor").hidden = prefs.theme !== "custom";
+  // Opening the page: the tab with the theme in use.
+  if (!themeTab || !$("settings").open) showThemeTab(themeTabOf(prefs.theme));
+  if ($("theme-editor")) $("theme-editor").hidden = themeTab !== "yours" || prefs.theme !== "custom";
   for (const n of document.querySelectorAll(".theme-card")) {
     n.classList.toggle("active", n.dataset.theme === prefs.theme);
     n.setAttribute("aria-checked", String(n.dataset.theme === prefs.theme));

@@ -1657,12 +1657,17 @@
         <section data-panel="appearance" class="settings-page" hidden>
           <h2 class="page-title">Appearance</h2>
           <div class="card-title">Theme</div>
-          <div class="theme-group">Greys</div>
-          <div id="theme-list" class="theme-grid" role="radiogroup" aria-label="Grey themes"></div>
-          <div class="theme-group">Gradients</div>
-          <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Colour themes"></div>
-          <div id="saved-themes-group" class="theme-group">Your themes</div>
-          <div id="saved-themes" class="theme-grid own-grid"></div>
+          <div class="theme-picker">
+            <div class="segmented theme-tabs" role="tablist" aria-label="Kinds of theme">
+              <button type="button" class="segment" data-ttab="greys" role="tab">Greys</button>
+              <button type="button" class="segment" data-ttab="gradients" role="tab">Gradients</button>
+              <button type="button" class="segment" data-ttab="yours" role="tab">Your themes</button>
+            </div>
+            <div id="theme-list" class="theme-grid" role="radiogroup" aria-label="Grey themes" data-tpanel="greys"></div>
+            <div id="gradient-list" class="theme-grid" role="radiogroup" aria-label="Gradients" data-tpanel="gradients" hidden></div>
+            <div id="saved-themes-group" hidden></div>
+            <div id="saved-themes" class="theme-grid own-grid" data-tpanel="yours" hidden></div>
+          </div>
 
 
           <div id="theme-editor" class="card theme-editor">

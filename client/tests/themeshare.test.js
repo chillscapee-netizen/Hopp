@@ -11,7 +11,7 @@
   // A new theme of your own: made, picked, and edited; every change is kept in it.
   document.querySelector(".own-new").click();
   await wait(50);
-  check("Make a new theme makes one among yours, and opens it", prefs.savedThemes.length === 1 && !$("theme-editor").hidden && !$("saved-themes-group").hidden && $("saved-themes-group").textContent === "Your themes");
+  check("Make a new theme makes one among yours, and opens it", prefs.savedThemes.length === 1 && !$("theme-editor").hidden && !$("saved-themes").hidden && document.querySelector("[data-ttab=yours]").classList.contains("active"));
   setOwnColours(["#2a3ad6", "#9b2ad6"]);
   $("own-name").value = "Night drive";
   $("own-name").dispatchEvent(new Event("input"));
