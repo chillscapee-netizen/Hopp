@@ -125,6 +125,19 @@ function parsePoll(text: string): { answers: number; end: number; multi: boolean
   }
 }
 
+/** The words a message says: a poll's question and answers (they're sent encoded), or the text. */
+function wordsOf(text: string): string {
+  const m = text.match(/^hopp-poll:([A-Za-z0-9_-]{4,2600})$/);
+  if (!m) return text;
+  try {
+    const bin = atob(m[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    return [p.q, ...(Array.isArray(p.a) ? p.a : [])].map((x) => String(x ?? "")).join("\n");
+  } catch {
+    return text;
+  }
+}
+
 function rowToMessage(r: Record<string, any>): ChatMessage {
   const m: ChatMessage = {
     id: Number(r.id), channel: Number(r.channel), sender: Number(r.sender), sender_name: String(r.sender_name),
@@ -580,7 +593,7 @@ export class StromServer extends DurableObject<Env> {
   private automodSays(ws: WebSocket, s: Session, text: string, myRank: number, sending: boolean): string | null {
     if (myRank >= RANK.mod) return null;
     const rules = this.automod();
-    const lower = text.toLowerCase();
+    const lower = wordsOf(text).toLowerCase();
     if (rules.words.length) {
       const words = new Set(lower.split(/[^\p{L}\p{N}_]+/u).filter(Boolean));
       if (rules.words.some((w) => (/\s/.test(w) ? lower.includes(w) : words.has(w)))) return "That message has a word this server doesn't allow.";
@@ -1912,6 +1925,9 @@ export class StromServer extends DurableObject<Env> {
         if (!name || [...name].length > 80) return this.error(ws, "Give the event a name (up to 80 characters).");
         if ([...description].length > 500) return this.error(ws, "Keep the description under 500 characters.");
         if (!ch || ch.parent !== undefined || !this.canSee(s.key, ch)) return this.error(ws, "Pick a channel for the event.");
+        // The server's AutoMod words apply to an event's name and description too.
+        const held = this.automodSays(ws, s, name + "\n" + description, myRank, false);
+        if (held) return this.error(ws, held.replace("That message has", "That event has"));
         if (!Number.isFinite(startsAt) || startsAt < now - 60_000 || startsAt > now + EVENT_AHEAD_MS) return this.error(ws, "Pick a time from now up to 60 days ahead.");
         this.pruneEvents();
         if (Number(this.sql.exec("SELECT count(*) AS n FROM events").one().n) >= MAX_EVENTS) return this.error(ws, `A server can plan up to ${MAX_EVENTS} events at once.`);

@@ -10324,8 +10324,10 @@ $("event-form").addEventListener("submit", (e) => {
   };
   if (!name) return fail("Give it a name.");
   if (!Number.isFinite(at) || at < Date.now() - 60_000) return fail("Pick a time that hasn't passed.");
-  // Its card goes in the channel you're in once the server has made it.
-  eventPostIn = { server: state.activeId, channel: state.view };
+  // Its card goes in the channel you're in once the server has made it; for a private channel,
+  // in that channel, so nobody who can't see it gets a card for an event they can't see.
+  const evChannel = state.roster?.channels.find((c) => c.id === Number($("event-channel").value));
+  eventPostIn = { server: state.activeId, channel: evChannel?.private_roles?.length ? evChannel.id : state.view };
   invoke("create_event", { name, description: $("event-description").value.trim(), channel: Number($("event-channel").value), startsAt: at }).catch((err) => fail(friendlyError(err)));
   $("event-dialog").close();
 });

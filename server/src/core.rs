@@ -216,6 +216,15 @@ fn parse_poll(text: &str) -> Option<Poll> {
     Some(Poll { answers, end, multi: truthy(&p["multi"]) })
 }
 
+/// The words a message says: a poll's question and answers (they're sent encoded), or the text.
+fn words_of(text: &str) -> String {
+    let Some(m) = POLL.captures(text) else { return text.to_string() };
+    let Some(p) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(m[1].trim_end_matches('=')).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { return text.to_string() };
+    let mut out = vec![p["q"].as_str().unwrap_or("").to_string()];
+    out.extend(p["a"].as_array().into_iter().flatten().map(|a| a.as_str().unwrap_or("").to_string()));
+    out.join("\n")
+}
+
 /// Anything kept in the server's store (a picture or a voice message): its id.
 fn stored_id(text: &str) -> Option<String> {
     IMAGE_TOKEN.captures(text).or_else(|| VOICE_TOKEN.captures(text)).map(|c| c[1].to_string())
@@ -1376,7 +1385,7 @@ impl Core {
             return None;
         }
         let (words, limit, repeats) = self.automod();
-        let lower = body.to_lowercase();
+        let lower = words_of(body).to_lowercase();
         if !words.is_empty() {
             let tokens: HashSet<&str> = lower.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect();
             if words.iter().any(|w| if w.contains(char::is_whitespace) { lower.contains(w.as_str()) } else { tokens.contains(w.as_str()) }) {
@@ -2276,6 +2285,10 @@ impl Core {
                     return self.error(conn, "Keep the description under 500 characters.");
                 }
                 let Some(ch) = ch.filter(|c| c.parent.is_none() && self.can_see(&key, Some(c))) else { return self.error(conn, "Pick a channel for the event.") };
+                // The server's AutoMod words apply to an event's name and description too.
+                if let Some(held) = self.automod_says(conn, &format!("{name}\n{description}"), my_rank, false) {
+                    return self.error(conn, &held.replace("That message has", "That event has"));
+                }
                 if starts_at < now - 60_000 || starts_at > now + EVENT_AHEAD_MS {
                     return self.error(conn, "Pick a time from now up to 60 days ahead.");
                 }

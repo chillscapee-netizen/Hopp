@@ -1128,6 +1128,12 @@ test("AutoMod: blocked words, mass mentions and repeats held back for members (n
   // Editing into a blocked word is held back too.
   bob.send({ type: "edit_message", channel: general, id: scampi.message.id, text: "scam for dinner" });
   assert.match(await errorOf(bob), /word/);
+  // A poll's question and answers are read too (they're sent encoded), and an event's name.
+  const poll = "hopp-poll:" + Buffer.from(JSON.stringify({ q: "Is this a scam?", a: ["yes", "no"], end: Date.now() + 3_600_000 })).toString("base64url");
+  bob.send({ type: "send_chat", channel: general, text: poll });
+  assert.match(await errorOf(bob), /word/);
+  bob.send({ type: "create_event", name: "Scam night", description: "", channel: general, starts_at: Date.now() + 3_600_000 });
+  assert.match(await errorOf(bob), /That event has a word/);
   // Moderators and admins aren't held back.
   owner.send({ type: "send_chat", channel: general, text: "the word scam, as an example" });
   await owner.waitFor((m) => m.type === "chat" && m.message.text === "the word scam, as an example");
