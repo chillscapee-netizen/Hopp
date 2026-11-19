@@ -264,7 +264,7 @@ function friendlyError(raw) {
   // Hopp Cloud runs on a free plan with a daily limit; past it, Cloudflare turns requests away.
   if (/\b(429|503|1027)\b|too many requests|exceeded|daily limit|overloaded/i.test(s)) return "Hopp Cloud is overloaded right now. It usually comes back within a few hours. Your messages and servers are safe.";
   if (/10061|refused/i.test(s)) return "The server isn't answering. Check that it's running and that the address is right.";
-  if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check the address and that port 7777 is open.";
+  if (/timed out|did not answer/i.test(s)) return "The server took too long to answer. Check your internet connection and try again in a moment.";
   if (/resolve|11001|no such host/i.test(s)) return "Couldn't find a server at that address.";
   if (/unknown message type/i.test(s)) return "This server doesn't have that yet. It needs an update from its owner.";
   const versions = s.match(/protocol (\d+), the app speaks (\d+)/i);
@@ -12750,6 +12750,12 @@ async function drawAdminReports() {
   };
   const stats = el("div", "admin-stats");
   stats.append(stat(s.open, "open"), stat(s.urgent, "urgent", s.urgent ? "urgent" : ""), stat(s.today, "in the last day"), stat(s.bans, "banned"));
+  // How full Hopp Cloud is of pictures (they pause at the budget, so chat always has room).
+  if (Number.isFinite(s.pictures) && s.pictureBudget > 0) {
+    const gb = (b) => (b / 1e9).toFixed(1);
+    const share = s.pictures / s.pictureBudget;
+    stats.append(stat(`${gb(s.pictures)} / ${gb(s.pictureBudget)} GB`, "pictures stored", share > 0.8 ? "urgent" : ""));
+  }
 
   // Filters: which reports, what kind, words, and who it's about.
   const filters = el("div", "admin-filters");

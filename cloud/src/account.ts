@@ -293,6 +293,12 @@ export class UserDirectory extends DurableObject<Env> {
       bans: n("SELECT count(*) AS n FROM cloud_bans"),
       blocked: n("SELECT count(*) AS n FROM blocked_tunnels"),
       byReason,
+      // Pictures kept across Hopp Cloud, against what they may use (see pictureRoom).
+      pictures: n("SELECT coalesce(sum(bytes), 0) AS n FROM picture_stores"),
+      pictureBudget: (() => {
+        const gb = Number(this.env.PICTURE_BUDGET_GB ?? 3.5);
+        return (Number.isFinite(gb) && gb > 0 ? Math.min(gb, 4.5) : 3.5) * 1e9;
+      })(),
     };
   }
 
