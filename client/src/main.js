@@ -4801,6 +4801,9 @@ async function applyDevices() {
   $("device-error").hidden = true;
   try {
     await invoke("set_devices", { input: prefs.inputDevice || null, output: prefs.outputDevice || null });
+    // Speakers or headphones now: echo removal follows (and the Bluetooth warning).
+    applyEcho();
+    if (state.deviceList) checkBluetooth(state.deviceList);
     if (state.micTesting) {
       // Restart the check on the newly chosen devices.
       await invoke("stop_mic_test");
