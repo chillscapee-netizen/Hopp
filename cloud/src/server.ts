@@ -11,6 +11,12 @@ import { accountOf } from "./account";
 const CLOUD_BANNED = "This Hopp ID has been banned from Hopp Cloud for breaking Hopp's rules.";
 const CLOUD_TAKEN_DOWN = "This server was taken down by Hopp for breaking Hopp's rules.";
 /** What a member list shows of someone who's in Hopp but not in this server right now. */
+/** AutoMod: at most this many blocked words, each this long. */
+const AUTOMOD_WORDS = 200;
+const AUTOMOD_WORD_LEN = 40;
+/** The same message this many times within a minute is held back (with AutoMod's repeat rule). */
+const AUTOMOD_REPEATS = 3;
+interface Automod { words: string[]; mention_limit: number; block_repeats: boolean }
 const MEMBER_STATUSES = new Set(["online", "idle", "dnd", "offline"]);
 /** Up to this many members, the list goes out again when someone comes or goes. */
 const PRESENCE_PUSH_LIMIT = 300;
@@ -208,6 +214,8 @@ interface Session {
   topped?: number;
   lastTyping?: number;
   endpoint?: Endpoint;
+  /** What they sent lately, for AutoMod's repeat rule: [text, when]. */
+  recent?: [string, number][];
 }
 
 type ClientMsg = { type: string; [field: string]: any };
@@ -515,6 +523,42 @@ export class StromServer extends DurableObject<Env> {
     this.sql.exec("DELETE FROM messages WHERE channel = ?", id);
     this.sql.exec("DELETE FROM notified WHERE channel = ?", id);
     this.sql.exec("DELETE FROM channels WHERE id = ?", id);
+  }
+
+  /** The server's AutoMod rules (none set: nothing held back). */
+  private automod(): Automod {
+    try {
+      const a = JSON.parse(this.meta("automod") ?? "{}");
+      return { words: Array.isArray(a.words) ? a.words.map(String) : [], mention_limit: Number(a.mention_limit) || 0, block_repeats: !!a.block_repeats };
+    } catch {
+      return { words: [], mention_limit: 0, block_repeats: false };
+    }
+  }
+
+  /** Why AutoMod holds a message back, or null. Moderators and admins are free of it. */
+  private automodSays(ws: WebSocket, s: Session, text: string, myRank: number, sending: boolean): string | null {
+    if (myRank >= RANK.mod) return null;
+    const rules = this.automod();
+    const lower = text.toLowerCase();
+    if (rules.words.length) {
+      const words = new Set(lower.split(/[^\p{L}\p{N}_]+/u).filter(Boolean));
+      if (rules.words.some((w) => (/\s/.test(w) ? lower.includes(w) : words.has(w)))) return "That message has a word this server doesn't allow.";
+    }
+    if (rules.mention_limit) {
+      const people = new Set([...text.matchAll(MENTION)].map((m) => m[1])).size + new Set([...text.matchAll(ROLE_MENTION)].map((m) => m[1])).size;
+      MENTION.lastIndex = ROLE_MENTION.lastIndex = 0;
+      if (people > rules.mention_limit) return `This server allows at most ${rules.mention_limit} mentions in one message.`;
+    }
+    if (rules.block_repeats && sending) {
+      const now = Date.now();
+      const recent = (s.recent ?? []).filter(([, at]) => now - at < 60_000);
+      const same = lower.trim();
+      if (recent.filter(([t]) => t === same).length >= AUTOMOD_REPEATS) return "You've sent that a few times already. Give it a minute.";
+      // Short, so the session stays small.
+      s.recent = [...recent, [same.slice(0, 200), now]].slice(-10) as [string, number][];
+      ws.serializeAttachment(s);
+    }
+    return null;
   }
 
   /** A message being deleted: its picture goes too. */
@@ -942,6 +986,7 @@ export class StromServer extends DurableObject<Env> {
     // in are told here when it happens).
     if (!known && (await accountOf(this.env, key).isCloudBanned())) return this.reject(ws, CLOUD_BANNED);
     if (!known && !isOwner) {
+      if (this.meta("invites_paused") === "1") return this.reject(ws, "This server isn't letting new people in right now. Try again later.");
       if (!s.invite) return this.reject(ws, "This server is invite-only. Ask the owner for an invite link.");
       const invite = this.invites().find((i) => i.code === s.invite);
       if (!invite) return this.reject(ws, "This invite is invalid or has expired.");
@@ -982,7 +1027,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1343,6 +1388,8 @@ export class StromServer extends DurableObject<Env> {
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const now = Date.now();
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't write right now.");
+        const held = this.automodSays(ws, s, text, myRank, true);
+        if (held) return this.error(ws, held);
         // Slowmode: a pause between each person's messages here (moderators are free).
         const slow = Number(this.channels().find((c) => c.id === ch.id)?.slowmode ?? 0);
         if (slow && myRank < RANK.mod) {
@@ -1409,6 +1456,8 @@ export class StromServer extends DurableObject<Env> {
         const m = this.message(channel, id);
         if (!m) return this.error(ws, "That message no longer exists.");
         if (m.author_key !== s.key) return this.error(ws, "You can only edit your own messages.");
+        const held = this.automodSays(ws, s, text, myRank, false);
+        if (held) return this.error(ws, held);
         const at = Date.now();
         this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, id);
         return this.broadcastChannel(channel, { type: "message_edited", channel, id, text, edited_at: at });
@@ -1789,6 +1838,21 @@ export class StromServer extends DurableObject<Env> {
         else this.setMeta("icon", icon);
         if (msg.pictures_off != null) this.setMeta("pictures_off", msg.pictures_off ? "1" : "0");
         return this.broadcast({ type: "server_updated", name, icon, pictures_off: this.meta("pictures_off") === "1" });
+      }
+      case "get_automod":
+        if (!allowed("admin")) return;
+        return this.send(ws, { type: "automod", ...this.automod(), invites_paused: this.meta("invites_paused") === "1" });
+      case "set_automod": {
+        if (!allowed("admin")) return;
+        const words = [...new Set((Array.isArray(msg.words) ? msg.words : []).map((w: unknown) => String(w).trim().toLowerCase()).filter((w: string) => w && [...w].length <= AUTOMOD_WORD_LEN))].slice(0, AUTOMOD_WORDS);
+        const limit = Math.max(0, Math.min(50, Math.floor(Number(msg.mention_limit)) || 0));
+        const rules: Automod = { words, mention_limit: limit, block_repeats: !!msg.block_repeats };
+        this.setMeta("automod", JSON.stringify(rules));
+        const paused = !!msg.invites_paused;
+        if (paused !== (this.meta("invites_paused") === "1")) this.audit(user.name, paused ? "pause_invites" : "resume_invites", null, null);
+        this.setMeta("invites_paused", paused ? "1" : "0");
+        this.audit(user.name, "automod", null, `${words.length} words${limit ? `, ${limit} mentions` : ""}${rules.block_repeats ? ", repeats" : ""}`);
+        return this.send(ws, { type: "automod", ...rules, invites_paused: paused });
       }
       case "get_server_settings":
         if (!allowed("admin")) return;

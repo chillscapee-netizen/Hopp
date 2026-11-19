@@ -4273,3 +4273,11 @@ html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 12
 .role-level-words { display: grid; gap: 2px; }
 .role-level-words strong { font-size: 14px; }
 .role-level-words span { color: var(--muted); font-size: 12.5px; }
+
+/* ---------- server safety: AutoMod and paused invites ---------- */
+.safety-card { display: grid; }
+.safety-words { display: grid; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.safety-words textarea { width: 100%; min-height: 90px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--deep); color: var(--text); font: inherit; font-size: 14px; resize: vertical; }
+.safety-words textarea:focus { border-color: var(--border-focus); outline: none; }
+.safety-select { flex: none; width: auto; min-width: 140px; }
+.safety-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; }

@@ -107,7 +107,7 @@ async function sweep(label) {
       document.querySelector(`.settings-tab[data-tab="${tab}"]`)?.click();
     });
   }
-  for (const tab of ["overview", "invites", "members", "roles", "emojis", "audit", "bans"]) {
+  for (const tab of ["overview", "invites", "members", "roles", "emojis", "safety", "audit", "bans"]) {
     await view(`${label} server settings ${tab}`, () => {
       openServerSettings();
       showServerTab(tab);

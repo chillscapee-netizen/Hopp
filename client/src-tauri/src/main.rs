@@ -644,6 +644,9 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::AuditLog { entries } => {
                     let _ = ui.emit("audit-log", entries);
                 }
+                ServerMsg::Automod { words, mention_limit, block_repeats, invites_paused } => {
+                    let _ = ui.emit("automod", serde_json::json!({ "words": words, "mention_limit": mention_limit, "block_repeats": block_repeats, "invites_paused": invites_paused }));
+                }
                 ServerMsg::Bans { bans } => {
                     let _ = ui.emit("bans", bans);
                 }
@@ -1328,6 +1331,17 @@ fn timeout_member(state: State<'_, AppState>, session_id: SessionId, minutes: u3
 #[tauri::command]
 fn get_audit_log(state: State<'_, AppState>) -> CmdResult {
     with_conn(&state, |c| c.control.send(ClientMsg::GetAuditLog))
+}
+
+#[tauri::command]
+fn get_automod(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::GetAutomod))
+}
+
+/// AutoMod's rules and paused invites, for the server in view (admins).
+#[tauri::command]
+fn set_automod(state: State<'_, AppState>, words: Vec<String>, mention_limit: u32, block_repeats: bool, invites_paused: bool) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetAutomod { words, mention_limit, block_repeats, invites_paused }))
 }
 
 /// Seconds since the last key press or mouse move anywhere in Windows (for the AFK channel,
@@ -2087,6 +2101,8 @@ fn main() {
             assign_role,
             set_nickname,
             get_audit_log,
+            get_automod,
+            set_automod,
             set_loopback,
             local_address,
             invite_preview,

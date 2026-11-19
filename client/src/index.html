@@ -918,6 +918,7 @@
         <button type="button" class="settings-tab" data-stab="invites"><svg class="i"><use href="#i-link"/></svg><span>Invites</span></button>
         <button type="button" class="settings-tab" data-stab="bans"><svg class="i"><use href="#i-ban"/></svg><span>Bans</span></button>
         <div id="server-mod-label" class="settings-nav-label">Moderation</div>
+        <button type="button" class="settings-tab" data-stab="safety"><svg class="i"><use href="#i-shield"/></svg><span>Safety</span></button>
         <button type="button" class="settings-tab" data-stab="audit"><svg class="i"><use href="#i-clock"/></svg><span>Audit log</span></button>
       </nav>
       <div class="settings-content">
@@ -1048,6 +1049,49 @@
               </div>
             </form>
           </div>
+        </section>
+        <section data-spanel="safety" hidden>
+          <h2>Safety</h2>
+          <p class="hint">Keep spam and raids out. Moderators and admins aren't held back by any of this.</p>
+          <div class="card safety-card">
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Pause invites</span>
+                <span class="row-sub">Nobody new can join, not even with an invite link. People already in come and go as usual. For when a server is being flooded.</span>
+              </span>
+              <input id="safety-paused" type="checkbox" class="switch">
+            </label>
+          </div>
+          <div class="card-title">AutoMod</div>
+          <div class="card safety-card">
+            <div class="safety-words">
+              <span class="row-label">
+                <span class="row-title">Blocked words</span>
+                <span class="row-sub">Messages with any of these aren't sent, and the person is told why. One per line; a few words together block that phrase.</span>
+              </span>
+              <textarea id="safety-words" rows="4" maxlength="9000" spellcheck="false" placeholder="One word or phrase per line"></textarea>
+            </div>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Mass mentions</span>
+                <span class="row-sub">Stop messages that mention lots of people or roles at once.</span>
+              </span>
+              <select id="safety-mentions" class="safety-select">
+                <option value="0">Off</option>
+                <option value="3">More than 3</option>
+                <option value="5">More than 5</option>
+                <option value="10">More than 10</option>
+              </select>
+            </label>
+            <label class="row">
+              <span class="row-label">
+                <span class="row-title">Repeated messages</span>
+                <span class="row-sub">Stop the same message sent over and over (more than 3 times in a minute).</span>
+              </span>
+              <input id="safety-repeats" type="checkbox" class="switch">
+            </label>
+          </div>
+          <div class="safety-foot"><span id="safety-saved" class="hint" hidden>Saved.</span><button id="safety-save" type="button" class="btn primary sm">Save</button></div>
         </section>
         <section data-spanel="audit" hidden>
           <h2>Audit log</h2>

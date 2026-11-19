@@ -497,6 +497,14 @@ pub enum ClientMsg {
     Timeout { session_id: SessionId, minutes: u32 },
     /// Admins, on servers with "mod-tools": answered with `AuditLog`.
     GetAuditLog,
+    /// AutoMod and paused invites (admins).
+    GetAutomod,
+    SetAutomod {
+        words: Vec<String>,
+        mention_limit: u32,
+        block_repeats: bool,
+        invites_paused: bool,
+    },
     /// Owner only.
     Unban { public_key: String },
     /// Owner only. `None` means no limit.
@@ -619,6 +627,17 @@ pub enum ServerMsg {
     Bans { bans: Vec<Ban> },
     /// The newest audit log entries first.
     AuditLog { entries: Vec<AuditEntry> },
+    /// The server's AutoMod rules, and whether new people may join.
+    Automod {
+        #[serde(default)]
+        words: Vec<String>,
+        #[serde(default)]
+        mention_limit: i64,
+        #[serde(default)]
+        block_repeats: bool,
+        #[serde(default)]
+        invites_paused: bool,
+    },
     /// The server's roles changed (highest first).
     RolesUpdated { roles: Vec<RoleInfo> },
     /// The server's emojis changed.

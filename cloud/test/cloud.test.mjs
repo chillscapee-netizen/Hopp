@@ -1094,3 +1094,49 @@ test("emojis: admins add a server's own from an uploaded picture, everyone uses 
   bob.close();
   carol.close();
 });
+
+test("AutoMod: blocked words, mass mentions and repeats held back for members (not moderators), and paused invites", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("automod"));
+  const bob = await join(id, "bob", { invite });
+  const general = channelId(owner, "general");
+  // Only admins set it.
+  bob.send({ type: "set_automod", words: ["spam"], mention_limit: 0, block_repeats: false, invites_paused: false });
+  assert.match(await errorOf(bob), /admins/);
+  owner.send({ type: "set_automod", words: ["Buy Coins", "scam"], mention_limit: 2, block_repeats: true, invites_paused: false });
+  const set = await owner.waitFor((m) => m.type === "automod");
+  assert.deepEqual([set.words, set.mention_limit, set.block_repeats, set.invites_paused], [["buy coins", "scam"], 2, true, false]);
+  // A blocked word, as a word (not inside another), and a blocked phrase.
+  bob.send({ type: "send_chat", channel: general, text: "this is a SCAM" });
+  assert.match(await errorOf(bob), /word this server doesn't allow/);
+  bob.send({ type: "send_chat", channel: general, text: "please buy coins now" });
+  assert.match(await errorOf(bob), /word/);
+  bob.send({ type: "send_chat", channel: general, text: "scampi for dinner" });
+  const scampi = await owner.waitFor((m) => m.type === "chat" && m.message.text === "scampi for dinner");
+  // Too many mentions at once.
+  const keys = ["a", "b", "c"].map((c) => c.repeat(64));
+  bob.send({ type: "send_chat", channel: general, text: keys.map((k) => `<@${k}>`).join(" ") });
+  assert.match(await errorOf(bob), /at most 2 mentions/);
+  // The same message over and over.
+  for (let i = 0; i < 3; i++) {
+    bob.send({ type: "send_chat", channel: general, text: "hello again" });
+    await owner.waitFor((m) => m.type === "chat" && m.message.text === "hello again");
+    await sleep(1100);
+  }
+  bob.send({ type: "send_chat", channel: general, text: "Hello again" });
+  assert.match(await errorOf(bob), /a few times already/);
+  // Editing into a blocked word is held back too.
+  bob.send({ type: "edit_message", channel: general, id: scampi.message.id, text: "scam for dinner" });
+  assert.match(await errorOf(bob), /word/);
+  // Moderators and admins aren't held back.
+  owner.send({ type: "send_chat", channel: general, text: "the word scam, as an example" });
+  await owner.waitFor((m) => m.type === "chat" && m.message.text === "the word scam, as an example");
+  // Invites paused: nobody new joins, even with a link; members come back.
+  owner.send({ type: "set_automod", words: [], mention_limit: 0, block_repeats: false, invites_paused: true });
+  await owner.waitFor((m) => m.type === "automod" && m.invites_paused === true);
+  assert.match(await loginError(id, "carol", { invite }), /isn't letting new people in/);
+  bob.close();
+  const back = await join(id, "bob", { key: bob.key });
+  back.close();
+  owner.close();
+});

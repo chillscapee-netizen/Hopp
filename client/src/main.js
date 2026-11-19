@@ -4123,6 +4123,7 @@ function openServerSettings() {
   document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
   document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
   document.querySelector('[data-stab="emojis"]').hidden = !state.roster?.features?.includes("emojis") || !can("manage");
+  document.querySelector('[data-stab="safety"]').hidden = !state.roster?.features?.includes("automod") || !can("manage");
   $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden;
   openModal($("server-settings"));
   call("get_server_settings");
@@ -4133,6 +4134,10 @@ function showServerTab(tab) {
   if (tab === "audit") {
     $("audit-list").replaceChildren(el("li", "admin-empty", "Loading…"));
     call("get_audit_log");
+  }
+  if (tab === "safety") {
+    $("safety-saved").hidden = true;
+    call("get_automod");
   }
   document.querySelectorAll("[data-stab]").forEach((t) => t.classList.toggle("active", t.dataset.stab === tab));
   document.querySelectorAll("[data-spanel]").forEach((p) => (p.hidden = p.dataset.spanel !== tab));
@@ -15539,11 +15544,34 @@ function slowmodeWait(view) {
 }
 
 var AUDIT_WORDS = {
+  automod: "changed AutoMod", pause_invites: "paused invites", resume_invites: "let new people in again",
   kick: "kicked", nickname: "changed the nickname of", ban: "banned", unban: "unbanned", timeout: "timed out", untimeout: "lifted the timeout for",
   role: "changed the role of", transfer: "gave the server to", create_channel: "created the channel", update_channel: "edited the channel",
   delete_channel: "deleted the channel", delete_message: "deleted a message by", server_mute: "server-muted", server_unmute: "unmuted",
   server_deafen: "server-deafened", server_undeafen: "undeafened", voice_disconnect: "disconnected", voice_move: "moved",
 };
+
+// ---------- safety: AutoMod and paused invites ----------
+
+listen("automod", (e) => {
+  const a = e.payload ?? {};
+  $("safety-paused").checked = !!a.invites_paused;
+  $("safety-words").value = (a.words ?? []).join("\n");
+  const limit = String(a.mention_limit ?? 0);
+  $("safety-mentions").value = [...$("safety-mentions").options].some((o) => o.value === limit) ? limit : "0";
+  $("safety-repeats").checked = !!a.block_repeats;
+});
+
+$("safety-save").addEventListener("click", async () => {
+  const words = $("safety-words").value.split(/[\n,]+/).map((w) => w.trim()).filter(Boolean);
+  try {
+    await invoke("set_automod", { words, mentionLimit: Number($("safety-mentions").value), blockRepeats: $("safety-repeats").checked, invitesPaused: $("safety-paused").checked });
+  } catch (err) {
+    return toast(friendlyError(err), true);
+  }
+  $("safety-saved").hidden = false;
+  setTimeout(() => ($("safety-saved").hidden = true), 2500);
+});
 
 listen("audit-log", (e) => {
   const entries = e.payload ?? [];

@@ -39,6 +39,11 @@ const MAX_NAME_LEN: usize = 32;
 const MAX_SERVER_NAME_LEN: usize = 40;
 const MAX_ICON_LEN: usize = 200_000;
 const MAX_CHAT_LEN: usize = 2000;
+/// AutoMod: at most this many blocked words, each this long; the same message this many times
+/// within a minute is held back.
+const AUTOMOD_WORDS: usize = 200;
+const AUTOMOD_WORD_LEN: usize = 40;
+const AUTOMOD_REPEATS: usize = 3;
 const MAX_CHANNELS: usize = 50;
 const MAX_THREADS: usize = 300;
 const MAX_MEMBERS_ONLINE: usize = 500;
@@ -79,14 +84,16 @@ const MAX_IMAGE_STORE: i64 = 100_000_000;
 const IMAGES_PER_DAY: i64 = 40;
 pub const UPLOAD_CLOCK_SKEW_MS: u64 = 5 * 60_000;
 /// Hopp Cloud's features; a server on someone's computer has every one of them.
-const FEATURES: [&str; 16] = [
-    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads",
+const FEATURES: [&str; 17] = [
+    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod",
 ];
 
 static ENDPOINT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$").unwrap());
 static CUSTOM_EMOJI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^<:[a-z0-9_]{2,32}:\d{1,9}>$").unwrap());
 static EMOJI_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9_]{2,32}$").unwrap());
 static ROLE_MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@&(\d+)>").unwrap());
+/// A person mentioned in a message: <@their Hopp ID>.
+static MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@([0-9a-f]{64})>").unwrap());
 static ROLE_COLOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^#[0-9a-f]{6}$").unwrap());
 static SEARCH_FILTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?i)(^|\s)(from|in|has):(?:"([^"]{1,64})"|(\S{1,64}))"#).unwrap());
 static POLL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^hopp-poll:([A-Za-z0-9_-]{4,2600})$").unwrap());
@@ -410,6 +417,8 @@ struct Conn {
     topped: u64,
     last_typing: u64,
     endpoint: Option<(Option<String>, Vec<String>)>,
+    /// What they sent lately, for AutoMod's repeat rule: (text, when).
+    recent: Vec<(String, u64)>,
     /// What they told us of themselves (online, idle, dnd) for the member list.
     status: Option<String>,
     // Voice through the server's own relay (servers that aren't mesh).
@@ -509,6 +518,7 @@ impl Core {
                 sig: SIGNAL_BURST,
                 topped: now,
                 last_typing: 0,
+                recent: Vec::new(),
                 endpoint: None,
                 status: None,
                 token: rand::random(),
@@ -1192,6 +1202,9 @@ impl Core {
         let is_owner = self.meta("owner").as_deref() == Some(key.as_str());
         let known = self.exists("SELECT 1 FROM accounts WHERE key = ?", [&key]);
         if !known && !is_owner {
+            if self.meta("invites_paused").as_deref() == Some("1") {
+                return self.reject(conn, "This server isn't letting new people in right now. Try again later.");
+            }
             let Some(code) = invite else { return self.reject(conn, "This server is invite-only. Ask the owner for an invite link.") };
             if !self.invites().iter().any(|i| i["code"] == code.as_str()) {
                 return self.reject(conn, "This invite is invalid or has expired.");
@@ -1287,6 +1300,49 @@ impl Core {
 
     /// Who may ping many at once: moderators may use @everyone, @here and any role; others only
     /// roles that allow it. Anything else stays in the text as plain words that ping nobody.
+    /// The server's AutoMod rules: blocked words, most mentions in a message (0: any), repeats held back.
+    fn automod(&self) -> (Vec<String>, i64, bool) {
+        let a: Value = self.meta("automod").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        let words = a["words"].as_array().map(|w| w.iter().map(text).collect()).unwrap_or_default();
+        (words, a["mention_limit"].as_i64().unwrap_or(0), a["block_repeats"].as_bool().unwrap_or(false))
+    }
+
+    /// Why AutoMod holds a message back, or None. Moderators and admins are free of it.
+    fn automod_says(&mut self, conn: ConnId, body: &str, my_rank: Rank, sending: bool) -> Option<String> {
+        if my_rank >= Rank::Mod {
+            return None;
+        }
+        let (words, limit, repeats) = self.automod();
+        let lower = body.to_lowercase();
+        if !words.is_empty() {
+            let tokens: HashSet<&str> = lower.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect();
+            if words.iter().any(|w| if w.contains(char::is_whitespace) { lower.contains(w.as_str()) } else { tokens.contains(w.as_str()) }) {
+                return Some("That message has a word this server doesn't allow.".into());
+            }
+        }
+        if limit > 0 {
+            let people: HashSet<String> = MENTION.captures_iter(body).map(|c| c[1].to_string()).collect();
+            let roles: HashSet<String> = ROLE_MENTION.captures_iter(body).map(|c| c[1].to_string()).collect();
+            if (people.len() + roles.len()) as i64 > limit {
+                return Some(format!("This server allows at most {limit} mentions in one message."));
+            }
+        }
+        if repeats && sending {
+            let now = now_ms();
+            let same = lower.trim().to_string();
+            let c = self.conns.get_mut(&conn)?;
+            c.recent.retain(|(_, at)| now.saturating_sub(*at) < 60_000);
+            if c.recent.iter().filter(|(t, _)| *t == same).count() >= AUTOMOD_REPEATS {
+                return Some("You've sent that a few times already. Give it a minute.".into());
+            }
+            c.recent.push((same.chars().take(200).collect(), now));
+            if c.recent.len() > 10 {
+                c.recent.remove(0);
+            }
+        }
+        None
+    }
+
     fn allow_pings(&self, text: &str, my_rank: Rank) -> String {
         if my_rank >= Rank::Mod {
             return text.to_string();
@@ -1727,6 +1783,9 @@ impl Core {
                 if m.author_key != key {
                     return self.error(conn, "You can only edit your own messages.");
                 }
+                if let Some(held) = self.automod_says(conn, &new_text, my_rank, false) {
+                    return self.error(conn, &held);
+                }
                 let at = now_ms() as i64;
                 self.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", params![new_text, at, id]);
                 self.broadcast_channel(channel, &json!({ "type": "message_edited", "channel": channel, "id": id, "text": new_text, "edited_at": at }), None);
@@ -2106,6 +2165,37 @@ impl Core {
                 }
                 self.broadcast(&json!({ "type": "server_updated", "name": name, "icon": icon, "pictures_off": self.meta("pictures_off").as_deref() == Some("1") }), None);
             }
+            "get_automod" => {
+                if !allowed(self, Rank::Admin) {
+                    return;
+                }
+                let (words, limit, repeats) = self.automod();
+                let paused = self.meta("invites_paused").as_deref() == Some("1");
+                self.send(conn, &json!({ "type": "automod", "words": words, "mention_limit": limit, "block_repeats": repeats, "invites_paused": paused }));
+            }
+            "set_automod" => {
+                if !allowed(self, Rank::Admin) {
+                    return;
+                }
+                let mut words: Vec<String> = Vec::new();
+                for w in msg["words"].as_array().cloned().unwrap_or_default() {
+                    let w = text(&w).trim().to_lowercase();
+                    if !w.is_empty() && chars(&w) <= AUTOMOD_WORD_LEN && !words.contains(&w) && words.len() < AUTOMOD_WORDS {
+                        words.push(w);
+                    }
+                }
+                let limit = num(&msg["mention_limit"]).filter(|x| x.is_finite()).map(|x| x.floor() as i64).unwrap_or(0).clamp(0, 50);
+                let repeats = truthy(&msg["block_repeats"]);
+                self.set_meta("automod", &json!({ "words": words, "mention_limit": limit, "block_repeats": repeats }).to_string());
+                let paused = truthy(&msg["invites_paused"]);
+                if paused != (self.meta("invites_paused").as_deref() == Some("1")) {
+                    self.audit(&user.name, if paused { "pause_invites" } else { "resume_invites" }, None, None);
+                }
+                self.set_meta("invites_paused", if paused { "1" } else { "0" });
+                let detail = format!("{} words{}{}", words.len(), if limit > 0 { format!(", {limit} mentions") } else { String::new() }, if repeats { ", repeats" } else { "" });
+                self.audit(&user.name, "automod", None, Some(&detail));
+                self.send(conn, &json!({ "type": "automod", "words": words, "mention_limit": limit, "block_repeats": repeats, "invites_paused": paused }));
+            }
             "get_server_settings" => {
                 if !allowed(self, Rank::Admin) {
                     return;
@@ -2214,6 +2304,9 @@ impl Core {
         let now = now_ms();
         if self.timed_out(conn) {
             return self.error(conn, "You're timed out, so you can't write right now.");
+        }
+        if let Some(held) = self.automod_says(conn, &body, my_rank, true) {
+            return self.error(conn, &held);
         }
         // Slowmode: a pause between each person's messages here (moderators are free).
         let slow = ch.slowmode.unwrap_or(0);
