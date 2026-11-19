@@ -15568,7 +15568,9 @@ function renderRolesTab() {
     const li = el("li", "role-row" + (editingRole === r.id ? " active" : ""));
     const dot = el("i", "role-dot");
     dot.style.background = r.color ?? "var(--faint)";
-    const count = state.roster.users.filter((u) => u.roles?.includes(r.id)).length;
+    // Everyone with it, not only who is online (the member list, once it is here).
+    const people = state.members?.length ? state.members : state.roster.users;
+    const count = people.filter((u) => u.roles?.includes(r.id)).length;
     li.append(dot, el("span", "role-row-name ellipsis", r.name), el("span", "role-row-count", count ? String(count) : ""));
     const move = (d) => {
       const order = roles.map((x) => x.id);
