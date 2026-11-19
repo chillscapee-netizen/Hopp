@@ -10070,6 +10070,8 @@ function pollView(m, p) {
   });
   const n = voters.size;
   card.append(el("div", "poll-foot", `${n} ${n === 1 ? "vote" : "votes"} · ${pollTimeLeft(p.end)}`));
+  // Closing while it is on screen: it turns into its results by itself (if it is still shown).
+  if (!closed && p.end - Date.now() < 2 ** 31 - 1) setTimeout(() => card.isConnected && card.replaceWith(pollView(m, p)), p.end - Date.now() + 250);
   return card;
 }
 

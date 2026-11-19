@@ -59,5 +59,14 @@
   await wait(80);
   const closed = document.querySelector('.msg[data-id="9951"] .poll');
   check("a closed poll shows results and can't be voted on", closed.querySelector(".poll-foot").textContent.includes("Closed") && closed.querySelector(".poll-answer").disabled && closed.querySelector(".poll-answer.winner"));
+
+  // Closing while on screen: it turns into its results by itself.
+  const soon = "hopp-poll:" + base64url(JSON.stringify({ q: "Quick one", a: ["A", "B"], end: Date.now() + 600 }));
+  emit("chat", { id: 9952, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: soon, sent_at: Date.now() });
+  await wait(80);
+  const live = () => document.querySelector('.msg[data-id="9952"] .poll');
+  check("still open: it can be voted on", !live().querySelector(".poll-answer").disabled);
+  await wait(1200);
+  check("closed while shown: results, no voting", live().querySelector(".poll-answer").disabled && live().querySelector(".poll-foot").textContent.includes("Closed"));
   report();
 })();
