@@ -48,7 +48,8 @@ for (const f of ["Square44x44Logo.png", "Square71x71Logo.png", "Square150x150Log
 // (drawn at each size by make-logo.mjs, so Windows doesn't shrink one and blur it).
 for (const f of readdirSync(join(icons, "msix"))) {
   copyFileSync(join(icons, "msix", f), join(layout, "Assets", f));
-  copyFileSync(join(icons, "msix", f), join(layout, "Assets", f.replace("_altform-unplated", "")));
+  // The same for a light taskbar; a plated one (without "unplated") would get a square behind it.
+  copyFileSync(join(icons, "msix", f), join(layout, "Assets", f.replace("_altform-unplated", "_altform-lightunplated")));
 }
 
 const xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");

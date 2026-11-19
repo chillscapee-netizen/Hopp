@@ -13566,8 +13566,8 @@ var GRADIENTS = [
   // Each wanders through neighbouring shades at an even, deep lightness, strongly coloured, so
   // the window glows without ever going pale or muddy. Twilight is indigo through violet,
   // magenta and wine to amber.
-  // Hero: a deep red that turns to a strong blue.
-  { id: "hero", name: "Hero", stops: ["#6a0c1a", "#620d2c", "#4d1248", "#2f1a66", "#142670"] },
+  // Hero: a strong blue from the top left that turns to a deep, dark red.
+  { id: "hero", name: "Hero", stops: ["#142670", "#261a60", "#3a1244", "#470b24", "#420814"] },
   { id: "twilight", name: "Twilight", stops: ["#201d70", "#390c70", "#4b0370", "#57124f", "#5a2238", "#5c2a1c", "#5c3602"] },
   { id: "sunset", name: "Sunset", stops: ["#122a72", "#1d2272", "#2c1a72", "#3d1170", "#4b0a6a"] },
   { id: "dusk", name: "Dusk", stops: ["#33116e", "#45096c", "#560f62", "#62164f", "#6a1f40"] },
