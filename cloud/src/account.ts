@@ -253,6 +253,16 @@ export class UserDirectory extends DurableObject<Env> {
     if (change.note !== undefined) this.sql.exec("UPDATE reports SET note = ? WHERE id = ?", change.note.slice(0, 1000) || null, id);
   }
 
+  /** An owner removes a report for good. */
+  async deleteReport(id: number) {
+    this.sql.exec("DELETE FROM reports WHERE id = ?", id);
+  }
+
+  /** An owner clears out every handled report; answers how many went. */
+  async deleteHandledReports(): Promise<number> {
+    return this.sql.exec("DELETE FROM reports WHERE done = 1 RETURNING id").toArray().length;
+  }
+
   /** Everything handled at once that's about the same person or server: one ban settles them all. */
   async settleAllAbout(col: "user_key" | "server", value: string, action: string) {
     if (!value) return;

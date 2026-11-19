@@ -854,6 +854,17 @@ test("admins in the app: see reports at once, remove a message, ban, take down, 
   assert.ok((await admin(helper.d, "overview")).stats.open >= 0);
   await assert.rejects(admin(helper.d, "add_admin", { username: reporter.name }), /Only an owner/);
   await assert.rejects(admin(helper.d, "ban", { key: OWNER.pub }), /owner/);
+  // Above admins: only an owner deletes reports, lifts bans and bans straight by username.
+  await assert.rejects(admin(helper.d, "delete_report", { id: report.id }), /Only an owner/);
+  await assert.rejects(admin(helper.d, "delete_handled"), /Only an owner/);
+  await assert.rejects(admin(helper.d, "unban", { key: bad.key.pub }), /Only an owner/);
+  await assert.rejects(admin(helper.d, "ban", { username: reporter.name }), /Only an owner/);
+  await admin(owner, "ban", { username: reporter.name, reason: "test" });
+  await reporter.d.waitFor((m) => m.type === "error" && /banned/.test(m.message));
+  await admin(owner, "unban", { key: reporter.key.pub });
+  await admin(owner, "delete_report", { id: report.id });
+  assert.ok(!(await admin(owner, "reports", { view: "all", user: bad.key.pub })).rows.some((r) => r.id === report.id), "the report is gone");
+  assert.ok((await admin(owner, "delete_handled")).gone >= 0);
   assert.ok((await admin(owner, "admins")).admins.some((x) => x.key === helper.key.pub && x.role === "admin"));
   await admin(owner, "remove_admin", { key: helper.key.pub });
   assert.equal((await helper.d.waitFor((m) => m.type === "admin_role")).role, null);

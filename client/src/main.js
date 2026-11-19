@@ -12223,6 +12223,8 @@ function openAdmin(tab = admin.tab) {
 
 function showAdminTab(tab) {
   admin.tab = tab;
+  $("admin-role").textContent = admin.role === "owner" ? "Owner" : "Admin";
+  $("admin-role").classList.toggle("owner", admin.role === "owner");
   for (const t of document.querySelectorAll(".admin-tab")) t.classList.toggle("active", t.dataset.atab === tab);
   $("admin-tab-open").hidden = !admin.open;
   refreshAdmin();
@@ -12329,6 +12331,9 @@ async function drawAdminReports() {
     }, 350);
   });
   filters.append(views, reason, search);
+  if (admin.role === "owner" && admin.view === "done" && s.handled) {
+    filters.append(adminButton(`Delete all ${s.handled} handled`, "trash", () => adminDo("delete_handled", {}, { confirm: { title: `Delete all ${s.handled} handled reports?`, text: "They're gone for good, with their notes. Open reports stay. What admins did stays in the log.", ok: "Delete" }, done: "Handled reports deleted." }), "danger"));
+  }
   const parts = [stats, filters];
   if (admin.user || admin.server) {
     const chip = el("div", "admin-chip");
@@ -12446,8 +12451,9 @@ function adminReportCard(r, found) {
     acts.append(adminButton("Remove message", "trash", () => adminDo("delete_message", { id: r.id, server: t.server, server_name: t.server_name, message_id: t.message_id }, { confirm: { title: "Remove this message?", text: "It's deleted from the server for everyone, like a moderator deleting it.", ok: "Remove" }, done: "Message removed." }), "danger"));
   }
   if (r.user_key) {
-    if (found.banned[r.user_key]) acts.append(adminButton(`Unban ${name}`, "undo", () => adminDo("unban", { key: r.user_key, name: t.user_name }, { confirm: { title: `Unban ${name}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
-    else acts.append(adminButton(`Ban ${name}`, "ban", () => adminDo("ban", { key: r.user_key, name: t.user_name, reason: why.label }, { confirm: { title: `Ban ${name} from Hopp Cloud?`, text: "They're signed out everywhere and can't sign in, join or make servers on Hopp Cloud. Every open report about them is marked handled. You can unban them later.", ok: "Ban" }, done: `${name} is banned.` }), "danger"));
+    if (found.banned[r.user_key]) {
+      if (admin.role === "owner") acts.append(adminButton(`Unban ${name}`, "undo", () => adminDo("unban", { key: r.user_key, name: t.user_name }, { confirm: { title: `Unban ${name}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
+    } else acts.append(adminButton(`Ban ${name}`, "ban", () => adminDo("ban", { key: r.user_key, name: t.user_name, reason: why.label }, { confirm: { title: `Ban ${name} from Hopp Cloud?`, text: "They're signed out everywhere and can't sign in, join or make servers on Hopp Cloud. Every open report about them is marked handled. You can unban them later.", ok: "Ban" }, done: `${name} is banned.` }), "danger"));
   }
   if (cloudId && info) {
     if (info.owner && info.owner !== r.user_key && !found.banned[info.owner]) {
@@ -12456,8 +12462,13 @@ function adminReportCard(r, found) {
     acts.append(adminButton("Take down server", "trash", () => adminDo("take_down", { server: t.server, server_name: info.name, reason: why.label }, { confirm: { title: `Take down ${info.name}?`, text: `The server is deleted for all ${info.members} members, with its messages and pictures. This can't be undone.`, ok: "Take down" }, done: "Server taken down." }), "danger"));
   }
   if (tunnelId) {
-    if (found.blocked[tunnelId]) acts.append(adminButton("Unblock tunnel", "undo", () => adminDo("unblock_tunnel", { server: t.server, server_name: t.server_name }, { done: "Tunnel unblocked." })));
-    else acts.append(adminButton("Block tunnel", "ban", () => adminDo("block_tunnel", { server: t.server, server_name: t.server_name }, { confirm: { title: "Block this server from Hopp's tunnel?", text: "It runs on someone's own computer, so Hopp can't delete it, but nobody can reach it through Hopp Cloud any more. You can unblock it later.", ok: "Block" }, done: "Tunnel blocked." }), "danger"));
+    if (found.blocked[tunnelId]) {
+      if (admin.role === "owner") acts.append(adminButton("Unblock tunnel", "undo", () => adminDo("unblock_tunnel", { server: t.server, server_name: t.server_name }, { done: "Tunnel unblocked." })));
+    } else acts.append(adminButton("Block tunnel", "ban", () => adminDo("block_tunnel", { server: t.server, server_name: t.server_name }, { confirm: { title: "Block this server from Hopp's tunnel?", text: "It runs on someone's own computer, so Hopp can't delete it, but nobody can reach it through Hopp Cloud any more. You can unblock it later.", ok: "Block" }, done: "Tunnel blocked." }), "danger"));
+  }
+  if (admin.role === "owner") {
+    const del = adminButton("Delete report", "trash", () => adminDo("delete_report", { id: r.id }, { confirm: { title: "Delete this report?", text: "It's gone for good, with its note. What admins did about it stays in the log.", ok: "Delete" }, done: "Report deleted." }), "quiet");
+    acts.append(del);
   }
   card.append(acts);
   return card;
@@ -12471,16 +12482,37 @@ async function drawAdminBans() {
     const row = el("div", "admin-row");
     const who = el("div", "admin-row-main");
     who.append(el("strong", null, b.name || shortKey(b.key)), el("span", "admin-quiet", `${b.reason ? b.reason + " · " : ""}${adminAgo(Number(b.at))}`));
-    row.append(who, adminButton("Unban", "undo", () => adminDo("unban", { key: b.key, name: b.name }, { confirm: { title: `Unban ${b.name || "them"}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
+    row.append(who);
+    if (admin.role === "owner") row.append(adminButton("Unban", "undo", () => adminDo("unban", { key: b.key, name: b.name }, { confirm: { title: `Unban ${b.name || "them"}?`, text: "They can use Hopp Cloud again.", ok: "Unban", danger: false }, done: "Unbanned." })));
     parts.push(row);
   }
+  if (admin.role === "owner") {
+    const form = el("form", "admin-add");
+    const input = el("input", "admin-search");
+    input.placeholder = "Username";
+    input.maxLength = 40;
+    const reason = el("input", "admin-search");
+    reason.placeholder = "Why (for the log)";
+    reason.maxLength = 200;
+    const ban = el("button", "btn danger", "Ban");
+    ban.type = "submit";
+    form.append(input, reason, ban);
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const username = input.value.trim().replace(/^@/, "");
+      if (!username) return;
+      adminDo("ban", { username, reason: reason.value.trim() }, { confirm: { title: `Ban @${username} from Hopp Cloud?`, text: "They're signed out everywhere and can't sign in, join or make servers on Hopp Cloud. You can unban them later.", ok: "Ban" }, done: `@${username} is banned.` });
+    });
+    parts.splice(1, 0, form);
+  } else if (bans.length) parts.push(el("p", "admin-quiet admin-pad", "Only an owner can lift a ban."));
   parts.push(el("h3", "admin-h", "Blocked from Hopp's tunnel"));
   if (!tunnels.length) parts.push(el("p", "admin-quiet admin-pad", "No servers are blocked."));
   for (const tn of tunnels) {
     const row = el("div", "admin-row");
     const what = el("div", "admin-row-main");
     what.append(el("strong", null, tn.name || "A server on someone's computer"), el("span", "admin-quiet", adminAgo(Number(tn.at))));
-    row.append(what, adminButton("Unblock", "undo", () => adminDo("unblock_tunnel", { tunnel: tn.id, server_name: tn.name }, { done: "Tunnel unblocked." })));
+    row.append(what);
+    if (admin.role === "owner") row.append(adminButton("Unblock", "undo", () => adminDo("unblock_tunnel", { tunnel: tn.id, server_name: tn.name }, { done: "Tunnel unblocked." })));
     parts.push(row);
   }
   return parts;

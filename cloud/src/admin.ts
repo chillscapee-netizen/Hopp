@@ -48,6 +48,9 @@ export async function adminRequest(env: Env, who: { key: string; name: string; r
   const str = (v: unknown, n = 300) => String(v ?? "").slice(0, n);
   const reportId = Number(msg.id);
   const log = (action: string, subject: string, detail = "") => dir.logAdmin(action, subject, `${who.name}${detail ? ": " + detail : ""}`);
+  const ownerOnly = (what: string) => {
+    if (who.role !== "owner") throw new Error(`Only an owner of Hopp Cloud can ${what}.`);
+  };
 
   switch (msg.op) {
     case "overview":
@@ -74,11 +77,33 @@ export async function adminRequest(env: Env, who: { key: string; name: string; r
       return { ok: true };
     }
 
+    case "delete_report": {
+      ownerOnly("delete reports");
+      if (!Number.isFinite(reportId)) throw new Error("Which report?");
+      await dir.deleteReport(reportId);
+      await log("deleted report", `report #${reportId}`);
+      return { ok: true };
+    }
+
+    case "delete_handled": {
+      ownerOnly("delete reports");
+      const gone = await dir.deleteHandledReports();
+      await log("deleted handled reports", `${gone} report${gone === 1 ? "" : "s"}`);
+      return { ok: true, gone };
+    }
+
     case "ban":
     case "unban": {
-      const key = str(msg.key).toLowerCase();
-      if (!KEY.test(key)) throw new Error("That isn't a Hopp ID.");
       const on = msg.op === "ban";
+      if (!on) ownerOnly("lift a ban");
+      let key = str(msg.key).toLowerCase();
+      // Straight by username, without a report: an owner's call.
+      if (!KEY.test(key) && msg.username) {
+        ownerOnly("ban someone without a report");
+        key = (await dir.lookup(str(msg.username, 40).trim().replace(/^@/, "").toLowerCase())) || "";
+        if (!key) throw new Error("Nobody has that username.");
+      }
+      if (!KEY.test(key)) throw new Error("That isn't a Hopp ID.");
       if (on && owners(env).has(key)) throw new Error("An owner of Hopp Cloud can't be banned.");
       if (on && key === who.key) throw new Error("You can't ban yourself.");
       const card = await accountOf(env, key).adminCard();
@@ -120,6 +145,7 @@ export async function adminRequest(env: Env, who: { key: string; name: string; r
       const id = at.tunnel ?? (TUNNEL_ID.test(str(msg.tunnel)) ? str(msg.tunnel) : "");
       if (!id) throw new Error("That isn't a server reached through Hopp's tunnel.");
       const on = msg.op === "block_tunnel";
+      if (!on) ownerOnly("unblock a server");
       await tunnel(env, id).setBlocked(on);
       await dir.setTunnelBlocked(id, on, str(msg.server_name, 100));
       if (on) await dir.settleAllAbout("server", str(msg.server), `Tunnel blocked by ${who.name}`);

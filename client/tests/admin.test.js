@@ -47,6 +47,7 @@
   check("child content stands out, and a tunnel server can be blocked", urgent && /Block tunnel/.test(urgent.textContent));
   const buttons = (card) => [...card.querySelectorAll(".admin-act")].map((b) => b.textContent);
   check("a message in a server on Hopp Cloud: remove it, ban them, ban the owner, take it down", ["Handled", "Remove message", "Ban Elin", "Ban the owner", "Take down server"].every((l) => buttons(msgCard).includes(l)), buttons(msgCard).join(", "));
+  check("an owner: Owner on top, and can delete a report", $("admin-role").textContent === "Owner" && buttons(msgCard).includes("Delete report"));
 
   // Ban asks first, then sends.
   sent.length = 0;
@@ -78,7 +79,18 @@
   // The other tabs.
   document.querySelector('.admin-tab[data-atab="bans"]').click();
   await wait(60);
-  check("Banned: who, with Unban", /Elin/.test($("admin-body").textContent) && /Unban/.test($("admin-body").textContent));
+  check("Banned: who, with Unban, and a ban by username for the owner", /Elin/.test($("admin-body").textContent) && /Unban/.test($("admin-body").textContent) && !!$("admin-body").querySelector(".admin-add"));
+  // An admin, not an owner: no lifting bans, no deleting reports.
+  admin.role = "admin";
+  refreshAdmin();
+  await wait(80);
+  check("an admin can't lift bans or ban without a report", !/Unban/.test([...$("admin-body").querySelectorAll(".admin-act")].map((b) => b.textContent).join()) && !$("admin-body").querySelector(".admin-add"));
+  showAdminTab("reports");
+  await wait(80);
+  check("nor delete reports", ![...$("admin-body").querySelectorAll(".admin-act")].some((b) => b.textContent === "Delete report") && $("admin-role").textContent === "Admin");
+  admin.role = "owner";
+  document.querySelector('.admin-tab[data-atab="bans"]').click();
+  await wait(60);
   document.querySelector('.admin-tab[data-atab="admins"]').click();
   await wait(60);
   check("Admins: an owner can add and remove", /@sara/.test($("admin-body").textContent) && !!$("admin-body").querySelector(".admin-add") && /Remove/.test($("admin-body").textContent));
