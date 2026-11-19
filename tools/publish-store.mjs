@@ -42,9 +42,12 @@ rmSync(folder, { recursive: true, force: true });
 mkdirSync(folder, { recursive: true });
 copyFileSync(msix, join(folder, `HoppChat_${version}_x64.msix`));
 try {
-  execFileSync("msstore", ["publish", folder, "-id", STORE_ID], { stdio: "inherit", shell: true });
+  execFileSync("msstore", ["publish", folder, "-id", STORE_ID], { stdio: ["inherit", "pipe", "pipe"], shell: true });
   writeFileSync(sentFile, version);
   say(`${version} sent for certification. Everyone with HoppChat gets it automatically once Microsoft approves it.`);
-} catch {
-  say(`couldn't send ${version} (often: the last version is still being certified). Run it again later with: node tools/publish-store.mjs`);
+} catch (err) {
+  const said = String(err.stdout ?? "") + String(err.stderr ?? "");
+  // Not set up on this computer (the Store's account link): that's a hand upload, not a retry.
+  if (/SellerId is not set|not configured|msstore reconfigure/i.test(said)) say(`automatic upload isn't set up on this computer. Upload ${msix} by hand in Partner Center.`);
+  else say(`couldn't send ${version} (often: the last version is still being certified). Run it again later with: node tools/publish-store.mjs`);
 }
