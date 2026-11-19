@@ -191,8 +191,16 @@ test("friend requests, accepting, presence and removing", async () => {
   alice.d.close();
   await bob.d.waitFor((m) => m.type === "presence" && m.key === alice.key.pub && m.status === "offline");
 
-  // Friends survive reconnecting, and removing is mutual.
+  // What changed while you were away (friends who are offline aren't told) is there on coming back;
+  // and once you're back, their changes reach you again.
+  bob.d.send({ type: "set_activity", activity: "Playing chess", voice: null });
+  await sleep(300);
   const again = await Device.open(alice.key);
+  await again.waitFor((m) => m.type === "presence" && m.key === bob.key.pub && m.activity === "Playing chess");
+  bob.d.send({ type: "set_status", status: "idle" });
+  await again.waitFor((m) => m.type === "presence" && m.key === bob.key.pub && m.status === "idle");
+
+  // Friends survive reconnecting, and removing is mutual.
   assert.equal(again.welcome.friends.find((f) => f.key === bob.key.pub).state, "friend");
   bob.d.send({ type: "friend_remove", key: alice.key.pub });
   await again.waitFor((m) => m.type === "friend_removed" && m.key === bob.key.pub);

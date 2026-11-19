@@ -1300,7 +1300,26 @@ export class StromAccount extends DurableObject<Env> {
     const now = JSON.stringify(presence);
     if (last === now) return;
     this.setMeta("last_presence", now);
-    await this.tellFriends((f) => f.presenceChanged(myKey, presence));
+    // Each call to a friend counts against Cloudflare's daily limit, so only friends who'd see it
+    // are told: coming online, all of them (they answer with how they are, so your list is right
+    // straight away); after that, only the ones online (the others hear when they come online).
+    let wasOffline = true;
+    try {
+      wasOffline = !last || JSON.parse(last).status === "offline";
+    } catch {
+      // Unreadable: treat it as coming online.
+    }
+    const comingOnline = wasOffline && presence.status !== "offline";
+    const online = new Set(this.friendRows().filter((f) => f.state === "friend" && f.status !== "offline").map((f) => f.key));
+    const keys = this.friendKeys().filter((k) => comingOnline || online.has(k));
+    const answers = await Promise.allSettled(keys.map((k) => accountOf(this.env, k).presenceChanged(myKey, presence)));
+    if (!comingOnline) return;
+    answers.forEach((a, i) => {
+      if (a.status !== "fulfilled" || !a.value) return;
+      const p = a.value;
+      this.sql.exec("UPDATE friends SET status = ?, activity = ?, voice = ? WHERE key = ?", p.status, p.activity, p.voice ?? null, keys[i]);
+      this.toDevices({ type: "presence", key: keys[i], ...p });
+    });
   }
 
   async webSocketClose(ws: WebSocket) {
@@ -1378,10 +1397,12 @@ export class StromAccount extends DurableObject<Env> {
     this.toDevices({ type: "friend_removed", key: fromKey });
   }
 
-  async presenceChanged(fromKey: string, presence: Presence): Promise<void> {
-    if (this.friend(fromKey)?.state !== "friend") return;
+  /** A friend's presence changed; answers with this account's own, so they know how it is too. */
+  async presenceChanged(fromKey: string, presence: Presence): Promise<Presence | null> {
+    if (this.friend(fromKey)?.state !== "friend") return null;
     this.sql.exec("UPDATE friends SET status = ?, activity = ?, voice = ? WHERE key = ?", presence.status, presence.activity, presence.voice ?? null, fromKey);
     this.toDevices({ type: "presence", key: fromKey, ...presence });
+    return this.presence();
   }
 
   /** A direct message from a friend. False if they aren't one (or are blocked). */
