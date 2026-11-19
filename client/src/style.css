@@ -4346,7 +4346,7 @@ html.wallpaper .rail-item.home .rail-icon, html.wallpaper .rail-item.home.active
 html.wallpaper .splash-bunny, html.wallpaper .auth-logo { background: var(--logo-bg, var(--elev)); border: none; color: #fff; }
 
 /* Back and forward, in the title bar's top left corner. */
-.topbar-nav { position: absolute; left: 10px; top: 0; bottom: 0; display: flex; align-items: center; gap: 2px; }
+.topbar-nav { position: absolute; left: 0; top: 0; bottom: 0; width: 72px; display: flex; align-items: center; justify-content: center; gap: 2px; }
 .shell.locked .topbar-nav, .shell.starting .topbar-nav { visibility: hidden; }
 .nav-arrow { display: grid; place-items: center; width: 28px; height: 22px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; transition: background 120ms, color 120ms; }
 .nav-arrow:hover:not(:disabled) { background: var(--layer-2); color: var(--text); }
