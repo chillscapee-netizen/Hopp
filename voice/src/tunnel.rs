@@ -91,15 +91,21 @@ where
     loop {
         if let Ok(url) = cloud() {
             let url = format!("{url}/tunnels/{id}/host?secret={secret}");
-            if let Ok(Ok((ws, _))) = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(&url)).await {
-                pause = 1;
-                online(true);
-                serve(ws, accept.clone()).await;
-                online(false);
+            match tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(&url)).await {
+                Ok(Ok((ws, _))) => {
+                    pause = 1;
+                    online(true);
+                    serve(ws, accept.clone()).await;
+                    online(false);
+                }
+                // Blocked by Hopp for breaking its rules: asking every half minute changes nothing
+                // and costs the cloud; once an hour notices a lifted block.
+                Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) if response.status() == 403 => pause = 3600,
+                _ => {}
             }
         }
         tokio::time::sleep(Duration::from_secs(pause)).await;
-        pause = (pause * 2).min(30);
+        pause = if pause >= 3600 { 1 } else { (pause * 2).min(30) };
     }
 }
 
