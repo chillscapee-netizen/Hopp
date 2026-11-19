@@ -1549,6 +1549,7 @@ $("home-btn").addEventListener("click", () => {
 
 /** Home on screen while the server stays connected: going back is instant, voice goes on. */
 function goHome() {
+  dropRecording();
   saveDraft();
   closePopovers();
   state.atHome = true;
@@ -1763,6 +1764,7 @@ window.addEventListener("online", () => {
 });
 
 async function connectTo(server, create, reconnecting) {
+  if (server.id !== state.activeId) dropRecording();
   if (!reconnecting && !create && server.id === state.activeId && state.roster) {
     if (state.atHome) {
       state.atHome = false;
@@ -2667,6 +2669,7 @@ function openTextChannel(id) {
   // Picking another channel: the remembered view belongs to the old one.
   state.keepStale = false;
   if (state.view !== id) {
+    dropRecording();
     saveDraft();
     setReply(null);
     state.editing = null;
@@ -9910,6 +9913,13 @@ async function startRecording() {
   $("recorder-time").textContent = "0:00";
   $("recorder").hidden = false;
   document.querySelector("#composer .composer-row").hidden = true;
+}
+
+/** Leaving the channel it was for: a recording is thrown away, never sent somewhere else. */
+function dropRecording() {
+  if (!recording) return;
+  stopRecording(false);
+  toast("Your voice message wasn't sent: you left the channel.");
 }
 
 function stopRecording(send) {

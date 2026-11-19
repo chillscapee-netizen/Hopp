@@ -57,6 +57,17 @@
     $("recorder-send").click();
     await wait(400);
     check("a blip isn't sent", !sent.length);
+
+    // Recording, then going to another channel: it's thrown away, never sent there.
+    sent.length = 0;
+    $("voice-msg-btn").click();
+    await wait(1500);
+    openTextChannel(2);
+    await wait(100);
+    check("leaving the channel throws the recording away", !recording && $("recorder").hidden);
+    await wait(400);
+    check("and nothing is sent anywhere", !sent.length, sent.join());
+    openTextChannel(0);
   } catch (err) {
     check("no crash", false, err.stack);
   }
