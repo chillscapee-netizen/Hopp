@@ -83,6 +83,47 @@
     await wait(60);
     check("channel settings offer announcement", !$("channel-edit-announce-row").hidden && $("channel-edit-announce").checked);
     document.querySelector("dialog[open]")?.close();
+
+    // The #rules channel shows them as a card.
+    emit("rules", { rules: "Be kind.\nHave fun.", at: 6, accepted: true, welcome_channel: 0, rules_channel: 3 });
+    await wait(40);
+    openTextChannel(3);
+    await wait(100);
+    const card = document.querySelector("#messages .rules-card");
+    check("the #rules channel shows the rules", !!card && card.querySelectorAll(".rules-item").length === 2 && /agreed/.test(card.textContent));
+
+    // Creating an announcement channel: a text channel, made one only staff write in.
+    const created = [];
+    const updated = [];
+    commands.create_channel = (x) => created.push(x);
+    commands.update_channel = (x) => updated.push(x);
+    openChannelDialog("text");
+    document.querySelector('.type-option[data-kind="announce"]').click();
+    $("channel-name").value = "news";
+    $("channel-form").requestSubmit();
+    await wait(30);
+    check("an announcement channel is made as text", created[0]?.kind === "text" && created[0]?.name === "news");
+    const n = structuredClone(state.roster);
+    n.channels.push({ id: 50, name: "news", kind: "text" });
+    emit("roster", n);
+    await wait(80);
+    check("and then set to announcement", updated.some((u) => u.channel === 50 && u.announce === true), JSON.stringify(updated));
+
+    // Settings: create a #rules channel, and the rules point at it.
+    created.length = 0;
+    saved.length = 0;
+    openServerSettings();
+    await wait(80);
+    $("rules-channel-pick").value = "new";
+    $("rules-save").click();
+    await wait(30);
+    check("a #rules channel is made", created.some((c) => c.name === "rules"));
+    const m = structuredClone(state.roster);
+    m.channels.push({ id: 51, name: "rules", kind: "text" });
+    emit("roster", m);
+    await wait(80);
+    check("and the rules are shown in it", saved.some((x) => x.rulesChannel === 51), JSON.stringify(saved));
+    $("server-settings").close();
   } catch (e) {
     check("no crash: " + e.message + " " + String(e.stack).slice(0, 200), false);
   }

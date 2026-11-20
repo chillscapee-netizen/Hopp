@@ -4452,3 +4452,19 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .rules-bar > .rules-bar-icon { flex: 0 0 36px; }
 .rules-bar > .rules-bar-words { flex: 1 1 auto; }
 .rules-settings .field { margin: 0; }
+
+/* The #rules channel's card. */
+.rules-card { display: grid; gap: 12px; max-width: 640px; margin: 8px 16px 16px 72px; padding: 16px; border-radius: 14px; background: var(--layer-2); list-style: none; }
+.rules-card-head { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.rules-card .rules-list { max-height: none; overflow: visible; }
+.rules-card .rules-item { background: var(--side); }
+.rules-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13.5px; }
+.rules-agreed { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-weight: 600; }
+.rules-card { max-width: 720px; margin: 24px 16px 16px; padding: 20px; gap: 16px; background: transparent; border: 1px solid var(--border); }
+.rules-card-head { gap: 14px; }
+.rules-card-mark { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 14px; background: var(--layer-2); }
+.rules-card-mark .i { width: 24px; height: 24px; }
+.rules-card-words { display: grid; gap: 2px; }
+.rules-card-words h2 { margin: 0; font-size: 22px; }
+.rules-card-words span { color: var(--muted); font-size: 13.5px; }
+.rules-card .rules-item { background: var(--layer-2); }

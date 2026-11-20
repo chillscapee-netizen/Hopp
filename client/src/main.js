@@ -2206,11 +2206,11 @@ listen("roster", (e) => {
   state.pendingView = undefined;
   if (!chatChannels().some((c) => c.id === state.view)) state.view = textChannels().find((c) => c.parent == null)?.id ?? null;
   forgetDeletedChannels();
-  const pending = state.pendingCategory;
-  const made = pending && state.roster.channels.find((c) => !pending.known.has(c.id));
+  const pending = state.afterMade;
+  const made = pending && state.roster.channels.find((c) => !pending.known.has(c.id) && c.parent == null);
   if (made) {
-    state.pendingCategory = null;
-    call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: pending.name });
+    state.afterMade = null;
+    pending.run(made);
   }
   if (draftKey() !== state.draftAt) restoreDraft();
   applyUserVolumes();
@@ -2748,7 +2748,7 @@ function renderSidebar() {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
     row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
-    row.append(icon(ch.private_roles?.length ? "lock" : ch.announce ? "megaphone" : "hash"), el("span", "ellipsis", ch.name));
+    row.append(icon(ch.private_roles?.length ? "lock" : ch.id === state.rules?.rules_channel ? "book" : ch.announce ? "megaphone" : "hash"), el("span", "ellipsis", ch.name));
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
@@ -3108,9 +3108,12 @@ function renderChannelView() {
   const rulesFirst = rulesNeeded();
   const readOnly = announceLocked(view);
   $("chat-input").disabled = !!timedOutUntil(meUser()) || rulesFirst || readOnly;
-  $("rules-bar").hidden = !rulesFirst || view === null;
-  document.querySelector("#composer .composer-box").hidden = rulesFirst;
-  $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : channel(view)?.parent != null ? '<use href="#i-message"/>' : '<use href="#i-hash"/>';
+  // In the #rules channel the rules ask for themselves; the message box just says so.
+  const rulesHere = view !== null && view === state.rules?.rules_channel;
+  $("rules-bar").hidden = !rulesFirst || view === null || rulesHere;
+  document.querySelector("#composer .composer-box").hidden = rulesFirst && !rulesHere;
+  const headIcon = isVoiceChannel(view) ? "volume" : channel(view)?.parent != null ? "message" : view === state.rules?.rules_channel ? "book" : channel(view)?.announce ? "megaphone" : "hash";
+  $("chat-head-icon").innerHTML = '<use href="#i-' + headIcon + '"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
   $("voice-msg-btn").hidden = !voiceMessagesHere();
@@ -3597,7 +3600,9 @@ function renderMessages(keepScrollUnlessAtBottom) {
     welcome.append(actions);
   }
 
-  const items = [state.olderDone.has(state.view) && !hiddenAbove ? welcome : olderLoader()];
+  // The #rules channel opens on the rules themselves, not the usual welcome.
+  const rulesHere = !!state.rules?.rules && state.rules.rules_channel === state.view;
+  const items = [state.olderDone.has(state.view) && !hiddenAbove ? (rulesHere ? rulesCard() : welcome) : olderLoader()];
   // What's on screen now, by message: a message that hasn't changed keeps its row as it is,
   // without building a new one (a new message or reaction used to rebuild all ~150).
   const shown = new Map();
@@ -4148,12 +4153,17 @@ $("sidebar-head").addEventListener("click", (e) => {
   head.classList.add("open");
 });
 
+/** Something to do with the next channel the server makes (its category, announcement, #rules). */
+function afterChannelMade(run) {
+  state.afterMade = { known: new Set(state.roster.channels.map((c) => c.id)), run };
+}
+
 let channelKind = "text";
 function setChannelKind(kind) {
   channelKind = kind;
   document.querySelectorAll(".type-option").forEach((b) => b.classList.toggle("active", b.dataset.kind === kind));
-  $("channel-name-icon").replaceChildren(...icon(kind === "text" ? "hash" : "volume").childNodes);
-  $("channel-name").placeholder = kind === "text" ? "new-channel" : "New voice channel";
+  $("channel-name-icon").replaceChildren(...icon(kind === "text" ? "hash" : kind === "announce" ? "megaphone" : "volume").childNodes);
+  $("channel-name").placeholder = kind === "text" ? "new-channel" : kind === "announce" ? "announcements" : "New voice channel";
 }
 document.querySelectorAll(".type-option").forEach((b) => b.addEventListener("click", () => setChannelKind(b.dataset.kind)));
 
@@ -4161,20 +4171,23 @@ function openChannelDialog(kind, inCategory) {
   state.newChannelCategory = inCategory ?? null;
   $("channel-dialog-sub").textContent = `in ${activeServer()?.label ?? state.roster.server_name}`;
   $("channel-name").value = "";
+  document.querySelector('.type-option[data-kind="announce"]').hidden = !state.roster?.features?.includes("announce");
   setChannelKind(kind);
   openModal($("channel-dialog"));
   $("channel-name").focus();
 }
 $("channel-name").addEventListener("input", (e) => {
   // Show text channel names the way the server will store them.
-  if (channelKind === "text") e.target.value = e.target.value.toLowerCase().replace(/\s/g, "-");
+  if (channelKind !== "voice") e.target.value = e.target.value.toLowerCase().replace(/\s/g, "-");
 });
 $("channel-form").addEventListener("submit", () => {
   const name = $("channel-name").value.trim();
   if (!name) return;
-  // Made from a category's +: put it there once the server has made it.
-  if (state.newChannelCategory) state.pendingCategory = { name: state.newChannelCategory, known: new Set(state.roster.channels.map((c) => c.id)) };
-  call("create_channel", { name, kind: channelKind });
+  // Made from a category's +, or an announcement channel: set that once the server has made it.
+  const announce = channelKind === "announce";
+  const category = state.newChannelCategory;
+  if (category || announce) afterChannelMade((made) => call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: category ?? made.category ?? null, announce: announce || null }));
+  call("create_channel", { name, kind: announce ? "text" : channelKind });
 });
 
 // ---------- invites ----------
@@ -4321,7 +4334,7 @@ var rulesShown = new Set();
 listen("rules", (e) => {
   const r = e.payload ?? {};
   // It arrives while connecting (before this server counts as active): it's this server's.
-  state.rules = { rules: r.rules ?? null, at: Number(r.at) || 0, accepted: !!r.accepted, welcome_channel: r.welcome_channel ?? null };
+  state.rules = { rules: r.rules ?? null, at: Number(r.at) || 0, accepted: !!r.accepted, welcome_channel: r.welcome_channel ?? null, rules_channel: r.rules_channel ?? null };
   // Someone new: the rules once by themselves, the bar above the message box after that.
   const seen = `${state.connectingId ?? state.activeId}|${state.rules.at}`;
   if (rulesNeeded() && !rulesShown.has(seen)) {
@@ -4369,6 +4382,36 @@ function joinRow(m, day) {
   }
   line.append(mark, body);
   return line;
+}
+
+/** The rules in their own channel: always the ones people agree to. */
+function rulesCard() {
+  const li = el("li", "rules-card");
+  const head = el("div", "rules-card-head");
+  const mark = el("span", "rules-card-mark");
+  mark.append(icon("book"));
+  const words = el("div", "rules-card-words");
+  words.append(el("h2", null, "Rules"), el("span", null, `Everyone in ${activeServer()?.label ?? state.roster?.server_name ?? "this server"} agrees to these.`));
+  head.append(mark, words);
+  const list = el("ol", "rules-list");
+  list.append(...rulesList(state.rules.rules).map((t, i) => {
+    const item = el("li", "rules-item");
+    item.append(el("span", "rules-num", String(i + 1)), messageText(t));
+    return item;
+  }));
+  const foot = el("div", "rules-card-foot");
+  if (rulesNeeded()) {
+    const agree = el("button", "btn primary sm", "Agree to the rules");
+    agree.type = "button";
+    agree.addEventListener("click", openRules);
+    foot.append(el("span", null, "Agree to start talking in the server."), agree);
+  } else {
+    const done = el("span", "rules-agreed");
+    done.append(icon("check", "xs"), "You've agreed to these rules.");
+    foot.append(done);
+  }
+  li.append(head, list, foot);
+  return li;
 }
 
 /** Whether I must agree to this server's rules before joining in. */
@@ -4427,6 +4470,10 @@ function renderRulesSettings() {
   const texts = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
   pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))));
   pick.value = state.rules?.welcome_channel != null ? String(state.rules.welcome_channel) : "";
+  const shown = $("rules-channel-pick");
+  const canMake = may("manage_channels");
+  shown.replaceChildren(new Option("No channel (only when someone joins)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))), ...(canMake ? [new Option("+ Create a #rules channel", "new")] : []));
+  shown.value = state.rules?.rules_channel != null && texts.some((c) => c.id === state.rules.rules_channel) ? String(state.rules.rules_channel) : "";
 }
 /** The rules being written in the overview, one per row. */
 var rulesDraft = [""];
@@ -4468,12 +4515,20 @@ $("rules-add").addEventListener("click", () => {
 });
 $("rules-save").addEventListener("click", () => {
   const welcome = $("welcome-channel").value;
-  invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel: welcome ? Number(welcome) : null })
-    .then(() => {
-      $("rules-saved").hidden = false;
-      setTimeout(() => ($("rules-saved").hidden = true), 2000);
-    })
-    .catch((err) => toast(friendlyError(err), true));
+  const shown = $("rules-channel-pick").value;
+  const save = (rulesChannel) =>
+    invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel: welcome ? Number(welcome) : null, rulesChannel })
+      .then(() => {
+        $("rules-saved").hidden = false;
+        setTimeout(() => ($("rules-saved").hidden = true), 2000);
+      })
+      .catch((err) => toast(friendlyError(err), true));
+  // A new #rules channel first, then the rules pointing at it.
+  if (shown === "new") {
+    afterChannelMade((made) => save(made.id));
+    return call("create_channel", { name: "rules", kind: "text" });
+  }
+  save(shown ? Number(shown) : null);
 });
 
 function showServerTab(tab) {
@@ -16381,6 +16436,7 @@ function timeoutItems(u) {
 function composerHint(view) {
   const until = timedOutUntil(meUser());
   if (until) return "You're timed out until " + clock(until);
+  if (rulesNeeded()) return "Agree to the rules to start talking";
   if (announceLocked(view)) return `Only moderators and admins write in #${channelName(view)}`;
   const where = isVoiceChannel(view) || channel(view)?.parent != null ? "Message " + channelName(view) : "Message #" + channelName(view);
   const slow = channel(view)?.slowmode;
