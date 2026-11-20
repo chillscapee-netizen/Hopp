@@ -4785,3 +4785,13 @@ html.rail-small .folder-open { gap: 6px; padding: 4px 0 6px; border-radius: 14px
 .folder-closed { padding: 5px; gap: 3px; }
 html.rail-small .folder-closed { padding: 4px; gap: 2px; }
 html.rail-large .folder-closed { padding: 7px; gap: 3px; }
+
+/* A call's buttons look and sit like a voice channel's: one calm row, the same sizes and colours. */
+.call-controls.voice-controls { gap: 8px; padding: 6px; border-radius: 16px; background: var(--layer-2); box-shadow: 0 6px 24px rgb(0 0 0 / 0.25); }
+.call-controls .call-btn.vc-btn { width: 44px; height: 44px; border-radius: 12px; background: var(--hover); color: var(--text); }
+.call-controls .call-btn.vc-btn:hover { background: var(--active); }
+.call-controls .call-btn.vc-btn.danger { width: 56px; background: var(--red); color: #fff; }
+.call-controls .call-btn.vc-btn.danger:hover { background: color-mix(in srgb, var(--red) 85%, #fff); }
+.call-controls .vc-btn.on[data-vc="mute"], .call-controls .vc-btn.on[data-vc="deafen"] { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); }
+.call-controls .vc-btn.on[data-vc="cam"], .call-controls .vc-btn.on[data-vc="share"] { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green); }
+.call-stage:fullscreen .call-controls.voice-controls { background: rgb(20 20 24 / 0.85); }

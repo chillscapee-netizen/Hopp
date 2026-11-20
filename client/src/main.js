@@ -10837,23 +10837,35 @@ function renderCallStage(c) {
   btn(document.fullscreenElement === stage ? "minimize" : "maximize", "Full screen", () => (document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen()).catch(() => {}));
   top.append(bar);
 
-  // Bottom: mic, camera, screen, hang up — over the call, also in full screen.
-  const controls = el("div", "call-controls");
-  const control = (name, label, on, fn, cls = "") => {
-    const x = el("button", "call-btn media" + (on ? " on" : "") + cls);
+  // Bottom, as in a voice channel: mic and headphones, then camera, screen and the stream's
+  // settings, then hang up — over the call, also in full screen.
+  const controls = el("div", "call-controls voice-controls");
+  const control = (name, label, on, fn, cls = "", vc = "") => {
+    const x = el("button", "call-btn media vc-btn" + (on ? " on" : "") + cls);
     x.type = "button";
+    if (vc) x.dataset.vc = vc;
+    x.dataset.tip = label;
     x.setAttribute("aria-label", label);
     x.append(icon(name));
     x.addEventListener("click", fn);
     controls.append(x);
   };
-  control(state.muted ? "mic-off" : "mic", state.muted ? "Unmute" : "Mute", false, () => $("mute-btn").click(), state.muted ? " off" : "");
+  const silent = state.muted || state.deafened;
+  control(silent ? "mic-off" : "mic", silent ? "Unmute" : "Mute", silent, () => $("mute-btn").click(), "", "mute");
+  control(state.deafened ? "headphones-off" : "headphones", state.deafened ? "Undeafen" : "Deafen", !!state.deafened, () => $("deafen-btn").click(), "", "deafen");
   if (c.engineReady) {
-    control(media.out.cam ? "video" : "video-off", media.out.cam ? "Turn off camera" : "Turn on camera", !!media.out.cam, () => (media.out.cam ? stopOut("cam") : startCamera()));
-    control("monitor", media.out.screen ? "Stop sharing your screen" : "Share your screen", !!media.out.screen, () => (media.out.screen ? stopOut("screen") : startCallScreen()));
+    controls.append(el("span", "vc-sep"));
+    control(media.out.cam ? "video" : "video-off", media.out.cam ? "Turn off camera" : "Turn on camera", !!media.out.cam, () => (media.out.cam ? stopOut("cam") : startCamera()), "", "cam");
+    control("monitor", media.out.screen ? "Stop sharing your screen" : "Share your screen", !!media.out.screen, () => (media.out.screen ? stopOut("screen") : startCallScreen()), "", "share");
+    control("settings", "Stream settings", false, (e) => {
+      const b = e.currentTarget.getBoundingClientRect();
+      openShareQuality(b.left, b.top, true);
+    }, " plain", "quality");
   }
-  const hang = el("button", "call-btn decline");
+  controls.append(el("span", "vc-sep"));
+  const hang = el("button", "call-btn decline vc-btn danger");
   hang.type = "button";
+  hang.dataset.tip = "Hang up";
   hang.setAttribute("aria-label", "Hang up");
   hang.append(icon("phone-off"));
   hang.addEventListener("click", () => endCall());

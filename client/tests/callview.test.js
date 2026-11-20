@@ -15,7 +15,7 @@
   await wait(100);
   const stage = $("call-stage");
   check("two people, two tiles, with names", stage.querySelectorAll(".voice-tile").length === 2 && stage.textContent.includes("Marcus (you)") && stage.textContent.includes("Elin"));
-  check("mic, camera, screen and hang up", stage.querySelectorAll(".call-controls .call-btn").length === 4);
+  check("as in a voice channel: mic, headphones, camera, screen, stream settings and hang up", stage.querySelectorAll(".call-controls .call-btn").length === 6);
   check("the call panel has camera, screen and soundboard", !$("call-actions").hidden && $("call-actions").querySelectorAll(".voice-action").length === 3);
   check("the conversation is still there below", getComputedStyle(document.querySelector("#home-body")).display !== "none");
 

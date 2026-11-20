@@ -84,13 +84,13 @@
   await wait(150);
   document.getElementById("call-accept").click();
   await wait(300);
-  const callButtons = () => document.querySelectorAll("#call-stage .call-btn.media");
-  const callCam = callButtons()[1];
-  check("calls have mic, camera and screen buttons", callButtons().length === 3);
+  const callBtn = (vc) => document.querySelector(`#call-stage .call-btn[data-vc="${vc}"]`);
+  const callCam = callBtn("cam");
+  check("calls have mic, headphones, camera and screen buttons", !!callBtn("mute") && !!callBtn("deafen") && !!callCam && !!callBtn("share"));
   callCam.click();
   const elinCam = await playing(`#call-stage .call-person[data-session="1"] video`);
   check("a camera in a call arrives", elinCam?.videoWidth === 320, String(elinCam?.videoWidth));
-  callButtons()[2].click();
+  callBtn("share").click();
   const screen = await playing("#call-stage .screen-tile video");
   check("a shared screen in a call shows big", !!screen);
   // On demand: the other side hears we're live, and gets the screen only after Watch.
