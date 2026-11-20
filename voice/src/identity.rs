@@ -31,6 +31,35 @@ pub struct StoredIdentity {
     /// Set once the user has proven they saved the recovery phrase.
     #[serde(default)]
     pub backed_up: bool,
+    /// The email this account is saved to Hopp Cloud under, if the user chose to (kept only on
+    /// this computer: what goes to the cloud has it taken out).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_email: Option<String>,
+}
+
+/// Finding an account saved to Hopp Cloud: an id made from the email (the address itself never
+/// leaves this computer) and a login made from the email and password (Argon2id, so guessing is
+/// slow). The cloud keeps only a hash of the login.
+pub fn backup_ids(email: &str, password: &str) -> anyhow::Result<(String, String)> {
+    use sha2::{Digest, Sha256};
+    let email = email.trim().to_lowercase();
+    anyhow::ensure!(email.contains('@') && email.len() <= 254, "That doesn't look like an email address.");
+    let id = hex::encode(Sha256::digest(format!("hopp-backup:{email}").as_bytes()));
+    let salt = Sha256::digest(format!("hopp-login:{email}").as_bytes());
+    let login = hex::encode(derive_key(password, &salt[..16])?);
+    Ok((id, login))
+}
+
+/// The id an account saved to Hopp Cloud is found by (from its email).
+pub fn backup_id(email: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(format!("hopp-backup:{}", email.trim().to_lowercase()).as_bytes()))
+}
+
+/// The nonce an account signs to save or remove its copy in Hopp Cloud.
+pub fn backup_nonce(text: &str) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes()).to_vec()
 }
 
 /// An unlocked identity, able to sign server challenges.
@@ -104,6 +133,7 @@ impl Identity {
             nonce: hex::encode(nonce),
             secret: hex::encode(secret),
             backed_up: false,
+            backup_email: None,
         })
     }
 

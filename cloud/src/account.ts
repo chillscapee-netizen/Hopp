@@ -131,6 +131,11 @@ const hexToBytes = (hex: string): Uint8Array | null => {
 };
 const bytesToHex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function authMessage(nonce: Uint8Array): Uint8Array {
   const prefix = new TextEncoder().encode("strom-auth-v1\0");
   const msg = new Uint8Array(prefix.length + nonce.length);
@@ -200,6 +205,78 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE TABLE IF NOT EXISTS blocked_tunnels (id TEXT PRIMARY KEY, name TEXT NOT NULL, at INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS admins (key TEXT PRIMARY KEY, username TEXT NOT NULL, added_by TEXT NOT NULL, at INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL)");
+    // Accounts saved to Hopp Cloud (by choice): the account file exactly as it is on the computer,
+    // locked with the password there, found by a scrambled email (the address itself isn't kept).
+    this.sql.exec("CREATE TABLE IF NOT EXISTS backups (id TEXT PRIMARY KEY, key TEXT NOT NULL, login TEXT NOT NULL, stored TEXT NOT NULL, at INTEGER NOT NULL)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS backups_by_key ON backups (key)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS backup_tries (tag TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)");
+  }
+
+  // ---------- accounts saved to Hopp Cloud ----------
+
+  /** Wrong guesses are limited: per account and per internet connection, a few an hour. */
+  private backupTry(tag: string, max: number): boolean {
+    const now = Date.now();
+    this.sql.exec("DELETE FROM backup_tries WHERE until < ?", now);
+    const row = this.sql.exec("SELECT n FROM backup_tries WHERE tag = ?", tag).toArray()[0];
+    if (row && Number(row.n) >= max) return false;
+    if (row) this.sql.exec("UPDATE backup_tries SET n = n + 1 WHERE tag = ?", tag);
+    else this.sql.exec("INSERT INTO backup_tries (tag, n, until) VALUES (?, 1, ?)", tag, now + 3600_000);
+    return true;
+  }
+
+  /**
+   * Save, fetch or remove an account saved to Hopp Cloud. Saving and removing are signed by the
+   * account itself; fetching needs the login made from the email and password (only its hash is
+   * kept), and what comes back is still locked with the password.
+   */
+  async backup(body: Record<string, unknown>, ip: string | undefined): Promise<{ status: number; body: unknown }> {
+    const id = String(body.id ?? "");
+    if (!/^[0-9a-f]{64}$/.test(id)) return { status: 400, body: { error: "Bad email." } };
+    const action = body.action;
+    if (action === "fetch") {
+      const login = String(body.login ?? "");
+      if (!/^[0-9a-f]{64}$/.test(login)) return { status: 400, body: { error: "Bad login." } };
+      const tag = await sha256Hex("ip:" + (ip ?? "") + ":" + new Date().toISOString().slice(0, 13));
+      if (!this.backupTry("ip:" + tag, 30) || !this.backupTry("id:" + id, 10)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+      const row = this.sql.exec("SELECT login, stored FROM backups WHERE id = ?", id).toArray()[0];
+      if (!row || String(row.login) !== (await sha256Hex(login))) return { status: 403, body: { error: "Wrong email or password." } };
+      return { status: 200, body: { stored: JSON.parse(String(row.stored)) } };
+    }
+    const key = String(body.key ?? "").toLowerCase();
+    const signature = hexToBytes(String(body.sig ?? ""));
+    if (!/^[0-9a-f]{64}$/.test(key) || !signature) return { status: 400, body: { error: "Bad signature." } };
+    const signedText = action === "save" ? `hopp-backup|${id}|${body.login}|${body.stored}` : `hopp-backup-delete|${id}`;
+    const nonce = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(signedText)));
+    let valid = false;
+    try {
+      const pub = await crypto.subtle.importKey("raw", hexToBytes(key)!, { name: "Ed25519" }, false, ["verify"]);
+      valid = await crypto.subtle.verify({ name: "Ed25519" }, pub, signature, authMessage(nonce));
+    } catch {
+      valid = false;
+    }
+    if (!valid) return { status: 403, body: { error: "Bad signature." } };
+    const here = this.sql.exec("SELECT key FROM backups WHERE id = ?", id).toArray()[0];
+    if (action === "delete") {
+      if (here && String(here.key) === key) this.sql.exec("DELETE FROM backups WHERE id = ?", id);
+      return { status: 200, body: { ok: true } };
+    }
+    if (action !== "save") return { status: 400, body: { error: "Unknown action." } };
+    const login = String(body.login ?? "");
+    const storedText = String(body.stored ?? "");
+    if (!/^[0-9a-f]{64}$/.test(login) || storedText.length > 4000) return { status: 400, body: { error: "Bad account." } };
+    let stored: { public_key?: string };
+    try {
+      stored = JSON.parse(storedText);
+    } catch {
+      return { status: 400, body: { error: "Bad account." } };
+    }
+    if (stored.public_key !== key) return { status: 400, body: { error: "That isn't this account." } };
+    if (here && String(here.key) !== key) return { status: 409, body: { error: "That email is already used by another Hopp account." } };
+    // One email per account: saving under a new one replaces the old.
+    this.sql.exec("DELETE FROM backups WHERE key = ? AND id != ?", key, id);
+    this.sql.exec("INSERT OR REPLACE INTO backups (id, key, login, stored, at) VALUES (?, ?, ?, ?, ?)", id, key, await sha256Hex(login), storedText, Date.now());
+    return { status: 200, body: { ok: true } };
   }
 
   // ---------- reports, for whoever runs Hopp Cloud ----------

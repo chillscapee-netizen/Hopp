@@ -123,6 +123,19 @@ export default {
       return stub.fetch(forwarded);
     }
 
+    // An account saved to Hopp Cloud: save, fetch (on a new computer) or remove it.
+    if (url.pathname === "/backup" && request.method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "Bad request." }, 400);
+      }
+      // (Typed by hand: an RPC answer with an open body reads as never.)
+      const out = (await directory(env).backup(body, request.headers.get("CF-Connecting-IP") ?? undefined)) as unknown as { status: number; body: unknown };
+      return json(out.body, out.status);
+    }
+
     // An account: every device of one Hopp ID connects to the same object.
     if (url.pathname === "/account/ws") {
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });

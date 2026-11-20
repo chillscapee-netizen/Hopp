@@ -522,15 +522,15 @@ function byName(a, b) {
 
 // ---------- account ----------
 
-const AUTH_PANES = { login: "login-form", create: "create-form", recover: "recover-form" };
-const AUTH_FOCUS = { login: "login-password", create: "create-name", recover: "recover-phrase" };
+const AUTH_PANES = { login: "login-form", create: "create-form", recover: "recover-form", email: "email-login-form" };
+const AUTH_FOCUS = { login: "login-password", create: "create-name", recover: "recover-phrase", email: "email-login-email" };
 let authReturn = "login";
 let accountExists = false;
 
 function showAuth(mode) {
   $("shell").classList.add("locked");
   $("splash").hidden = true;
-  if (mode !== "recover") authReturn = mode;
+  if (mode !== "recover" && mode !== "email") authReturn = mode;
   for (const [m, id] of Object.entries(AUTH_PANES)) $(id).hidden = m !== mode;
   $("topbar-title").textContent = "Hopp";
   const focus = AUTH_FOCUS[mode];
@@ -728,7 +728,13 @@ $("create-form").addEventListener("submit", async (e) => {
       password,
       rememberMe: $("create-remember").checked,
     });
-    $("create-password").value = $("create-confirm").value = "";
+    // An email given: the new account is saved to Hopp Cloud under it (not being able to doesn't
+    // stop anything; it can be set up again in settings).
+    const email = $("create-email").value.trim();
+    if (email) {
+      await invoke("cloud_backup_save", { cloud: cloudHttp(), email, password }).catch((err) => toast("Couldn't save your account to Hopp Cloud: " + friendlyError(err) + " You can try again in Settings → Password & security.", true));
+    }
+    $("create-password").value = $("create-confirm").value = $("create-email").value = "";
     state.onboarding = { step: "backup", link: null };
     await enterApp();
     // Straight to the backup: a new account isn't safe until the phrase is saved.
@@ -777,6 +783,32 @@ document.querySelectorAll('[data-auth="recover"]').forEach((b) =>
     showAuth("recover");
   }),
 );
+document.querySelectorAll('[data-auth="email"]').forEach((b) =>
+  b.addEventListener("click", () => {
+    showError("email-login-error", "");
+    showAuth("email");
+  }),
+);
+$("email-login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  showError("email-login-error", "");
+  const btn = $("email-login-btn");
+  setBusy(btn, true, "Logging in…");
+  try {
+    await invoke("cloud_backup_login", {
+      cloud: cloudHttp(),
+      email: $("email-login-email").value,
+      password: $("email-login-password").value,
+      rememberMe: $("email-login-remember").checked,
+    });
+    $("email-login-password").value = "";
+    await enterApp();
+  } catch (err) {
+    showError("email-login-error", err);
+  } finally {
+    setBusy(btn, false, "Log in");
+  }
+});
 document.querySelectorAll('[data-auth="back"]').forEach((b) => b.addEventListener("click", () => showAuth(accountExists ? authReturn : "create")));
 
 // Tells the user whose account a phrase belongs to before anything is replaced.
@@ -956,6 +988,8 @@ $("change-password-form").addEventListener("submit", async (e) => {
     $("change-password-form").hidden = true;
     $("cp-phrase").value = "";
     toast("Your password was changed.");
+    const saved = await invoke("cloud_backup_status").catch(() => null);
+    if (saved) await invoke("cloud_backup_save", { cloud: cloudHttp(), email: saved, password: newPassword }).catch((err) => toast("Your account in Hopp Cloud still has your old password: " + friendlyError(err) + " Set it up again in Password & security.", true));
   } catch (err) {
     showError("cp-status", err);
   } finally {
@@ -1036,6 +1070,24 @@ $("backup-hello").addEventListener("click", async () => {
 });
 
 $("backup-copy").addEventListener("click", (e) => copyText(backup.phrase, e.currentTarget, "Copy"));
+/**
+ * Into your own inbox: your email app opens with the phrase in a message to yourself (Hopp sends
+ * nothing). Search for "Hopp recovery" on any computer, even after this one breaks.
+ */
+$("backup-mail").addEventListener("click", () => {
+  const words = backup.phrase.split(" ").map((w, i) => `${i + 1}. ${w}`).join("\n");
+  const body = `My Hopp recovery phrase (account: ${state.account?.name ?? ""})\n\n${words}\n\nWith these 24 words I get my Hopp account back on any computer, even if I forget my password: open Hopp and choose "Restore it with your recovery phrase". Never send them to anyone else.`;
+  openUrl(`mailto:?subject=${encodeURIComponent("Hopp recovery phrase")}&body=${encodeURIComponent(body)}`);
+  $("backup-file-note").textContent = "Send it to your own address: then it's in your inbox for good.";
+});
+$("backup-onedrive").addEventListener("click", async () => {
+  try {
+    const path = await invoke("save_recovery_file", { phrase: backup.phrase, place: "onedrive" });
+    $("backup-file-note").textContent = `Saved to OneDrive: ${path}`;
+  } catch (err) {
+    $("backup-file-note").textContent = String(err);
+  }
+});
 $("backup-file").addEventListener("click", async () => {
   try {
     const path = await invoke("save_recovery_file", { phrase: backup.phrase });
@@ -1119,6 +1171,46 @@ function closeBackup() {
 }
 
 $("backup-pill").addEventListener("click", () => openBackup());
+
+// ---------- log in with email (the account saved to Hopp Cloud) ----------
+
+async function renderCloudBackup() {
+  const email = await invoke("cloud_backup_status").catch(() => null);
+  $("cloud-backup-sub").textContent = email
+    ? `Saved to Hopp Cloud under ${email}. On a new computer, choose "Log in with email" and use it with your password.`
+    : "Save your Hopp ID to Hopp Cloud, locked with your password, so your email and password bring it back on a new computer. Hopp never emails you.";
+  $("cloud-backup-btn").textContent = email ? "Remove" : "Set up";
+  $("cloud-backup-btn").classList.toggle("danger", !!email);
+  $("cloud-backup-btn").dataset.saved = email ? "1" : "";
+}
+$("cloud-backup-btn").addEventListener("click", async () => {
+  if ($("cloud-backup-btn").dataset.saved) {
+    const ok = await confirmDialog({ title: "Remove from Hopp Cloud?", text: "Your Hopp ID stays on this computer, but your email and password won't bring it back on another one. Keep your recovery phrase safe.", ok: "Remove" });
+    if (!ok) return;
+    await invoke("cloud_backup_remove", { cloud: cloudHttp() }).then(() => toast("Removed from Hopp Cloud."), (err) => toast(friendlyError(err), true));
+    return renderCloudBackup();
+  }
+  $("cloud-backup-form").hidden = false;
+  showError("cb-status", "");
+  $("cb-email").focus();
+});
+$("cb-cancel").addEventListener("click", () => ($("cloud-backup-form").hidden = true));
+$("cloud-backup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("cb-save");
+  setBusy(btn, true, "Saving…");
+  try {
+    await invoke("cloud_backup_save", { cloud: cloudHttp(), email: $("cb-email").value, password: $("cb-password").value });
+    $("cloud-backup-form").hidden = true;
+    $("cb-password").value = "";
+    toast("Saved. Your email and password now bring your Hopp ID back on any computer.");
+    renderCloudBackup();
+  } catch (err) {
+    showError("cb-status", err);
+  } finally {
+    setBusy(btn, false, "Save to Hopp Cloud");
+  }
+});
 $("backup-btn").addEventListener("click", () => openBackup({ viewOnly: !!state.account?.backedUp }));
 
 // ---------- server rail ----------
@@ -5368,6 +5460,7 @@ function openSettings(tab) {
 function showTab(tab) {
   document.querySelectorAll(".settings-tab[data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
+  if (tab === "security" && typeof renderCloudBackup === "function") renderCloudBackup();
 }
 document.querySelectorAll(".settings-tab[data-tab]").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
 document.querySelectorAll(".open-settings").forEach((b) => b.addEventListener("click", () => openSettings("profile")));

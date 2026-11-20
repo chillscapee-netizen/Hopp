@@ -143,8 +143,15 @@
         <form id="create-form" class="auth-pane" hidden>
           <div class="auth-logo"><svg class="i"><use href="#i-logo"/></svg></div>
           <h1>Create your Hopp ID</h1>
-          <p class="auth-sub">One account for every server. No email, no tracking.</p>
-          <p class="auth-switch auth-top-switch">Already have a Hopp ID? <button type="button" class="link" data-auth="recover">Restore it with your recovery phrase</button></p>
+          <p class="auth-sub">One account for every server. No email needed, no tracking.</p>
+          <div class="auth-switch auth-top-switch">
+            <span>Already have a Hopp ID?</span>
+            <span class="auth-ways">
+              <button type="button" class="link" data-auth="email">Log in with email</button>
+              <span class="sep">·</span>
+              <button type="button" class="link" data-auth="recover">Restore with recovery phrase</button>
+            </span>
+          </div>
           <label class="field">
             <span class="field-label">Display name</span>
             <input id="create-name" maxlength="32" autocomplete="nickname" required>
@@ -160,6 +167,11 @@
           <label class="field">
             <span class="field-label">Confirm password</span>
             <input id="create-confirm" type="password" autocomplete="new-password" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Email <span class="optional">(optional)</span></span>
+            <input id="create-email" type="email" autocomplete="email" placeholder="you@example.com">
+            <span class="hint">Lets you log in on a new computer if this one breaks. Hopp never emails you, and keeps only a scrambled form of it.</span>
           </label>
           <label class="check auth-check"><input id="create-remember" type="checkbox" checked> Keep me logged in on this computer</label>
           <p id="create-error" class="error" hidden></p>
@@ -199,6 +211,28 @@
           <label class="check auth-check"><input id="recover-remember" type="checkbox" checked> Keep me logged in on this computer</label>
           <p id="recover-error" class="error" hidden></p>
           <button id="recover-btn" type="submit" class="btn primary full lg">Restore account</button>
+          <p class="auth-switch"><button type="button" class="link" data-auth="back">Back</button></p>
+        </form>
+
+        <form id="email-login-form" class="auth-pane" hidden>
+          <div class="auth-logo"><svg class="i"><use href="#i-logo"/></svg></div>
+          <h1>Log in with email</h1>
+          <p class="auth-sub">If you saved your Hopp ID to Hopp Cloud, your email and password bring it to this computer.</p>
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input id="email-login-email" type="email" autocomplete="email" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Password</span>
+            <span class="password-field">
+              <input id="email-login-password" type="password" autocomplete="current-password" required>
+              <button type="button" class="reveal" aria-label="Show password"><svg class="i sm"><use href="#i-eye"/></svg></button>
+            </span>
+          </label>
+          <label class="check auth-check"><input id="email-login-remember" type="checkbox" checked> Keep me logged in on this computer</label>
+          <p id="email-login-error" class="error" hidden></p>
+          <button id="email-login-btn" type="submit" class="btn primary full lg">Log in</button>
+          <p class="auth-switch">Forgot your password? <button type="button" class="link" data-auth="recover">Use your recovery phrase</button></p>
           <p class="auth-switch"><button type="button" class="link" data-auth="back">Back</button></p>
         </form>
       </div>
@@ -1211,10 +1245,12 @@
     <div data-bstep="phrase" hidden>
       <div class="modal-body">
         <h2>Write down your recovery phrase</h2>
-        <p class="modal-sub">These 24 words <strong>are</strong> your account. If you forget your password, they're the only way back in. Write them on paper or save them somewhere private, never in a chat or email.</p>
+        <p class="modal-sub">These 24 words <strong>are</strong> your account. If you forget your password, they're the only way back in. Save them where only you can get to them, so they survive if this computer breaks: your own email, your OneDrive, or on paper. Never send them to anyone else.</p>
         <ol id="backup-words" class="phrase-grid"></ol>
         <div class="phrase-actions">
           <button id="backup-copy" type="button" class="btn sm">Copy</button>
+          <button id="backup-mail" type="button" class="btn sm">Email to myself</button>
+          <button id="backup-onedrive" type="button" class="btn sm">Save to OneDrive</button>
           <button id="backup-file" type="button" class="btn sm">Save as file</button>
           <span id="backup-file-note" class="hint"></span>
         </div>
@@ -1478,6 +1514,30 @@
 
         <section data-panel="security" class="settings-page" hidden>
           <h2 class="page-title">Password &amp; security</h2>
+          <div class="card">
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Log in with email</span>
+                <span id="cloud-backup-sub" class="row-sub">Save your Hopp ID to Hopp Cloud, locked with your password, so your email and password bring it back on a new computer. Hopp never emails you.</span>
+              </span>
+              <button id="cloud-backup-btn" type="button" class="btn sm">Set up</button>
+            </div>
+            <form id="cloud-backup-form" class="row-body security-form" hidden>
+              <label class="field">
+                <span class="field-label">Email</span>
+                <input id="cb-email" type="email" autocomplete="email" required>
+              </label>
+              <label class="field">
+                <span class="field-label">Your password</span>
+                <input id="cb-password" type="password" autocomplete="current-password" required>
+              </label>
+              <p id="cb-status" class="error" hidden></p>
+              <div class="form-actions">
+                <button id="cb-cancel" type="button" class="btn-link sm">Cancel</button>
+                <button id="cb-save" type="submit" class="btn primary sm">Save to Hopp Cloud</button>
+              </div>
+            </form>
+          </div>
           <div class="card">
             <div class="row">
               <span class="row-label">

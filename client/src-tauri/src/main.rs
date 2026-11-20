@@ -303,9 +303,91 @@ fn set_remember_me(state: State<'_, AppState>, on: bool) -> CmdResult {
 async fn change_password(state: State<'_, AppState>, current: String, new_password: String) -> CmdResult {
     let stored = unlock_stored(&state)?;
     let backed_up = stored.backed_up;
+    let backup_email = stored.backup_email.clone();
     let mut updated = blocking(move || Identity::unlock(&stored, &current)?.encrypt(&new_password)).await?;
     updated.backed_up = backed_up;
+    // Saved to Hopp Cloud: the page saves it again under the new password.
+    updated.backup_email = backup_email;
     write_stored(&state, &updated)
+}
+
+/// The email this account is saved to Hopp Cloud under, if it is.
+#[tauri::command]
+fn cloud_backup_status(state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    Ok(read_stored(&state)?.and_then(|s| s.backup_email))
+}
+
+async fn backup_post(cloud: &str, body: serde_json::Value) -> CmdResult<serde_json::Value> {
+    let url = format!("{}/backup", cloud.trim_end_matches('/').replacen("wss://", "https://", 1).replacen("ws://", "http://", 1));
+    let response = cloud_http().post(url).json(&body).send().await.map_err(|_| "Couldn't reach Hopp Cloud. Check your internet connection.".to_string())?;
+    let ok = response.status().is_success();
+    let value: serde_json::Value = response.json().await.unwrap_or_default();
+    if ok {
+        Ok(value)
+    } else {
+        Err(value.get("error").and_then(|e| e.as_str()).unwrap_or("Hopp Cloud said no.").to_string())
+    }
+}
+
+/// Saves this account to Hopp Cloud under an email: the account file as it is on this computer,
+/// locked with the password (checked here first). Signed by the account, so nobody else can.
+#[tauri::command]
+async fn cloud_backup_save(state: State<'_, AppState>, cloud: String, email: String, password: String) -> CmdResult {
+    let identity = logged_in_identity(&state)?;
+    let mut stored = unlock_stored(&state)?;
+    let email = email.trim().to_lowercase();
+    let (check, mail, pass) = (stored.clone(), email.clone(), password.clone());
+    let (id, login) = blocking(move || {
+        Identity::unlock(&check, &pass)?;
+        strom_voice::identity::backup_ids(&mail, &pass)
+    })
+    .await?;
+    let mut sent = stored.clone();
+    sent.backup_email = None;
+    sent.backed_up = false;
+    let text = serde_json::to_string(&sent).map_err(|e| e.to_string())?;
+    let sig = identity.sign_challenge(&strom_voice::identity::backup_nonce(&format!("hopp-backup|{id}|{login}|{text}")));
+    backup_post(&cloud, serde_json::json!({ "action": "save", "id": id, "login": login, "stored": text, "key": identity.public_key(), "sig": sig })).await?;
+    stored.backup_email = Some(email);
+    write_stored(&state, &stored)
+}
+
+/// Takes this account out of Hopp Cloud (it stays on this computer).
+#[tauri::command]
+async fn cloud_backup_remove(state: State<'_, AppState>, cloud: String) -> CmdResult {
+    let identity = logged_in_identity(&state)?;
+    let mut stored = unlock_stored(&state)?;
+    let Some(email) = stored.backup_email.clone() else { return Ok(()) };
+    let id = strom_voice::identity::backup_id(&email);
+    let sig = identity.sign_challenge(&strom_voice::identity::backup_nonce(&format!("hopp-backup-delete|{id}")));
+    backup_post(&cloud, serde_json::json!({ "action": "delete", "id": id, "key": identity.public_key(), "sig": sig })).await?;
+    stored.backup_email = None;
+    write_stored(&state, &stored)
+}
+
+/// A new computer: logs in with the email and password the account was saved to Hopp Cloud
+/// under. The copy comes back still locked and is opened here with the password. Another
+/// account on this computer is backed up, not deleted.
+#[tauri::command]
+async fn cloud_backup_login(app: AppHandle, state: State<'_, AppState>, cloud: String, email: String, password: String, remember_me: bool) -> CmdResult<String> {
+    let email = email.trim().to_lowercase();
+    let (mail, pass) = (email.clone(), password.clone());
+    let (id, login) = blocking(move || strom_voice::identity::backup_ids(&mail, &pass)).await?;
+    let answer = backup_post(&cloud, serde_json::json!({ "action": "fetch", "id": id, "login": login })).await?;
+    let mut stored: StoredIdentity = serde_json::from_value(answer.get("stored").cloned().unwrap_or_default()).map_err(|_| "Hopp Cloud sent back something that isn't an account.".to_string())?;
+    let check = stored.clone();
+    let identity = blocking(move || Identity::unlock(&check, &password).map_err(|_| anyhow::anyhow!("Wrong email or password."))).await?;
+    stored.backup_email = Some(email);
+    let existing = read_stored(&state)?;
+    logout(app, state.clone());
+    if existing.is_some_and(|s| s.public_key != stored.public_key) {
+        back_up_account(&state)?;
+    }
+    write_stored(&state, &stored)?;
+    remember(&identity, remember_me);
+    let name = identity.name.clone();
+    *state.identity.lock().unwrap() = Some(identity);
+    Ok(name)
 }
 
 /// Shown only after the password is confirmed: the phrase *is* the account.
@@ -381,16 +463,27 @@ fn confirm_backup(state: State<'_, AppState>, answers: Vec<(usize, String)>) -> 
     write_stored(&state, &stored)
 }
 
-/// Writes the phrase to a text file in Downloads and shows it in Explorer.
+/// Writes the phrase to a text file and shows it in Explorer: in Downloads, or in OneDrive
+/// ("onedrive"), which most Windows computers have, so it's kept online if this one breaks.
 #[tauri::command]
-fn save_recovery_file(app: AppHandle, state: State<'_, AppState>, phrase: String) -> CmdResult<String> {
+fn save_recovery_file(app: AppHandle, state: State<'_, AppState>, phrase: String, place: Option<String>) -> CmdResult<String> {
     use tauri_plugin_opener::OpenerExt;
     let identity = logged_in_identity(&state)?;
     let key = strom_voice::identity::public_key_of_phrase(&phrase).map_err(|e| e.to_string())?;
     if key != identity.public_key() {
         return Err("That phrase doesn't belong to this account.".into());
     }
-    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    let dir = if place.as_deref() == Some("onedrive") {
+        let root = std::env::var("OneDrive")
+            .ok()
+            .filter(|p| std::path::Path::new(p).is_dir())
+            .ok_or("OneDrive isn't set up on this computer. Email it to yourself or save it as a file instead.")?;
+        let dir = std::path::Path::new(&root).join("Hopp");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't make a folder in OneDrive: {e}"))?;
+        dir
+    } else {
+        app.path().download_dir().map_err(|e| e.to_string())?
+    };
     let safe_name: String = identity.name.chars().filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-').collect();
     let path = dir.join(format!("Hopp recovery phrase - {}.txt", safe_name.trim()));
     let words: String = phrase
@@ -401,8 +494,8 @@ fn save_recovery_file(app: AppHandle, state: State<'_, AppState>, phrase: String
     let text = format!(
         "HOPP RECOVERY PHRASE\r\n\r\nAccount: {}\r\nHopp ID: {}\r\n\r\n{}\r\n\
          These 24 words ARE your account. With them anyone can log in as you.\r\n\
-         Keep this file somewhere safe and private (a USB stick, a password manager,\r\n\
-         or printed out). Never send it to anyone.\r\n",
+         Keep this file somewhere safe and private (your OneDrive, a password manager,\r\n\
+         or printed out). Never send it to anyone else.\r\n",
         identity.name,
         &identity.public_key()[..16],
         words.replace('\n', "\r\n"),
@@ -441,9 +534,10 @@ fn require_hello(state: &AppState) -> CmdResult {
 async fn set_password_with_hello(state: State<'_, AppState>, new_password: String) -> CmdResult {
     require_hello(&state)?;
     let identity = logged_in_identity(&state)?;
-    let backed_up = unlock_stored(&state)?.backed_up;
+    let old = unlock_stored(&state)?;
     let mut stored = blocking(move || identity.encrypt(&new_password)).await?;
-    stored.backed_up = backed_up;
+    stored.backed_up = old.backed_up;
+    stored.backup_email = old.backup_email;
     write_stored(&state, &stored)
 }
 
@@ -456,9 +550,11 @@ async fn set_password_with_phrase(state: State<'_, AppState>, phrase: String, ne
         return Err("That recovery phrase belongs to a different Hopp ID.".into());
     }
     let name = identity.name.clone();
+    let backup_email = read_stored(&state)?.and_then(|s| s.backup_email);
     let (_, mut stored) = blocking(move || Identity::restore(&name, &phrase, &new_password)).await?;
     // Typing the whole phrase proves it's saved.
     stored.backed_up = true;
+    stored.backup_email = backup_email;
     write_stored(&state, &stored)
 }
 
@@ -2153,6 +2249,10 @@ fn main() {
             move_voice,
             server_mute,
             screen_signal,
+            cloud_backup_status,
+            cloud_backup_save,
+            cloud_backup_remove,
+            cloud_backup_login,
             pin_message,
             get_pins,
             start_call,
