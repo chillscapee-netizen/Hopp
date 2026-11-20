@@ -4825,3 +4825,6 @@ html.rail-large .folder-mini { font-size: 12px; }
 .folder-closed > .folder-mini:nth-child(4) { border-radius: 14% 14% 52% 14%; }
 html.rail-small .folder-closed { padding: 3px; gap: 2px; border-radius: 13px !important; }
 html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 19px !important; }
+
+/* "up to 1:00" while recording: readable in every theme. */
+.recorder-max { color: var(--muted); }
