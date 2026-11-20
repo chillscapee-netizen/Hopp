@@ -3326,7 +3326,7 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .page-head h2 { margin: 0 !important; }
 .user-card-bio { margin: 10px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 /* A long channel name stays on one line in the header. */
-.head-title { min-width: 0; flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head-title { min-width: 0; flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The topic gives way first: the channel's name matters more. */
 .head-topic { flex: 1 1 0; min-width: 0; }
 .welcome h1 { overflow-wrap: anywhere; }
@@ -4355,3 +4355,14 @@ html.logo-tint .splash-bunny, html.logo-tint .auth-logo { background: var(--logo
 .nav-arrow:disabled { opacity: 0.28; cursor: default; }
 .nav-arrow .i { width: 19px; height: 19px; stroke-width: 2.4; }
 body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
+
+/* What a role may do: quick starts, then the switches in groups. */
+.role-perms { display: grid; gap: 14px; }
+.role-perms[hidden] { display: none; }
+.role-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.role-preset { padding: 7px 14px; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 999px; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.role-preset:hover:not(:disabled) { background: var(--hover); }
+.role-preset.active { border-color: var(--text); background: var(--layer-2); color: var(--text); }
+.role-preset:disabled { opacity: 0.45; cursor: default; }
+.role-perms .setting-row.locked { cursor: default; }
+.role-perms .setting-row.locked .row-title { color: var(--text-2); }

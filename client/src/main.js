@@ -434,6 +434,31 @@ function rankOf(u) {
 function can(what) {
   return rankOf(me()) >= { moderate: 1, manage: 2, own: 3 }[what];
 }
+
+/** The Moderator of before (a level, on servers from before switches), as switches. */
+var MOD_SWITCHES = ["manage_nicknames", "kick", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members"];
+/** What a role may do: its switches, or its level's on an older server. */
+function rolePerms(r) {
+  if (Array.isArray(r?.perms)) return r.perms;
+  return r?.level === "admin" ? ["administrator"] : r?.level === "mod" ? MOD_SWITCHES : [];
+}
+/** What someone may do here. The server says it on their name card; older ones only by level. */
+function permsOf(u) {
+  if (!u) return new Set();
+  if (u.owner || u.role === "owner") return new Set(["administrator"]);
+  if (state.roster?.features?.includes("perms")) return new Set(u.perms ?? []);
+  return new Set(u.role === "admin" ? ["administrator"] : u.role === "mod" ? MOD_SWITCHES : []);
+}
+/** Whether I may do this here (Administrator may do everything). */
+function may(p) {
+  const mine = permsOf(me());
+  return mine.has("administrator") || mine.has(p);
+}
+/** Anything in the server's settings is mine to do. */
+var SETTINGS_SWITCHES = ["manage_server", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "ban", "kick", "timeout", "manage_nicknames"];
+function maySettings() {
+  return SETTINGS_SWITCHES.some(may);
+}
 /** I may act on someone only when my role is above theirs. */
 function outranks(u) {
   return !!u && u.session_id !== state.roster?.me && rankOf(me()) > rankOf(u);
@@ -1795,7 +1820,7 @@ function openServerMenu(server, x, y) {
   const active = server.id === state.activeId && !!state.roster;
   const folder = prefs.rail.find((item) => item.folder && item.ids.includes(server.id));
   // Running it: only known for the server we're in.
-  const manage = active && can("manage");
+  const manage = active && maySettings();
   openMenu(
     [
       { label: "Mark as read", icon: "check", disabled: !serverHasUnread(server.address), action: () => markServerRead(server.address) },
@@ -1811,7 +1836,7 @@ function openServerMenu(server, x, y) {
         ? [
             "sep",
             { label: "Server settings", icon: "settings", action: () => onServer(server, openServerSettings) },
-            { label: "Create channel", icon: "plus", action: () => onServer(server, () => openChannelDialog("text")) },
+            ...(may("manage_channels") ? [{ label: "Create channel", icon: "plus", action: () => onServer(server, () => openChannelDialog("text")) }] : []),
           ]
         : []),
       ...(active && nicknamesOn() ? [{ label: "Change nickname", icon: "edit", action: () => changeNickname(meUser()) }] : []),
@@ -2482,9 +2507,10 @@ function personRow(m, i, status) {
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     const items = [{ label: "Profile", icon: "user", action: () => openUserCard(person, row) }];
-    if (can("moderate") && rankOf(me()) > rankOf(person)) {
-      items.push("sep", { label: "Kick " + m.name, icon: "logout", danger: true, action: () => removeUser(false, person) });
-      if (can("manage")) items.push({ label: "Ban " + m.name, icon: "ban", danger: true, action: () => removeUser(true, person) });
+    if ((may("kick") || may("ban")) && rankOf(me()) > rankOf(person)) {
+      items.push("sep");
+      if (may("kick")) items.push({ label: "Kick " + m.name, icon: "logout", danger: true, action: () => removeUser(false, person) });
+      if (may("ban")) items.push({ label: "Ban " + m.name, icon: "ban", danger: true, action: () => removeUser(true, person) });
     }
     openMenu(items, e.clientX, e.clientY);
   });
@@ -2712,7 +2738,7 @@ function renderSidebar() {
   const r = state.roster;
   head.disabled = false;
   $("sidebar-title").textContent = activeServer()?.label ?? r.server_name;
-  const owner = can("manage");
+  const owner = may("manage_channels");
   const items = [];
 
   const address = activeServer()?.address;
@@ -2854,10 +2880,10 @@ function openChannelMenu(ch, e) {
         ? [{ label: "Mark as read", icon: "check", action: () => markChannelRead(address, ch.id) }]
         : []),
       ...(ch.kind === "text" ? [{ label: muted ? "Unmute channel" : "Mute channel", icon: "bell", action: () => setChannelMuted(address, ch.id, !muted) }] : []),
-      ...(ch.parent != null && (can("moderate") || ch.creator === state.account?.publicKey)
+      ...(ch.parent != null && (may("manage_messages") || ch.creator === state.account?.publicKey)
         ? ["sep", { label: "Delete thread", icon: "trash", danger: true, action: () => deleteChannel(ch) }]
         : []),
-      ...(can("manage") && ch.parent == null
+      ...(may("manage_channels") && ch.parent == null
         ? [
             ...(ch.kind === "text" ? ["sep"] : []),
             { label: "Edit channel", icon: "edit", action: () => openChannelEdit(ch) },
@@ -3472,7 +3498,7 @@ function linkNode(href) {
 
 function canDelete(m) {
   if (state.account && m.author_key === state.account.publicKey) return true;
-  if (!can("moderate")) return false;
+  if (!may("manage_messages")) return false;
   const author = state.roster?.users.find((u) => u.public_key === m.author_key);
   return isOwner() || rankOf(author) < rankOf(me());
 }
@@ -3557,7 +3583,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       el("p", "", here?.topic || (inVoiceChannel ? "The chat for this voice channel: links, clips and anything you'd rather type." : `This is the start of the #${name} channel.`)),
     );
   }
-  if (msgs.length === 0 && can("manage")) {
+  if (msgs.length === 0 && may("create_invites")) {
     const actions = el("div", "welcome-actions");
     const invite = el("button", "btn primary sm", "Invite people");
     invite.addEventListener("click", openInvite);
@@ -4196,7 +4222,7 @@ async function openInvite() {
   const server = activeServer();
   $("invite-server").textContent = server.label;
   $("invite-icon-slot").replaceChildren(serverIcon("invite-icon server-tint", server.label, server.icon));
-  const owner = can("manage");
+  const owner = may("create_invites");
   $("invite-owner").hidden = !owner;
   $("invite-member").hidden = owner;
   $("invite-options").hidden = true;
@@ -4251,19 +4277,24 @@ function openServerSettings() {
   // An emoji half added in another server's settings doesn't carry over.
   emojiDraft = null;
   $("emoji-new").hidden = true;
-  showServerTab("overview");
   $("invite-list").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("ban-list").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("server-members").replaceChildren(el("li", "admin-empty", "Loading…"));
   $("member-search").value = "";
-  document.querySelector('[data-stab="members"]').hidden = !cloudLike();
-  document.querySelector('[data-stab="audit"]').hidden = !modTools() || !can("manage");
-  document.querySelector('[data-stab="roles"]').hidden = !rolesOn() || !can("manage");
-  document.querySelector('[data-stab="emojis"]').hidden = !state.roster?.features?.includes("emojis") || !can("manage");
-  document.querySelector('[data-stab="safety"]').hidden = !state.roster?.features?.includes("automod") || !can("manage");
-  $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden;
+  // Each part for whoever may do what's in it.
+  const tab = (name, shown) => (document.querySelector(`[data-stab="${name}"]`).hidden = !shown);
+  tab("overview", may("manage_server"));
+  tab("roles", rolesOn() && may("manage_roles"));
+  tab("emojis", !!state.roster?.features?.includes("emojis") && may("manage_emojis"));
+  tab("members", cloudLike() && maySettings());
+  tab("invites", may("create_invites"));
+  tab("bans", may("ban"));
+  tab("safety", !!state.roster?.features?.includes("automod") && may("manage_server"));
+  tab("audit", modTools() && may("view_audit_log"));
+  $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden && document.querySelector('[data-stab="safety"]').hidden;
+  showServerTab(document.querySelector("[data-stab]:not([hidden])")?.dataset.stab ?? "overview");
   openModal($("server-settings"));
-  call("get_server_settings");
+  if (may("manage_server")) call("get_server_settings");
 }
 function showServerTab(tab) {
   if (tab === "roles") renderRolesTab();
@@ -8753,7 +8784,7 @@ function openChannelEdit(ch) {
   $("channel-edit-afk").value = String(ch.afk_after ?? 0);
   $("channel-edit-slow-row").hidden = !modTools();
   const rolesHere = rolesOn() ? state.roster.roles ?? [] : [];
-  $("channel-edit-private").hidden = !rolesOn() || !can("manage");
+  $("channel-edit-private").hidden = !rolesOn() || !may("manage_channels");
   $("channel-edit-private-on").checked = !!ch.private_roles?.length;
   $("channel-edit-private-roles").hidden = !ch.private_roles?.length;
   $("channel-edit-private-roles").replaceChildren(...(rolesHere.length ? rolesHere.map((r) => {
@@ -9122,7 +9153,7 @@ function openMessageMenu(m, e) {
         ? [threadFrom(m) ? { label: "Open thread", icon: "message", action: () => openTextChannel(threadFrom(m).id) } : { label: "Start a thread", icon: "message", action: () => openThreadDialog(m) }]
         : []),
       ...(mine && !PICTURE.test(m.text) && !FORWARD.test(m.text) && !POLL.test(m.text) && !EVENT_MESSAGE.test(m.text) && !VOICE_MESSAGE.test(m.text) && !THEME_CODE.test(m.text) ? [{ label: "Edit message", icon: "edit", action: () => startEdit(m) }] : []),
-      ...(can("moderate") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
+      ...(may("manage_messages") ? [{ label: m.pinned ? "Unpin message" : "Pin message", icon: "pin", action: () => call("pin_message", { channel: m.channel, id: m.id, on: !m.pinned }) }] : []),
       { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.target.closest(".msg"), (emoji) => react(m, emoji, true)) },
       "sep",
       { label: "Mark unread", icon: "bell", action: () => markUnreadFrom(m) },
@@ -10069,7 +10100,7 @@ listen("pins", (e) => {
     });
     list.append(item);
   }
-  if (!messages.length) list.append(el("div", "pins-empty", can("moderate") ? "Nothing pinned yet. Right-click a message to pin it." : "Nothing pinned in this channel yet."));
+  if (!messages.length) list.append(el("div", "pins-empty", may("manage_messages") ? "Nothing pinned yet. Right-click a message to pin it." : "Nothing pinned in this channel yet."));
   pop.replaceChildren(el("div", "pins-title", `Pinned in #${channelName(ch)}`), list);
 });
 
@@ -10410,7 +10441,7 @@ function eventView(id) {
     acts.append(join);
   }
   acts.append(answer("yes", "Going"), answer("maybe", "Maybe"));
-  if (ev.creator === me || can("moderate")) {
+  if (ev.creator === me || may("manage_events")) {
     const cancel = el("button", "event-cancel", "Cancel event");
     cancel.type = "button";
     cancel.addEventListener("click", async () => {
@@ -11041,7 +11072,7 @@ function rolesICanGive(target) {
   if (!cloudLike() || !target || roleOf(target) === "owner") return [];
   if (target.public_key === state.account?.publicKey) return [];
   if (isOwner()) return [null, "mod", "admin"];
-  if (can("manage") && rankOf(target) < ROLE_RANK.admin) return [null, "mod"];
+  if (may("manage_roles") && rankOf(target) < ROLE_RANK.admin) return [null, "mod"];
   return [];
 }
 
@@ -11103,7 +11134,7 @@ function memberRolesButton(m) {
   const givable = all.filter((r) => r.level !== "admin" || can("own"));
   const mine = m.public_key === state.account?.publicKey;
   const above = !can("own") && !mine && (ROLE_RANK[m.role] ?? 0) >= rankOf(me());
-  if (!can("manage") || above || !givable.length) return el("span", "role-label member-roles", label);
+  if (!may("manage_roles") || above || !givable.length) return el("span", "role-label member-roles", label);
   const b = el("button", "row-select member-roles", "");
   b.type = "button";
   b.append(el("span", "ellipsis", label));
@@ -11162,7 +11193,7 @@ function renderMemberList() {
       } else {
         actions.append(el("span", `role-label ${m.role ?? "member"}`, m.role ? ROLE_LABEL[m.role] : "Member"));
       }
-      if (can("moderate") && m.public_key !== state.account?.publicKey && rankOf(me()) > (ROLE_RANK[m.role] ?? 0)) {
+      if (may("kick") && m.public_key !== state.account?.publicKey && rankOf(me()) > (ROLE_RANK[m.role] ?? 0)) {
         const kick = el("button", "icon-btn", "");
         kick.type = "button";
         kick.setAttribute("aria-label", `Kick ${m.name}`);
@@ -12467,7 +12498,7 @@ function openUserMenu(u, row, e) {
   const friend = key ? state.friends?.get(key) : null;
   const vol = userVolume(u) ?? 100;
   const items = [{ label: "Profile", icon: "user", action: () => openUserCard(u, row) }];
-  if (nicknamesOn() && (isSelf || (can("moderate") && outranks(u))) && key) items.push({ label: "Change nickname", icon: "edit", action: () => changeNickname(u) });
+  if (nicknamesOn() && (isSelf || (may("manage_nicknames") && outranks(u))) && key) items.push({ label: "Change nickname", icon: "edit", action: () => changeNickname(u) });
   // Your own roles, from your own menu.
   if (isSelf) {
     const mine = roleItems(u);
@@ -12502,15 +12533,15 @@ function openUserMenu(u, row, e) {
       } });
     }
     // What a moderator can do, folded into three short groups that open to the side.
-    const mod = can("moderate") && outranks(u);
+    const mod = outranks(u);
     const hard = [];
     if (mod) {
-      hard.push(...timeoutItems(u));
-      hard.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
+      if (may("timeout")) hard.push(...timeoutItems(u));
+      if (may("kick")) hard.push({ label: `Kick ${u.name}`, icon: "logout", danger: true, action: () => {
         cardUser = u;
         removeUser(false);
       } });
-      if (can("manage")) hard.push({ label: `Ban ${u.name}`, icon: "ban", danger: true, action: () => {
+      if (may("ban")) hard.push({ label: `Ban ${u.name}`, icon: "ban", danger: true, action: () => {
         cardUser = u;
         removeUser(true);
       } });
@@ -15585,7 +15616,7 @@ $("voice-chat-btn").addEventListener("click", () => {
 // menu, or by dragging them onto it), and mute or deafen them for everyone.
 
 function voiceMod() {
-  return !!state.roster?.features?.includes("voice-mod") && can("moderate");
+  return !!state.roster?.features?.includes("voice-mod") && (may("mute_members") || may("move_members"));
 }
 
 /** The voice part of a moderator's menu on someone in voice. */
@@ -16167,7 +16198,7 @@ function composerHint(view) {
   if (until) return "You're timed out until " + clock(until);
   const where = isVoiceChannel(view) || channel(view)?.parent != null ? "Message " + channelName(view) : "Message #" + channelName(view);
   const slow = channel(view)?.slowmode;
-  return slow && !can("moderate") ? where + " · slowmode " + slowText(slow) : where;
+  return slow && !may("bypass_slowmode") ? where + " · slowmode " + slowText(slow) : where;
 }
 
 function slowText(seconds) {
@@ -16181,7 +16212,7 @@ function noteSent(view) {
 /** Seconds left before slowmode lets you write here again. */
 function slowmodeWait(view) {
   const slow = channel(view)?.slowmode;
-  if (!slow || can("moderate")) return 0;
+  if (!slow || may("bypass_slowmode")) return 0;
   return Math.max(0, Math.ceil((lastSentAt.get(view) ?? 0) / 1000 + slow - Date.now() / 1000));
 }
 
@@ -16337,8 +16368,9 @@ function readableColor(hex) {
 /** "Roles" in someone's menu, for admins: tick to give, untick to take. */
 function roleItems(u) {
   // Admin-level roles are the owner's to give: others don't see them here.
-  const roles = (state.roster?.roles ?? []).filter((r) => r.level !== "admin" || can("own"));
-  if (!rolesOn() || !can("manage") || !roles.length || !keyOf(u)) return [];
+  // Only roles that may do no more than I may (Administrator is the owner's to give).
+  const roles = (state.roster?.roles ?? []).filter((r) => rolePerms(r).every((p) => may(p)) && (!rolePerms(r).includes("administrator") || can("own")));
+  if (!rolesOn() || !may("manage_roles") || !roles.length || !keyOf(u)) return [];
   return [{
     label: "Roles",
     submenu: roles.map((r) => ({
@@ -16432,6 +16464,90 @@ function renderRoleLevels() {
   }));
 }
 
+// ---------- what a role may do: switches, as in Discord ----------
+
+var PERM_GROUPS = [
+  ["Server", [
+    ["manage_server", "Manage server", "Its name and picture, pictures on or off, AutoMod and paused invites."],
+    ["manage_channels", "Manage channels", "Create, edit, reorder and delete channels, and make them private."],
+    ["manage_roles", "Manage roles", "Make and edit roles and give them to people, never with more than they may do themselves."],
+    ["manage_emojis", "Manage emojis", "Add and remove the server's own emojis."],
+    ["view_audit_log", "View audit log", "See who did what in the server."],
+  ]],
+  ["Members", [
+    ["create_invites", "Create invites", "Make and remove invite links."],
+    ["manage_nicknames", "Change nicknames", "Change other people's nicknames in this server."],
+    ["kick", "Kick members", "Remove someone; they can come back with an invite."],
+    ["ban", "Ban members", "Remove someone for good, and lift bans."],
+    ["timeout", "Time out members", "Stop someone writing and talking for a while."],
+  ]],
+  ["Text", [
+    ["manage_messages", "Manage messages", "Delete and pin other people's messages; AutoMod doesn't hold them back."],
+    ["mention_everyone", "Mention @everyone, @here and all roles", "Everyone gets notified."],
+    ["bypass_slowmode", "Skip slowmode", "Write as often as they like in slow channels."],
+    ["manage_events", "Manage events", "Cancel events others planned."],
+  ]],
+  ["Voice", [
+    ["mute_members", "Mute members", "Mute and deafen people in voice, for everyone."],
+    ["move_members", "Move members", "Move people to another voice channel, or disconnect them."],
+  ]],
+  ["Advanced", [
+    ["administrator", "Administrator", "Everything above, and every private channel. Only the owner can give it."],
+  ]],
+];
+var PERM_ORDER = PERM_GROUPS.flatMap(([, rows]) => rows.map(([p]) => p));
+var rolePermsPick = new Set();
+
+function permsOn() {
+  return !!state.roster?.features?.includes("perms");
+}
+
+/** The switches, grouped, with quick starts on top. */
+function renderRolePerms() {
+  const box = $("role-perms");
+  const admin = rolePermsPick.has("administrator");
+  const presets = el("div", "role-presets");
+  for (const [label, list] of [["Member", []], ["Moderator", MOD_SWITCHES], ["Admin", ["administrator"]]]) {
+    const b = el("button", "role-preset", label);
+    b.type = "button";
+    b.disabled = !list.every((p) => may(p)) || (list.includes("administrator") && !can("own"));
+    b.classList.toggle("active", list.length === rolePermsPick.size && list.every((p) => rolePermsPick.has(p)));
+    b.addEventListener("click", () => {
+      rolePermsPick = new Set(list);
+      renderRolePerms();
+    });
+    presets.append(b);
+  }
+  const groups = PERM_GROUPS.map(([title, rows]) => {
+    const g = el("div", "role-section role-switches");
+    g.append(el("span", "role-section-title", title));
+    for (const [p, name, sub] of rows) {
+      const row = el("label", "row setting-row");
+      const words = el("span", "row-label");
+      // What you may not do yourself, you can't give (or take away); Administrator is the owner's.
+      const locked = p === "administrator" ? !can("own") : !may(p);
+      const included = admin && p !== "administrator";
+      words.append(el("span", "row-title", name), el("span", "row-sub", included ? "Included in Administrator." : locked ? (p === "administrator" ? "Only the owner can give this." : "You can't give what you can't do yourself.") : sub));
+      const sw = el("input");
+      sw.type = "checkbox";
+      sw.className = "switch";
+      sw.dataset.perm = p;
+      sw.checked = included || rolePermsPick.has(p);
+      sw.disabled = locked || included;
+      sw.addEventListener("change", () => {
+        if (sw.checked) rolePermsPick.add(p);
+        else rolePermsPick.delete(p);
+        renderRolePerms();
+      });
+      row.classList.toggle("locked", sw.disabled);
+      row.append(words, sw);
+      g.append(row);
+    }
+    return g;
+  });
+  box.replaceChildren(presets, ...groups);
+}
+
 /** How the role looks: a name in its colour, as in the chat, and its @. */
 function renderRolePreview() {
   const r = state.roster.roles.find((x) => x.id === editingRole);
@@ -16464,7 +16580,12 @@ function openRole(r, keepEdits) {
   $("role-level").querySelector('option[value="admin"]').disabled = !can("own");
   roleColorPick = r.color;
   renderRoleColors();
-  renderRoleLevels();
+  // Switches where the server has them; the three levels on older servers.
+  $("role-levels").hidden = permsOn();
+  $("role-perms").hidden = !permsOn();
+  rolePermsPick = new Set(rolePerms(r));
+  if (permsOn()) renderRolePerms();
+  else renderRoleLevels();
   renderRolePreview();
 }
 
@@ -16505,7 +16626,10 @@ $("role-new").addEventListener("click", () => call("create_role", { name: "new r
 $("role-editor").addEventListener("submit", (e) => {
   e.preventDefault();
   if (editingRole === null) return;
-  call("update_role", { id: editingRole, name: $("role-name").value.trim() || "role", color: roleColorPick, hoist: $("role-hoist").checked, level: $("role-level").value || null, mentionable: $("role-mentionable").checked });
+  const perms = permsOn() ? PERM_ORDER.filter((p) => rolePermsPick.has(p)) : null;
+  // The nearest level too, for whoever runs an older app.
+  const level = perms ? (perms.includes("administrator") ? "admin" : perms.some((p) => MOD_SWITCHES.includes(p) || p === "ban") ? "mod" : null) : $("role-level").value || null;
+  call("update_role", { id: editingRole, name: $("role-name").value.trim() || "role", color: roleColorPick, hoist: $("role-hoist").checked, level, mentionable: $("role-mentionable").checked, perms });
 });
 $("role-delete").addEventListener("click", async () => {
   const r = state.roster.roles.find((x) => x.id === editingRole);
@@ -16564,7 +16688,7 @@ function setCrowdQuiet(s, on) {
 function crowdCandidates(q) {
   if (!pingsOn()) return [];
   const out = [];
-  const mod = can("moderate");
+  const mod = may("mention_everyone");
   if (mod) {
     for (const [name, sub] of [["everyone", "Everyone who can see this channel"], ["here", "Everyone online right now"]]) {
       if (name.startsWith(q)) out.push({ key: name, name, crowd: true, username: sub });
