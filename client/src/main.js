@@ -10519,7 +10519,11 @@ $("poll-form").addEventListener("submit", (e) => {
   if (answers.length < 2) return fail("A poll needs at least two answers.");
   if (state.view === null || !pollsHere()) return fail("Polls aren't available here.");
   const end = Date.now() + Number($("poll-duration").value) * 3_600_000;
-  sendChat(state.view, "hopp-poll:" + base64url(JSON.stringify({ q, a: answers, end, multi: $("poll-multi").checked })), null);
+  const text = "hopp-poll:" + base64url(JSON.stringify({ q, a: answers, end, multi: $("poll-multi").checked }));
+  // A poll travels as one message, encoded; a long one (å, ä, ö and emojis take more room) can
+  // pass a message's 2,000 characters. Said here, with the poll still open to shorten.
+  if (text.length > 2000) return fail("This poll is too long to send. Shorten the question or some answers.");
+  sendChat(state.view, text, null);
   $("poll-dialog").close();
 });
 
@@ -16199,6 +16203,11 @@ listen("automod", (e) => {
 
 $("safety-save").addEventListener("click", async () => {
   const words = $("safety-words").value.split(/[\n,]+/).map((w) => w.trim()).filter(Boolean);
+  // The server keeps up to 200, each up to 40 characters; past that a word would quietly not be
+  // blocked, so say so instead of "Saved".
+  const long = words.find((w) => [...w].length > 40);
+  if (long) return toast(`Each word or phrase can be up to 40 characters. Shorten "${long.slice(0, 50)}".`, true);
+  if (new Set(words.map((w) => w.toLowerCase())).size > 200) return toast("A server can block up to 200 words and phrases.", true);
   try {
     await invoke("set_automod", { words, mentionLimit: Number($("safety-mentions").value), blockRepeats: $("safety-repeats").checked, invitesPaused: $("safety-paused").checked });
   } catch (err) {
