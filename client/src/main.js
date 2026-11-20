@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "savedThemes", "chatSize", "chatSpace", "chatCompact", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "savedThemes", "chatSize", "chatSpace", "chatCompact", "railSize", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -7007,6 +7007,8 @@ function applySyncedSettings(remote) {
     prefs.chatSpace = Number(load("chatSpace", "18"));
     prefs.compact = load("chatCompact", "0") === "1";
     $("chat-compact").checked = prefs.compact;
+    prefs.railSize = load("railSize", "normal");
+    $("rail-size").value = prefs.railSize;
     prefs.appFont = load("appFont", "inter");
     $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
     prefs.savedThemes = loadSavedThemes();
@@ -14174,6 +14176,8 @@ function applyTheme() {
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
+  document.documentElement.classList.toggle("rail-small", prefs.railSize === "small");
+  document.documentElement.classList.toggle("rail-large", prefs.railSize === "large");
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
   document.documentElement.classList.toggle("wallpaper", !!(prefs.theme !== "mid" && prefs.theme && specTokens(themeSpec())["app-bg"]));
   // Hopp's logo takes the theme's colours (Hero: red into blue), bright and clear.
@@ -14670,6 +14674,14 @@ $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
 $("app-font").addEventListener("change", (e) => {
   prefs.appFont = e.target.value;
   save("appFont", prefs.appFont);
+  applyTheme();
+});
+/** How big the server list on the left is: small, normal or large. */
+prefs.railSize = load("railSize", "normal");
+$("rail-size").value = prefs.railSize;
+$("rail-size").addEventListener("change", (e) => {
+  prefs.railSize = e.target.value;
+  save("railSize", prefs.railSize);
   applyTheme();
 });
 $("chat-compact").addEventListener("change", (e) => {
@@ -15479,6 +15491,41 @@ function askText({ title, label, value = "", options = [], hint = "", ok = "Save
     dialog.oncancel = () => done(null);
   });
 }
+
+// The member list's width: drag its left edge; a double-click puts it back.
+var MEMBERS_MIN = 200;
+var MEMBERS_MAX = 380;
+var MEMBERS_DEFAULT = 248;
+function setMembersWidth(w, keep = true) {
+  const width = Math.round(Math.min(MEMBERS_MAX, Math.max(MEMBERS_MIN, w)));
+  document.documentElement.style.setProperty("--members-w", width + "px");
+  if (keep) save("membersWidth", String(width));
+  return width;
+}
+(() => {
+  const list = $("members");
+  const grip = el("div", "members-grip");
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-label", "Drag to change the width");
+  list.append(grip);
+  setMembersWidth(Number(load("membersWidth", String(MEMBERS_DEFAULT))) || MEMBERS_DEFAULT, false);
+  grip.addEventListener("dblclick", () => setMembersWidth(MEMBERS_DEFAULT));
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const right = list.getBoundingClientRect().right;
+    document.body.classList.add("resizing");
+    const move = (ev) => setMembersWidth(right - ev.clientX, false);
+    const up = (ev) => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      document.body.classList.remove("resizing");
+      setMembersWidth(right - ev.clientX);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+})();
 
 // The sidebar's width: drag its edge; a double-click puts it back.
 var SIDEBAR_MIN = 200;
