@@ -38,31 +38,6 @@
     await wait(30);
     check("no selection: no bar", bar.hidden);
     box.value = "";
-
-    // The overview makes a #welcome channel, only staff write in.
-    const r = structuredClone(state.roster);
-    r.features = [...(r.features ?? []), "rules", "announce"];
-    emit("roster", r);
-    await wait(60);
-    const created = [];
-    const updated = [];
-    const saved = [];
-    commands.create_channel = (x) => created.push(x);
-    commands.update_channel = (x) => updated.push(x);
-    commands.set_rules = (x) => saved.push(x);
-    openServerSettings();
-    await wait(60);
-    $("welcome-channel").value = "new";
-    $("rules-save").click();
-    await wait(30);
-    check("a #welcome channel is made", created.some((c) => c.name === "welcome"));
-    const n = structuredClone(state.roster);
-    n.channels.push({ id: 60, name: "welcome", kind: "text" });
-    emit("roster", n);
-    await wait(80);
-    check("only staff write in it", updated.some((u) => u.channel === 60 && u.announce === true));
-    check("and welcomes go there", saved.some((x) => x.welcomeChannel === 60), JSON.stringify(saved));
-    $("server-settings").close();
   } catch (e) {
     check("no crash: " + e.message + " " + String(e.stack).slice(0, 200), false);
   }

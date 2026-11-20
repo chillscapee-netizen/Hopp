@@ -636,24 +636,14 @@
         <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
         <h2>Create channel</h2>
         <p id="channel-dialog-sub" class="modal-sub"></p>
-        <span class="field-label">Channel type</span>
         <div class="type-options">
-          <button type="button" class="type-option" data-kind="text">
-            <svg class="i"><use href="#i-hash"/></svg>
-            <span class="option-text"><strong>Text</strong><small>Send messages everyone on the server can read</small></span>
-            <span class="radio"></span>
-          </button>
-          <button type="button" class="type-option" data-kind="voice">
-            <svg class="i"><use href="#i-volume"/></svg>
-            <span class="option-text"><strong>Voice</strong><small>Talk with low latency and noise suppression</small></span>
-            <span class="radio"></span>
-          </button>
-          <button type="button" class="type-option" data-kind="announce" hidden>
-            <svg class="i"><use href="#i-megaphone"/></svg>
-            <span class="option-text"><strong>Announcement</strong><small>News from moderators and admins; everyone else reads</small></span>
-            <span class="radio"></span>
-          </button>
+          <button type="button" class="type-option" data-kind="text"><svg class="i"><use href="#i-hash"/></svg><span>Text</span></button>
+          <button type="button" class="type-option" data-kind="voice"><svg class="i"><use href="#i-volume"/></svg><span>Voice</span></button>
+          <button type="button" class="type-option" data-kind="announce"><svg class="i"><use href="#i-megaphone"/></svg><span>Announcement</span></button>
+          <button type="button" class="type-option" data-kind="rules"><svg class="i"><use href="#i-book"/></svg><span>Rules</span></button>
+          <button type="button" class="type-option" data-kind="welcome"><svg class="i"><use href="#i-user-plus"/></svg><span>Welcome</span></button>
         </div>
+        <p id="channel-type-about" class="channel-type-about"></p>
         <label class="field">
           <span class="field-label">Channel name</span>
           <span class="input-icon">
@@ -1026,24 +1016,6 @@
             </span>
             <input id="overview-pictures" type="checkbox" class="switch">
           </label>
-          <div id="rules-settings" class="rules-settings" hidden>
-            <h3 class="rules-settings-title">Rules and welcomes</h3>
-            <div class="field">
-              <span class="field-label">Rules</span>
-              <ol id="rules-edit" class="rules-edit"></ol>
-              <button id="rules-add" type="button" class="btn sm rules-add"><svg class="i"><use href="#i-plus"/></svg>Add a rule</button>
-              <span class="hint">New members read these and agree before they can write, react or join voice. Changing them asks everyone again.</span>
-            </div>
-            <label class="field">
-              <span class="field-label">Show the rules in a channel</span>
-              <select id="rules-channel-pick"></select>
-            </label>
-            <label class="field">
-              <span class="field-label">Welcome new members in</span>
-              <select id="welcome-channel"></select>
-            </label>
-            <div class="rules-settings-foot"><span id="rules-saved" class="saved-note" hidden>Saved</span><button id="rules-save" type="button" class="btn primary sm">Save rules</button></div>
-          </div>
           <p id="overview-error" class="error" hidden></p>
           <div id="overview-save-bar" class="save-bar" hidden>
             <span>Careful, you have unsaved changes!</span>

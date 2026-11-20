@@ -4478,3 +4478,18 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .format-U { text-decoration: underline; }
 .format-S { text-decoration: line-through; }
 .format-sep { width: 1px; height: 18px; margin: 0 3px; background: var(--border); }
+
+/* Create channel: five kinds as tiles, and what the picked one is for. */
+#channel-dialog .type-options { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 4px 0 10px; }
+#channel-dialog .type-option { display: grid; justify-items: center; gap: 8px; padding: 14px 6px 12px; text-align: center; font-size: 13px; font-weight: 600; }
+#channel-dialog .type-option[hidden] { display: none; }
+#channel-dialog .type-option .i { width: 22px; height: 22px; }
+.channel-type-about { min-height: 20px; margin: 0 0 18px; color: var(--muted); font-size: 13.5px; }
+/* #rules written in place, and an empty #welcome's hand. */
+.rules-card-head .rules-edit-btn { margin-left: auto; }
+.rules-empty { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--muted); font-size: 14px; }
+.rules-card-buttons { display: flex; align-items: center; gap: 8px; }
+.welcome-helper { display: flex; align-items: center; gap: 14px; max-width: 720px; margin: 16px; padding: 16px 18px; border-radius: 14px; border: 1px dashed color-mix(in srgb, var(--text) 22%, transparent); list-style: none; }
+.welcome-helper .rules-card-words { flex: 1; }
+.welcome-helper strong { font-size: 15px; }
+#channel-dialog .type-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }

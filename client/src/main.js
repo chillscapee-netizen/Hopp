@@ -2748,7 +2748,7 @@ function renderSidebar() {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
     row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
-    row.append(icon(ch.private_roles?.length ? "lock" : ch.id === state.rules?.rules_channel ? "book" : ch.announce ? "megaphone" : "hash"), el("span", "ellipsis", ch.name));
+    row.append(icon(ch.private_roles?.length ? "lock" : ch.id === state.rules?.rules_channel ? "book" : ch.id === state.rules?.welcome_channel ? "user-plus" : ch.announce ? "megaphone" : "hash"), el("span", "ellipsis", ch.name));
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
@@ -3112,7 +3112,7 @@ function renderChannelView() {
   const rulesHere = view !== null && view === state.rules?.rules_channel;
   $("rules-bar").hidden = !rulesFirst || view === null || rulesHere;
   document.querySelector("#composer .composer-box").hidden = rulesFirst && !rulesHere;
-  const headIcon = isVoiceChannel(view) ? "volume" : channel(view)?.parent != null ? "message" : view === state.rules?.rules_channel ? "book" : channel(view)?.announce ? "megaphone" : "hash";
+  const headIcon = isVoiceChannel(view) ? "volume" : channel(view)?.parent != null ? "message" : view === state.rules?.rules_channel ? "book" : view === state.rules?.welcome_channel ? "user-plus" : channel(view)?.announce ? "megaphone" : "hash";
   $("chat-head-icon").innerHTML = '<use href="#i-' + headIcon + '"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
@@ -3601,8 +3601,10 @@ function renderMessages(keepScrollUnlessAtBottom) {
   }
 
   // The #rules channel opens on the rules themselves, not the usual welcome.
-  const rulesHere = !!state.rules?.rules && state.rules.rules_channel === state.view;
+  const rulesHere = state.rules?.rules_channel != null && state.rules.rules_channel === state.view;
   const items = [state.olderDone.has(state.view) && !hiddenAbove ? (rulesHere ? rulesCard() : welcome) : olderLoader()];
+  // An empty #welcome, for whoever writes there: a hand with the first welcome.
+  if (state.view !== null && state.view === state.rules?.welcome_channel && !msgs.some((m) => m.text !== JOINED) && may("manage_messages")) items.push(welcomeHelper());
   // What's on screen now, by message: a message that hasn't changed keeps its row as it is,
   // without building a new one (a new message or reaction used to rebuild all ~150).
   const shown = new Map();
@@ -4161,11 +4163,25 @@ function afterChannelMade(run) {
 }
 
 let channelKind = "text";
+/** The kinds of channel to make: what each is for, its icon, and a ready name for the special ones. */
+var CHANNEL_KINDS = {
+  text: { icon: "hash", about: "For writing: messages, pictures, links and threads.", placeholder: "new-channel" },
+  voice: { icon: "volume", about: "For talking, with cameras and screen sharing.", placeholder: "New voice channel" },
+  announce: { icon: "megaphone", about: "News from moderators and admins; everyone else reads.", placeholder: "announcements" },
+  rules: { icon: "book", about: "Your server's rules. Write them in the channel; new members agree before they talk.", name: "rules" },
+  welcome: { icon: "user-plus", about: "Says hi when someone new joins. Write a welcome there for newcomers to read.", name: "welcome" },
+};
 function setChannelKind(kind) {
+  const was = CHANNEL_KINDS[channelKind];
   channelKind = kind;
+  const k = CHANNEL_KINDS[kind];
   document.querySelectorAll(".type-option").forEach((b) => b.classList.toggle("active", b.dataset.kind === kind));
-  $("channel-name-icon").replaceChildren(...icon(kind === "text" ? "hash" : kind === "announce" ? "megaphone" : "volume").childNodes);
-  $("channel-name").placeholder = kind === "text" ? "new-channel" : kind === "announce" ? "announcements" : "New voice channel";
+  $("channel-name-icon").replaceChildren(...icon(k.icon).childNodes);
+  $("channel-type-about").textContent = k.about;
+  $("channel-name").placeholder = k.placeholder ?? k.name;
+  // Rules and Welcome come named; another kind clears a name that was only theirs.
+  if (k.name && (!$("channel-name").value || $("channel-name").value === was?.name)) $("channel-name").value = k.name;
+  else if (!k.name && was?.name && $("channel-name").value === was.name) $("channel-name").value = "";
 }
 document.querySelectorAll(".type-option").forEach((b) => b.addEventListener("click", () => setChannelKind(b.dataset.kind)));
 
@@ -4173,7 +4189,12 @@ function openChannelDialog(kind, inCategory) {
   state.newChannelCategory = inCategory ?? null;
   $("channel-dialog-sub").textContent = `in ${activeServer()?.label ?? state.roster.server_name}`;
   $("channel-name").value = "";
-  document.querySelector('.type-option[data-kind="announce"]').hidden = !state.roster?.features?.includes("announce");
+  // Announcement where the server knows it; Rules and Welcome once each, for whoever runs the server.
+  const has = (f) => !!state.roster?.features?.includes(f);
+  const exists = (id) => id != null && state.roster.channels.some((c) => c.id === id);
+  document.querySelector('.type-option[data-kind="announce"]').hidden = !has("announce");
+  document.querySelector('.type-option[data-kind="rules"]').hidden = !has("rules") || !may("manage_server") || exists(state.rules?.rules_channel);
+  document.querySelector('.type-option[data-kind="welcome"]').hidden = !has("rules") || !may("manage_server") || exists(state.rules?.welcome_channel);
   setChannelKind(kind);
   openModal($("channel-dialog"));
   $("channel-name").focus();
@@ -4185,11 +4206,20 @@ $("channel-name").addEventListener("input", (e) => {
 $("channel-form").addEventListener("submit", () => {
   const name = $("channel-name").value.trim();
   if (!name) return;
-  // Made from a category's +, or an announcement channel: set that once the server has made it.
-  const announce = channelKind === "announce";
+  const kind = channelKind;
   const category = state.newChannelCategory;
-  if (category || announce) afterChannelMade((made) => call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: category ?? made.category ?? null, announce: announce || null }));
-  call("create_channel", { name, kind: announce ? "text" : channelKind });
+  // Only staff write in announcement and welcome channels (and #rules, which the server sets).
+  const announce = kind === "announce" || kind === "welcome";
+  afterChannelMade((made) => {
+    if (category || announce) call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: category ?? made.category ?? null, announce: announce || null });
+    const r = state.rules;
+    if (kind === "rules") invoke("set_rules", { rules: r?.rules ?? "", welcomeChannel: r?.welcome_channel ?? null, rulesChannel: made.id }).catch((err) => toast(friendlyError(err), true));
+    if (kind === "welcome") invoke("set_rules", { rules: r?.rules ?? "", welcomeChannel: made.id, rulesChannel: r?.rules_channel ?? null }).catch((err) => toast(friendlyError(err), true));
+    // Straight into it: rules to write, a welcome to say.
+    if (kind === "rules") rulesEditing = true;
+    setTimeout(() => openTextChannel(made.id), 0);
+  });
+  call("create_channel", { name, kind: kind === "voice" ? "voice" : "text" });
 });
 
 // ---------- invites ----------
@@ -4318,7 +4348,6 @@ function openServerSettings() {
   tab("safety", !!state.roster?.features?.includes("automod") && may("manage_server"));
   tab("audit", modTools() && may("view_audit_log"));
   $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden && document.querySelector('[data-stab="safety"]').hidden;
-  renderRulesSettings();
   showServerTab(document.querySelector("[data-stab]:not([hidden])")?.dataset.stab ?? "overview");
   openModal($("server-settings"));
   if (may("manage_server")) call("get_server_settings");
@@ -4345,7 +4374,8 @@ listen("rules", (e) => {
   }
   if (state.rules.accepted && $("rules-dialog").open) $("rules-dialog").close();
   renderChannelView();
-  if ($("server-settings").open) renderRulesSettings();
+  // The #rules and #welcome channels show them: drawn again with what changed.
+  if (online() && state.view !== null) renderMessages(true);
 });
 
 /** A few ways of saying someone arrived; each welcome keeps its own. */
@@ -4387,8 +4417,98 @@ function joinRow(m, day) {
   return line;
 }
 
-/** The rules in their own channel: always the ones people agree to. */
+/** The rules being written in #rules (admins), one per row. */
+var rulesEditing = false;
+var rulesDraft = [];
+var rulesCardNode = null;
+var MAX_RULES = 12;
+
+/** The rules in their own channel: always the ones people agree to; written right here. */
 function rulesCard() {
+  // While writing, the same card stays (so typing isn't lost when messages arrive).
+  if (rulesEditing && rulesCardNode?.classList.contains("editing")) return rulesCardNode;
+  rulesCardNode = rulesEditing ? rulesEditCard() : rulesShowCard();
+  return rulesCardNode;
+}
+
+function rulesEditCard() {
+  if (!rulesDraft.length) rulesDraft = rulesList(state.rules?.rules);
+  if (!rulesDraft.length) rulesDraft = [""];
+  const li = el("li", "rules-card editing");
+  const head = el("div", "rules-card-head");
+  const mark = el("span", "rules-card-mark");
+  mark.append(icon("book"));
+  const words = el("div", "rules-card-words");
+  words.append(el("h2", null, "Write your rules"), el("span", null, "One rule per row. New members read them and agree before they can talk."));
+  head.append(mark, words);
+  const list = el("ol", "rules-edit");
+  const draw = (focus) => {
+    list.replaceChildren(...rulesDraft.map((text, i) => {
+      const row = el("li", "rules-edit-row");
+      const input = el("input");
+      input.maxLength = 160;
+      input.value = text;
+      input.placeholder = ["Be kind to each other.", "No spam or ads.", "Keep it friendly."][i] ?? "Another rule";
+      input.addEventListener("input", () => (rulesDraft[i] = input.value));
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        if (rulesDraft.length < MAX_RULES) {
+          rulesDraft.splice(i + 1, 0, "");
+          draw(i + 1);
+        }
+      });
+      const remove = el("button", "icon-btn rules-remove", "");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove this rule");
+      remove.append(icon("x"));
+      remove.addEventListener("click", () => {
+        rulesDraft.splice(i, 1);
+        if (!rulesDraft.length) rulesDraft = [""];
+        draw();
+      });
+      row.append(el("span", "rules-num", String(i + 1)), input, remove);
+      return row;
+    }));
+    add.hidden = rulesDraft.length >= MAX_RULES;
+    if (focus !== undefined) list.querySelectorAll("input")[focus]?.focus();
+  };
+  const add = el("button", "btn sm rules-add", "");
+  add.type = "button";
+  add.append(icon("plus"), "Add a rule");
+  add.addEventListener("click", () => {
+    rulesDraft.push("");
+    draw(rulesDraft.length - 1);
+  });
+  const foot = el("div", "rules-card-foot");
+  const cancel = el("button", "btn-link", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    rulesEditing = false;
+    rulesDraft = [];
+    renderMessages(true);
+  });
+  const save = el("button", "btn primary sm", "Save rules");
+  save.type = "button";
+  save.addEventListener("click", () => {
+    const r = state.rules;
+    invoke("set_rules", { rules: rulesDraft.map((x) => x.trim()).filter(Boolean).join("\n"), welcomeChannel: r?.welcome_channel ?? null, rulesChannel: r?.rules_channel ?? null })
+      .then(() => {
+        rulesEditing = false;
+        rulesDraft = [];
+        renderMessages(true);
+      })
+      .catch((err) => toast(friendlyError(err), true));
+  });
+  const buttons = el("div", "rules-card-buttons");
+  buttons.append(cancel, save);
+  foot.append(el("span", null, "Changing the rules asks everyone to agree again."), buttons);
+  li.append(head, list, add, foot);
+  draw(0);
+  return li;
+}
+
+function rulesShowCard() {
   const li = el("li", "rules-card");
   const head = el("div", "rules-card-head");
   const mark = el("span", "rules-card-mark");
@@ -4396,12 +4516,40 @@ function rulesCard() {
   const words = el("div", "rules-card-words");
   words.append(el("h2", null, "Rules"), el("span", null, `Everyone in ${activeServer()?.label ?? state.roster?.server_name ?? "this server"} agrees to these.`));
   head.append(mark, words);
+  const rules = rulesList(state.rules?.rules);
+  const writer = may("manage_server");
+  // No rules yet: whoever runs the server starts them here; everyone else is told.
+  if (!rules.length) {
+    const empty = el("div", "rules-empty");
+    if (writer) {
+      const start = el("button", "btn primary sm", "");
+      start.type = "button";
+      start.append(icon("plus"), "Add your first rule");
+      start.addEventListener("click", () => {
+        rulesEditing = true;
+        renderMessages(true);
+      });
+      empty.append(el("span", null, "No rules yet. Write a few, and new members agree to them before they talk."), start);
+    } else empty.append(el("span", null, "No rules here yet."));
+    li.append(head, empty);
+    return li;
+  }
   const list = el("ol", "rules-list");
-  list.append(...rulesList(state.rules.rules).map((t, i) => {
+  list.append(...rules.map((t, i) => {
     const item = el("li", "rules-item");
     item.append(el("span", "rules-num", String(i + 1)), messageText(t));
     return item;
   }));
+  if (writer) {
+    const edit = el("button", "btn sm rules-edit-btn", "");
+    edit.type = "button";
+    edit.append(icon("edit"), "Edit rules");
+    edit.addEventListener("click", () => {
+      rulesEditing = true;
+      renderMessages(true);
+    });
+    head.append(edit);
+  }
   const foot = el("div", "rules-card-foot");
   if (rulesNeeded()) {
     const agree = el("button", "btn primary sm", "Agree to the rules");
@@ -4414,6 +4562,36 @@ function rulesCard() {
     foot.append(done);
   }
   li.append(head, list, foot);
+  return li;
+}
+
+/** In an empty #welcome: write the welcome newcomers read, from a template if you like. */
+function welcomeHelper() {
+  const li = el("li", "welcome-helper");
+  const mark = el("span", "rules-card-mark");
+  mark.append(icon("user-plus"));
+  const words = el("div", "rules-card-words");
+  words.append(el("strong", null, "Write a welcome for new members"), el("span", null, "Everyone who joins sees it here, with a hello for each new face. Use headings and lists to make it look good."));
+  const use = el("button", "btn primary sm", "Use a template");
+  use.type = "button";
+  use.addEventListener("click", () => {
+    const server = activeServer()?.label ?? state.roster?.server_name ?? "the server";
+    const chans = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
+    const rules = chans.find((c) => c.id === state.rules?.rules_channel);
+    const chat = chans.find((c) => c.id !== state.rules?.rules_channel && c.id !== state.rules?.welcome_channel && !c.announce);
+    chatInput.value = [
+      `# Welcome to ${server}! 👋`,
+      "Glad you're here. A few things to get you started:",
+      "## Start here",
+      ...(rules ? [`- Read the rules in #${rules.name}`] : []),
+      ...(chat ? [`- Say hi in #${chat.name}`] : []),
+      "- Jump into a voice channel whenever you like",
+      "-# Questions? Ask any of the moderators.",
+    ].join("\n");
+    chatInput.focus();
+    chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  li.append(mark, words, use);
   return li;
 }
 
@@ -4457,93 +4635,6 @@ $("rules-later").addEventListener("click", () => $("rules-dialog").close());
 $("rules-agree").addEventListener("click", () => {
   invoke("accept_rules").catch((err) => toast(friendlyError(err), true));
   $("rules-dialog").close();
-});
-
-/** The rules and the welcome channel, in the server's overview (for those who run it). */
-function renderRulesSettings() {
-  const on = !!state.roster?.features?.includes("rules") && may("manage_server");
-  $("rules-settings").hidden = !on;
-  if (!on) return;
-  if (!$("rules-settings").contains(document.activeElement)) {
-    rulesDraft = rulesList(state.rules?.rules);
-    if (!rulesDraft.length) rulesDraft = [""];
-    renderRulesEdit();
-  }
-  const pick = $("welcome-channel");
-  const texts = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
-  pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))), ...(may("manage_channels") ? [new Option("+ Create a #welcome channel", "new")] : []));
-  pick.value = state.rules?.welcome_channel != null ? String(state.rules.welcome_channel) : "";
-  const shown = $("rules-channel-pick");
-  const canMake = may("manage_channels");
-  shown.replaceChildren(new Option("No channel (only when someone joins)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))), ...(canMake ? [new Option("+ Create a #rules channel", "new")] : []));
-  shown.value = state.rules?.rules_channel != null && texts.some((c) => c.id === state.rules.rules_channel) ? String(state.rules.rules_channel) : "";
-}
-/** The rules being written in the overview, one per row. */
-var rulesDraft = [""];
-var MAX_RULES = 12;
-function renderRulesEdit(focus) {
-  $("rules-edit").replaceChildren(...rulesDraft.map((text, i) => {
-    const li = el("li", "rules-edit-row");
-    const input = el("input");
-    input.maxLength = 160;
-    input.value = text;
-    input.placeholder = i === 0 ? "Be kind to each other." : "Another rule";
-    input.addEventListener("input", () => (rulesDraft[i] = input.value));
-    input.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      if (rulesDraft.length < MAX_RULES) {
-        rulesDraft.splice(i + 1, 0, "");
-        renderRulesEdit(i + 1);
-      }
-    });
-    const remove = el("button", "icon-btn rules-remove", "");
-    remove.type = "button";
-    remove.setAttribute("aria-label", "Remove this rule");
-    remove.append(icon("x"));
-    remove.addEventListener("click", () => {
-      rulesDraft.splice(i, 1);
-      if (!rulesDraft.length) rulesDraft = [""];
-      renderRulesEdit();
-    });
-    li.append(el("span", "rules-num", String(i + 1)), input, remove);
-    return li;
-  }));
-  $("rules-add").hidden = rulesDraft.length >= MAX_RULES;
-  if (focus !== undefined) $("rules-edit").querySelectorAll("input")[focus]?.focus();
-}
-$("rules-add").addEventListener("click", () => {
-  rulesDraft.push("");
-  renderRulesEdit(rulesDraft.length - 1);
-});
-$("rules-save").addEventListener("click", () => {
-  const welcome = $("welcome-channel").value;
-  const shown = $("rules-channel-pick").value;
-  const save = (rulesChannel, welcomeChannel) =>
-    invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel, rulesChannel })
-      .then(() => {
-        $("rules-saved").hidden = false;
-        setTimeout(() => ($("rules-saved").hidden = true), 2000);
-      })
-      .catch((err) => toast(friendlyError(err), true));
-  /** A new text channel, once the server has made it. */
-  const make = (name) =>
-    new Promise((done) => {
-      afterChannelMade(done);
-      call("create_channel", { name, kind: "text" });
-    });
-  (async () => {
-    // New channels first (#rules, #welcome), then the rules pointing at them.
-    const rulesChannel = shown === "new" ? (await make("rules")).id : shown ? Number(shown) : null;
-    let welcomeChannel = welcome && welcome !== "new" ? Number(welcome) : null;
-    if (welcome === "new") {
-      const made = await make("welcome");
-      // Only staff write there: it's for welcomes and what admins say to newcomers.
-      call("update_channel", { channel: made.id, name: made.name, topic: null, category: made.category ?? null, announce: true });
-      welcomeChannel = made.id;
-    }
-    save(rulesChannel, welcomeChannel);
-  })();
 });
 
 function showServerTab(tab) {
