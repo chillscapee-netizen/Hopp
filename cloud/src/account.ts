@@ -206,9 +206,10 @@ export class UserDirectory extends DurableObject<Env> {
     this.sql.exec("CREATE TABLE IF NOT EXISTS admins (key TEXT PRIMARY KEY, username TEXT NOT NULL, added_by TEXT NOT NULL, at INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, action TEXT NOT NULL, subject TEXT NOT NULL, detail TEXT NOT NULL)");
     // Accounts saved to Hopp Cloud (by choice): the account file exactly as it is on the computer,
-    // locked with the password there, found by a scrambled email (the address itself isn't kept).
-    this.sql.exec("CREATE TABLE IF NOT EXISTS backups (id TEXT PRIMARY KEY, key TEXT NOT NULL, login TEXT NOT NULL, stored TEXT NOT NULL, at INTEGER NOT NULL)");
-    this.sql.exec("CREATE INDEX IF NOT EXISTS backups_by_key ON backups (key)");
+    // locked with the password there, found by a scrambled email together with a hash of the login
+    // made from email and password. Nobody can take an email: others under it are other rows.
+    this.sql.exec("CREATE TABLE IF NOT EXISTS saved_accounts (key TEXT PRIMARY KEY, id TEXT NOT NULL, login TEXT NOT NULL, stored TEXT NOT NULL, at INTEGER NOT NULL)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS saved_accounts_by_login ON saved_accounts (id, login)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS backup_tries (tag TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)");
   }
 
@@ -234,15 +235,24 @@ export class UserDirectory extends DurableObject<Env> {
     const id = String(body.id ?? "");
     if (!/^[0-9a-f]{64}$/.test(id)) return { status: 400, body: { error: "Bad email." } };
     const action = body.action;
+    const local = !ip || ip === "127.0.0.1" || ip === "::1";
+    const ipTag = "ip:" + (await sha256Hex("ip:" + (ip ?? "") + ":" + new Date().toISOString().slice(0, 13)));
     if (action === "fetch") {
       const login = String(body.login ?? "");
       if (!/^[0-9a-f]{64}$/.test(login)) return { status: 400, body: { error: "Bad login." } };
-      const tag = await sha256Hex("ip:" + (ip ?? "") + ":" + new Date().toISOString().slice(0, 13));
-      // (Not counted per connection on this computer: tests, and Hopp run locally.)
-      const local = !ip || ip === "127.0.0.1" || ip === "::1";
-      if ((!local && !this.backupTry("ip:" + tag, 30)) || !this.backupTry("id:" + id, 10)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
-      const row = this.sql.exec("SELECT login, stored FROM backups WHERE id = ?", id).toArray()[0];
-      if (!row || String(row.login) !== (await sha256Hex(login))) return { status: 403, body: { error: "Wrong email or password." } };
+      // A connection may try 30 times an hour, and guess wrong 10 times per email; an email takes
+      // 200 wrong guesses an hour from everywhere together. Right ones are never counted, and one
+      // connection's guesses don't lock the owner out on theirs.
+      if (!local && !this.backupTry(ipTag, 30)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+      const wrongTag = "id:" + id + ":" + ipTag;
+      const count = (tag: string) => Number(this.sql.exec("SELECT n FROM backup_tries WHERE tag = ? AND until > ?", tag, Date.now()).toArray()[0]?.n ?? 0);
+      if (count(wrongTag) >= 10 || count("id:" + id) >= 200) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+      const row = this.sql.exec("SELECT stored FROM saved_accounts WHERE id = ? AND login = ?", id, await sha256Hex(login)).toArray()[0];
+      if (!row) {
+        this.backupTry(wrongTag, 10);
+        this.backupTry("id:" + id, 200);
+        return { status: 403, body: { error: "Wrong email or password." } };
+      }
       return { status: 200, body: { stored: JSON.parse(String(row.stored)) } };
     }
     const key = String(body.key ?? "").toLowerCase();
@@ -258,9 +268,8 @@ export class UserDirectory extends DurableObject<Env> {
       valid = false;
     }
     if (!valid) return { status: 403, body: { error: "Bad signature." } };
-    const here = this.sql.exec("SELECT key FROM backups WHERE id = ?", id).toArray()[0];
     if (action === "delete") {
-      if (here && String(here.key) === key) this.sql.exec("DELETE FROM backups WHERE id = ?", id);
+      this.sql.exec("DELETE FROM saved_accounts WHERE key = ?", key);
       return { status: 200, body: { ok: true } };
     }
     if (action !== "save") return { status: 400, body: { error: "Unknown action." } };
@@ -274,10 +283,13 @@ export class UserDirectory extends DurableObject<Env> {
       return { status: 400, body: { error: "Bad account." } };
     }
     if (stored.public_key !== key) return { status: 400, body: { error: "That isn't this account." } };
-    if (here && String(here.key) !== key) return { status: 409, body: { error: "That email is already used by another Hopp account." } };
-    // One email per account: saving under a new one replaces the old.
-    this.sql.exec("DELETE FROM backups WHERE key = ? AND id != ?", key, id);
-    this.sql.exec("INSERT OR REPLACE INTO backups (id, key, login, stored, at) VALUES (?, ?, ?, ?, ?)", id, key, await sha256Hex(login), storedText, Date.now());
+    if (!local && !this.backupTry("save:" + ipTag, 20)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+    const loginHash = await sha256Hex(login);
+    // The same email and password for another account would be ambiguous: choose another password.
+    const clash = this.sql.exec("SELECT key FROM saved_accounts WHERE id = ? AND login = ? AND key != ?", id, loginHash, key).toArray()[0];
+    if (clash) return { status: 409, body: { error: "Use a different password for this account." } };
+    // One saved copy per account: a new email or password replaces the old.
+    this.sql.exec("INSERT OR REPLACE INTO saved_accounts (key, id, login, stored, at) VALUES (?, ?, ?, ?, ?)", key, id, loginHash, storedText, Date.now());
     return { status: 200, body: { ok: true } };
   }
 
@@ -1076,7 +1088,10 @@ export class StromAccount extends DurableObject<Env> {
       case "turn_login":
         return this.relayLogin(ws);
       case "dm_typing": {
-        // "Typing…" in a DM or group: passed on at once, never kept.
+        // "Typing…" in a DM or group: passed on at once, never kept; at most every 2 seconds.
+        const now = Date.now();
+        if (now - Number(this.meta("typing_at") ?? 0) < 2000) return;
+        this.setMeta("typing_at", String(now));
         const peer = String(msg.with ?? "").toLowerCase();
         const group = this.group(peer);
         const others = group ? group.members.filter((k) => k !== myKey) : this.friend(peer)?.state === "friend" ? [peer] : [];
@@ -1746,7 +1761,6 @@ export class StromAccount extends DurableObject<Env> {
 
   }
 
-  /** A file handshake from a friend. False when none of our devices is online. */
   /** Someone is typing to us (or in a group we're in): our open devices show it. */
   async dmTyping(fromKey: string, conversation: string): Promise<boolean> {
     const group = this.group(conversation);
@@ -1756,6 +1770,7 @@ export class StromAccount extends DurableObject<Env> {
     return true;
   }
 
+  /** A file handshake from a friend. False when none of our devices is online. */
   async fileSignal(fromKey: string, transfer: string, sealed: string): Promise<boolean> {
     if (this.friend(fromKey)?.state !== "friend") return false;
     if (this.devices().length === 0) return false;

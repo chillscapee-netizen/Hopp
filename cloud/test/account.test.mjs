@@ -921,20 +921,27 @@ test("an account saved to Hopp Cloud: saved by itself only, fetched with the rig
   // Signed by the account itself: saved.
   r = await post({ action: "save", id, login, stored, key: me.pub, sig: sign(me, `hopp-backup|${id}|${login}|${stored}`) });
   assert.equal(r.status, 200, await r.clone().text());
-  // Another account can't take the same email.
+  // Nobody can take an email: another account under it with its own password is just another copy;
+  // the very same email and password for two accounts is refused.
   const theirs = JSON.stringify({ version: 1, name: "Other", public_key: other.pub, salt: "00", nonce: "00", secret: "00" });
   r = await post({ action: "save", id, login, stored: theirs, key: other.pub, sig: sign(other, `hopp-backup|${id}|${login}|${theirs}`) });
   assert.equal(r.status, 409);
+  const otherLogin = crypto.randomBytes(32).toString("hex");
+  r = await post({ action: "save", id, login: otherLogin, stored: theirs, key: other.pub, sig: sign(other, `hopp-backup|${id}|${otherLogin}|${theirs}`) });
+  assert.equal(r.status, 200);
+  r = await post({ action: "fetch", id, login: otherLogin });
+  assert.equal((await r.json()).stored.public_key, other.pub);
   // The right login gets it back, exactly as saved; a wrong one doesn't.
   r = await post({ action: "fetch", id, login });
   assert.equal(r.status, 200);
   assert.equal((await r.json()).stored.public_key, me.pub);
   r = await post({ action: "fetch", id, login: crypto.randomBytes(32).toString("hex") });
   assert.equal(r.status, 403);
-  // Guessing is limited per account.
+  // The right login is never counted, so nobody can lock you out by logging in; wrong ones are limited.
+  for (let i = 0; i < 12; i++) assert.equal((await post({ action: "fetch", id, login })).status, 200);
   let limited = false;
   for (let i = 0; i < 12 && !limited; i++) limited = (await post({ action: "fetch", id, login: crypto.randomBytes(32).toString("hex") })).status === 429;
-  assert.ok(limited, "guesses are limited");
+  assert.ok(limited, "wrong guesses are limited");
   // Removed by the account: gone.
   r = await post({ action: "delete", id, key: me.pub, sig: sign(me, `hopp-backup-delete|${id}`) });
   assert.equal(r.status, 200);

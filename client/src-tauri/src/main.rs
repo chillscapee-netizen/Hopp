@@ -343,8 +343,8 @@ async fn cloud_backup_save(state: State<'_, AppState>, cloud: String, email: Str
     })
     .await?;
     let mut sent = stored.clone();
+    // The email stays here; whether the phrase was saved goes along (on a new computer it still was).
     sent.backup_email = None;
-    sent.backed_up = false;
     let text = serde_json::to_string(&sent).map_err(|e| e.to_string())?;
     let sig = identity.sign_challenge(&strom_voice::identity::backup_nonce(&format!("hopp-backup|{id}|{login}|{text}")));
     backup_post(&cloud, serde_json::json!({ "action": "save", "id": id, "login": login, "stored": text, "key": identity.public_key(), "sig": sig })).await?;

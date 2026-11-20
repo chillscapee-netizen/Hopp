@@ -141,12 +141,14 @@ where
     // every 25 seconds (Hopp Cloud answers "hopp-pong" without waking up), and with no word back for a minute it's opened again.
     let mut tick = tokio::time::interval(Duration::from_secs(25));
     let mut heard = tokio::time::Instant::now();
+    // An older Hopp Cloud doesn't answer: the minute counts only once it has answered once.
+    let mut answers = false;
     let mut conns: HashMap<u32, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();
     loop {
         let msg = tokio::select! {
             next = stream.next() => match next { Some(Ok(m)) => m, _ => break },
             _ = tick.tick() => {
-                if heard.elapsed() > Duration::from_secs(60) {
+                if answers && heard.elapsed() > Duration::from_secs(60) {
                     tracing::warn!("tunnel: no answer for a minute, opening it again");
                     break;
                 }
@@ -155,6 +157,9 @@ where
             }
         };
         heard = tokio::time::Instant::now();
+        if matches!(&msg, Message::Text(t) if t.as_str() == "hopp-pong") {
+            answers = true;
+        }
         let Message::Binary(bytes) = msg else { continue };
         if bytes.len() < 5 {
             continue;

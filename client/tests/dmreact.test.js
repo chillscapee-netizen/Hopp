@@ -29,6 +29,14 @@
     await wait(150);
     const off = sent.find((m) => m.type === "dm_react");
     check("taking it back sends no emoji at all", off && off.sealed === null, JSON.stringify(off));
+    // Refused by the cloud (too fast): what was shown goes back.
+    const before = row().querySelectorAll(".reaction:not(.add)").length;
+    await reactDm(KEYS.elin, state.dmMessages.get(KEYS.elin).find((m) => m.id === "r1"), "🎉", true);
+    await wait(80);
+    const shown = row().querySelectorAll(".reaction:not(.add)").length;
+    emit("account", { type: "error", message: "You're reacting too fast. Slow down a little.", for: "dm_react" });
+    await wait(120);
+    check("refused: the reaction shown goes back", shown === before + 1 && row().querySelectorAll(".reaction:not(.add)").length === before, before + " " + shown);
   } catch (e) {
     check("no crash: " + e.message + " " + String(e.stack).slice(0, 200), false);
   }

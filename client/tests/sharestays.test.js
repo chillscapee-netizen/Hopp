@@ -50,6 +50,7 @@
     check("on the other server", activeServer()?.id !== first.id && !!state.voiceAway);
     check("your stream goes on", !!screenShare.stream && !sent.some((m) => m.type === "set_sharing" && !m.on));
     check("nothing of it shows over this server", $("screen-stage").hidden);
+    check("the panel says you still share, with the button to stop", $("voice-where").textContent.includes("Sharing your screen") && !$("share-btn").hidden && $("share-btn").classList.contains("on"));
 
     // Someone asks to watch while you're away: they get it.
     emit("screen-signal", { from: elin.session_id, data: JSON.stringify({ k: "watch", s: "sharer" }) });

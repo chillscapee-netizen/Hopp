@@ -3240,12 +3240,14 @@ function renderVoicePanel() {
     status.classList.toggle("warn", !error && (!ready || (ms !== null && ms >= 100 && ms < 200)));
     status.classList.toggle("bad", !!error || (ms !== null && ms >= 200));
     $("voice-status-text").textContent = error ? "Voice unavailable" : ready ? "Voice connected" : "Starting voice…";
-    const where = away.name + " / " + away.label;
+    // Still sharing there: said, and the button stays to stop it (starting one waits for the view).
+    const where = (screenShare.stream ? "Sharing your screen · " : "") + away.name + " / " + away.label;
     $("voice-where").textContent = ms === null ? where : where + " · " + (ms < 1 ? "<1 ms" : ms + " ms");
     $("voice-actions").hidden = false;
     $("cam-btn").hidden = true;
-    $("share-btn").hidden = true;
-    $("voice-actions").classList.add("sound-only");
+    $("share-btn").hidden = !screenShare.stream;
+    $("share-btn").classList.toggle("on", !!screenShare.stream);
+    $("voice-actions").classList.toggle("sound-only", !screenShare.stream);
     return;
   }
   // One way (peer to peer) or to the server (your own server): either way, under 100 ms is good.
@@ -7573,6 +7575,8 @@ async function reactDm(peer, m, emoji, on) {
     if (r) r.keys.push(me);
     else others.push({ emoji: e, keys: [me] });
   }
+  // Shown at once; if the cloud says no, it goes back as it was (see the dm_react error).
+  state.dmReactUndo = { peer, id: m.id, before: m.reactions ?? [] };
   m.reactions = others.filter((r) => r.keys.length);
   renderDmView(true);
   try {
@@ -7660,10 +7664,26 @@ function onDmEvent(m) {
   if (m.type === "dm_reactions") {
     const msg = state.dmMessages.get(m.with)?.find((x) => x.id === m.id);
     if (!msg) return true;
+    if (state.dmReactUndo?.id === m.id) state.dmReactUndo = null;
+    // Opened one after another may finish out of order: only the newest is kept.
+    const seq = (msg.reactSeq = (msg.reactSeq ?? 0) + 1);
     openDmReactions(m.with, m.reactions).then((list) => {
+      if (msg.reactSeq !== seq) return;
       msg.reactions = list;
       renderDmAreas(m.with);
     });
+    return true;
+  }
+  if (m.type === "error" && m.for === "dm_react") {
+    // Not saved: the reaction shown at once goes back.
+    const undo = state.dmReactUndo;
+    state.dmReactUndo = null;
+    const msg = undo && state.dmMessages.get(undo.peer)?.find((x) => x.id === undo.id);
+    if (msg) {
+      msg.reactions = undo.before;
+      renderDmAreas(undo.peer);
+    }
+    toast(m.message, true);
     return true;
   }
   if (m.type === "dm_deleted") {
@@ -8228,7 +8248,8 @@ async function sendDm(peer, input) {
   // Answering a message: its id goes in front, inside the encrypted text.
   const reply = state.dmReply?.peer === peer ? state.dmReply.m : null;
   const text = reply && input.id === "dm-input" ? `hopp-reply:${reply.id}\n${typed}` : typed;
-  if (reply) setDmReply(null);
+  // Only a typed message carries the reply; a GIF or picture leaves it waiting.
+  if (reply && text !== typed) setDmReply(null);
   input.value = "";
   input.style.height = "auto";
   const nonce = Math.random().toString(36).slice(2);
@@ -11156,6 +11177,15 @@ async function startRecording(dm = null) {
   r.timer = setInterval(() => {
     const ms = Date.now() - r.started;
     if (r.ui.time) r.ui.time.textContent = clockLength(ms);
+    // A DM's recording ends with its conversation: left (a server, Friends, another DM), it's thrown away.
+    if (r.dm && !r.ui.bar?.isConnected) {
+      stopRecording(false);
+      return toast("Your voice message wasn't sent: you left that conversation.");
+    }
+    if (r.dm && (state.openDm !== r.dm || online())) {
+      stopRecording(false);
+      return toast("Your voice message wasn't sent: you left that conversation.");
+    }
     if (ms >= VOICE_MAX_MS) stopRecording(true);
   }, 200);
   if (r.ui.time) r.ui.time.textContent = "0:00";
@@ -15896,7 +15926,8 @@ listen("screen-signal", async (e) => {
   } catch {
     return;
   }
-  if (m.v === "m") return handleMedia(from, m, voiceRoom);
+  // Cameras and call video belong to the server in view: none from the one your voice waits in.
+  if (m.v === "m") return state.voiceAway ? undefined : handleMedia(from, m, voiceRoom);
   if (m.s === "sharer") {
     // To us, as the one sharing.
     if (!screenShare.stream) return;
