@@ -4814,3 +4814,14 @@ html.rail-small .folder-closed { padding: 5px; gap: 1px; border-radius: 13px !im
 html.rail-small .folder-mini { font-size: 8px; }
 html.rail-large .folder-closed { padding: 8px; gap: 2px; border-radius: 19px !important; }
 html.rail-large .folder-mini { font-size: 12px; }
+
+/* Closed folders, as drawn: four squares that fill the tile, rounded only on their outer corner
+   (following the folder's own corner) and nearly square toward the thin cross in the middle. */
+.folder-closed { padding: 4px; gap: 2px; border-radius: 16px !important; }
+.folder-mini { border-radius: 18%; }
+.folder-closed > .folder-mini:nth-child(1) { border-radius: 52% 14% 14% 14%; }
+.folder-closed > .folder-mini:nth-child(2) { border-radius: 14% 52% 14% 14%; }
+.folder-closed > .folder-mini:nth-child(3) { border-radius: 14% 14% 14% 52%; }
+.folder-closed > .folder-mini:nth-child(4) { border-radius: 14% 14% 52% 14%; }
+html.rail-small .folder-closed { padding: 3px; gap: 2px; border-radius: 13px !important; }
+html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 19px !important; }
