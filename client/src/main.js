@@ -1309,7 +1309,12 @@ function railFolder(f) {
     const box = el("span", "rail-icon folder-closed" + (railSettling === f ? " settling" : ""));
     for (const id of f.ids.slice(0, 4)) {
       const s = serverById(id);
-      if (s) box.append(serverIcon("folder-mini server-tint", s.label, s.icon));
+      if (s) {
+        // Small as they are: one letter reads better than two.
+        const mini = serverIcon("folder-mini server-tint", s.label, s.icon);
+        if (!s.icon) mini.textContent = initials(s.label || "?").slice(0, 1);
+        box.append(mini);
+      }
     }
     head.append(box);
     return head;
