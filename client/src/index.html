@@ -1042,6 +1042,12 @@
             </div>
             <form id="role-editor" class="role-editor" hidden>
               <div id="role-preview" class="role-preview"></div>
+              <div class="segmented role-tabs" role="tablist" aria-label="Role">
+                <button type="button" class="segment active" data-rtab="display" role="tab">Display</button>
+                <button type="button" class="segment" data-rtab="perms" role="tab">Permissions</button>
+                <button type="button" class="segment" data-rtab="members" role="tab">Members <span id="role-member-count" class="role-tab-count"></span></button>
+              </div>
+              <div data-rpanel="display" class="role-panel">
               <div class="role-section">
                 <label class="field">
                   <span class="field-label">Name</span>
@@ -1067,10 +1073,15 @@
                 <input id="role-mentionable" type="checkbox" class="switch">
               </label>
               </div>
-              <div class="role-section">
-                <span class="role-section-title">What they may do</span>
+              </div>
+              <div data-rpanel="perms" class="role-panel" hidden>
                 <div id="role-levels" class="role-levels" role="radiogroup" aria-label="What they may do"></div>
                 <div id="role-perms" class="role-perms" hidden></div>
+              </div>
+              <div data-rpanel="members" class="role-panel" hidden>
+                <label class="role-member-search"><svg class="i"><use href="#i-search"/></svg><input id="role-member-search" placeholder="Add people: type a name" autocomplete="off" spellcheck="false"></label>
+                <ul id="role-member-results" class="role-member-list" hidden></ul>
+                <ul id="role-member-list" class="role-member-list"></ul>
               </div>
               <label class="field" hidden>
                 <span class="field-label">What they may do</span>
@@ -1080,7 +1091,7 @@
                   <option value="admin">Run the server: also channels, roles, bans, settings</option>
                 </select>
               </label>
-              <div class="role-editor-foot">
+              <div id="role-editor-foot" class="role-editor-foot">
                 <button id="role-delete" type="button" class="btn-link danger-soft">Delete role</button>
                 <button type="submit" class="btn primary sm">Save</button>
               </div>

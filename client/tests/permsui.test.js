@@ -66,6 +66,27 @@
     sw("administrator").click();
     await wait(30);
     check("Administrator includes everything", sw("kick").checked && sw("kick").disabled);
+    // A quick start hides the switches; Custom shows them.
+    document.querySelector('#role-perms [data-preset="mod"]').click();
+    await wait(30);
+    check("Moderator is one pick, without the list", !$("role-perms").querySelector("input[data-perm]"));
+    document.querySelector('#role-perms [data-preset="custom"]').click();
+    await wait(30);
+    check("Custom shows every switch", $("role-perms").querySelectorAll("input[data-perm]").length === 17);
+
+    // Members: who has it, and adding someone by name.
+    const given = [];
+    commands.assign_role = (a) => given.push(a);
+    showRoleTab("members");
+    $("role-member-search").value = "sar";
+    $("role-member-search").dispatchEvent(new Event("input"));
+    await wait(30);
+    const add = [...$("role-member-results").querySelectorAll("button")].find((b) => b.textContent === "Add");
+    add?.click();
+    await wait(30);
+    check("adding someone gives them the role at once", given.some((g) => g.on === true && g.role === 2));
+    check("no Save needed there", $("role-editor-foot").hidden);
+    showRoleTab("display");
     $("server-settings").close();
 
     // An older server: three level cards as before.

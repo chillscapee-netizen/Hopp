@@ -4366,3 +4366,33 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .role-preset:disabled { opacity: 0.45; cursor: default; }
 .role-perms .setting-row.locked { cursor: default; }
 .role-perms .setting-row.locked .row-title { color: var(--text-2); }
+
+/* The role editor: three tabs, and a quiet list of switches only when Custom. */
+.role-tabs { width: fit-content; }
+.role-tab-count { margin-left: 4px; color: var(--muted); font-weight: 600; }
+.role-panel { display: grid; gap: 18px; }
+.role-panel[hidden] { display: none; }
+.role-presets { width: fit-content; }
+.role-perm-about { margin: -6px 0 0; color: var(--muted); font-size: 13px; }
+.role-perm-group { display: grid; gap: 8px; }
+.role-perm-list { display: grid; border-radius: 10px; background: var(--side); border: 1px solid var(--border); overflow: hidden; }
+.role-perm { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; cursor: pointer; }
+.role-perm + .role-perm { border-top: 1px solid color-mix(in srgb, var(--text) 6%, transparent); }
+.role-perm:hover { background: var(--hover); }
+.role-perm-name { font-size: 14px; font-weight: 500; }
+.role-perm.locked { cursor: default; }
+.role-perm.locked .role-perm-name { color: var(--muted); }
+.role-member-search { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 38px; border-radius: 10px; background: var(--side); border: 1px solid var(--border); }
+.role-member-search .i { width: 16px; height: 16px; color: var(--muted); }
+.role-member-search input { flex: 1; min-width: 0; border: none; background: none; color: var(--text); font: inherit; outline: none; }
+.role-member-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.role-member-list[hidden] { display: none; }
+.role-member { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; }
+.role-member:hover { background: var(--hover); }
+.role-member-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; }
+.role-member-remove .i { width: 16px; height: 16px; }
+#role-member-results { padding: 4px; border-radius: 10px; background: var(--layer-2); }
+.role-tabs { width: 100%; grid-template-columns: repeat(3, 1fr); }
+.role-presets { width: 100%; grid-template-columns: repeat(4, 1fr); }
+.role-tabs .segment, .role-presets .segment { white-space: nowrap; padding: 0 10px; }
+.role-presets .segment:disabled { opacity: 0.4; cursor: default; }

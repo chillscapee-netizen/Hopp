@@ -16502,32 +16502,55 @@ function permsOn() {
   return !!state.roster?.features?.includes("perms");
 }
 
-/** The switches, grouped, with quick starts on top. */
+var ROLE_PRESETS = [
+  ["member", "Member", [], "Just the colour and the place in the member list."],
+  ["mod", "Moderator", MOD_SWITCHES, "Kick, time out, mute and move people, delete and pin messages, and mention @everyone."],
+  ["admin", "Admin", ["administrator"], "Everything, and every private channel. Only the owner can give it."],
+];
+/** Custom open: the switches show even when they match a quick start. */
+var roleCustom = false;
+
+function presetOf(set) {
+  return ROLE_PRESETS.find(([, , list]) => list.length === set.size && list.every((p) => set.has(p)))?.[0] ?? null;
+}
+
+/** What the role may do: a quick start (Member, Moderator, Admin), or Custom with every switch. */
 function renderRolePerms() {
   const box = $("role-perms");
-  const admin = rolePermsPick.has("administrator");
-  const presets = el("div", "role-presets");
-  for (const [label, list] of [["Member", []], ["Moderator", MOD_SWITCHES], ["Admin", ["administrator"]]]) {
-    const b = el("button", "role-preset", label);
+  const preset = presetOf(rolePermsPick);
+  const custom = roleCustom || preset === null;
+  const seg = el("div", "segmented role-presets");
+  const pick = (key) => {
+    if (key === "custom") roleCustom = true;
+    else {
+      roleCustom = false;
+      rolePermsPick = new Set(ROLE_PRESETS.find(([k]) => k === key)[2]);
+    }
+    renderRolePerms();
+  };
+  for (const [key, label, list] of [...ROLE_PRESETS, ["custom", "Custom", null]]) {
+    const b = el("button", "segment", label);
     b.type = "button";
-    b.disabled = !list.every((p) => may(p)) || (list.includes("administrator") && !can("own"));
-    b.classList.toggle("active", list.length === rolePermsPick.size && list.every((p) => rolePermsPick.has(p)));
-    b.addEventListener("click", () => {
-      rolePermsPick = new Set(list);
-      renderRolePerms();
-    });
-    presets.append(b);
+    b.dataset.preset = key;
+    b.disabled = !!list && (!list.every((p) => may(p)) || (list.includes("administrator") && !can("own")));
+    b.classList.toggle("active", custom ? key === "custom" : key === preset);
+    b.addEventListener("click", () => pick(key));
+    seg.append(b);
   }
+  const on = rolePermsPick.has("administrator") ? "Everything" : rolePermsPick.size === 1 ? "1 switch on" : `${rolePermsPick.size} switches on`;
+  const about = el("p", "role-perm-about", custom ? `${on}. Switches you don't have yourself are locked.` : ROLE_PRESETS.find(([k]) => k === preset)[3]);
+  if (!custom) return box.replaceChildren(seg, about);
+  const admin = rolePermsPick.has("administrator");
   const groups = PERM_GROUPS.map(([title, rows]) => {
-    const g = el("div", "role-section role-switches");
+    const g = el("div", "role-perm-group");
     g.append(el("span", "role-section-title", title));
+    const list = el("div", "role-perm-list");
     for (const [p, name, sub] of rows) {
-      const row = el("label", "row setting-row");
-      const words = el("span", "row-label");
+      const row = el("label", "role-perm");
       // What you may not do yourself, you can't give (or take away); Administrator is the owner's.
       const locked = p === "administrator" ? !can("own") : !may(p);
       const included = admin && p !== "administrator";
-      words.append(el("span", "row-title", name), el("span", "row-sub", included ? "Included in Administrator." : locked ? (p === "administrator" ? "Only the owner can give this." : "You can't give what you can't do yourself.") : sub));
+      row.title = included ? "Included in Administrator." : locked ? (p === "administrator" ? "Only the owner can give this." : "You can't give what you can't do yourself.") : sub;
       const sw = el("input");
       sw.type = "checkbox";
       sw.className = "switch";
@@ -16540,13 +16563,74 @@ function renderRolePerms() {
         renderRolePerms();
       });
       row.classList.toggle("locked", sw.disabled);
-      row.append(words, sw);
-      g.append(row);
+      row.append(el("span", "role-perm-name", name), sw);
+      list.append(row);
     }
+    g.append(list);
     return g;
   });
-  box.replaceChildren(presets, ...groups);
+  box.replaceChildren(seg, about, ...groups);
 }
+
+// ---------- the role editor's tabs, and who has the role ----------
+
+var roleTab = "display";
+function showRoleTab(tab) {
+  roleTab = tab;
+  document.querySelectorAll("[data-rtab]").forEach((b) => b.classList.toggle("active", b.dataset.rtab === tab));
+  document.querySelectorAll("[data-rpanel]").forEach((p) => (p.hidden = p.dataset.rpanel !== tab));
+  // Members are given and taken at once; the rest waits for Save.
+  $("role-editor-foot").hidden = tab === "members";
+  if (tab === "members") renderRoleMembers();
+}
+document.querySelectorAll("[data-rtab]").forEach((b) => b.addEventListener("click", () => showRoleTab(b.dataset.rtab)));
+
+/** Everyone in the server: the member list once it's here, else who's online. */
+function rolePeople() {
+  return state.members?.length ? state.members : state.roster?.users ?? [];
+}
+
+function renderRoleMembers() {
+  const r = state.roster?.roles?.find((x) => x.id === editingRole);
+  if (!r) return;
+  const people = rolePeople();
+  const holders = people.filter((u) => u.roles?.includes(r.id));
+  // A role that may do more than you, you can't hand out (nor Administrator, unless you own it).
+  const givable = rolePerms(r).every((p) => may(p)) && (!rolePerms(r).includes("administrator") || can("own"));
+  $("role-member-search").disabled = !givable;
+  $("role-member-search").placeholder = givable ? "Add people: type a name" : "This role may do more than you, so you can't give it.";
+  const row = (u, add) => {
+    const li = el("li", "role-member");
+    const key = u.public_key;
+    li.append(avatar(u.nick ?? u.name, "s28", undefined, null), el("span", "role-member-name ellipsis", u.nick ?? u.name));
+    if (givable) {
+      const b = el("button", add ? "btn sm" : "icon-btn role-member-remove", add ? "Add" : "");
+      b.type = "button";
+      if (!add) {
+        b.append(icon("x"));
+        b.setAttribute("aria-label", "Take the role from " + (u.nick ?? u.name));
+      }
+      b.addEventListener("click", () => {
+        call("assign_role", { publicKey: key, role: r.id, on: add });
+        if (add) {
+          $("role-member-search").value = "";
+          $("role-member-results").hidden = true;
+        }
+      });
+      li.append(b);
+    }
+    return li;
+  };
+  $("role-member-list").replaceChildren(...(holders.length ? holders.map((u) => row(u, false)) : [el("li", "admin-empty", "Nobody has this role yet.")]));
+  const q = $("role-member-search").value.trim().toLowerCase();
+  const found = q ? people.filter((u) => !u.roles?.includes(r.id) && (u.nick ?? u.name).toLowerCase().includes(q)).slice(0, 8) : [];
+  $("role-member-results").hidden = !q;
+  $("role-member-results").replaceChildren(...(found.length ? found.map((u) => row(u, true)) : [el("li", "admin-empty", "Nobody by that name.")]));
+  $("role-member-count").textContent = String(holders.length);
+}
+$("role-member-search").addEventListener("input", () => renderRoleMembers());
+
+/** How the role looks: a name in its colour, as in the chat, and its @. */
 
 /** How the role looks: a name in its colour, as in the chat, and its @. */
 function renderRolePreview() {
@@ -16584,9 +16668,13 @@ function openRole(r, keepEdits) {
   $("role-levels").hidden = permsOn();
   $("role-perms").hidden = !permsOn();
   rolePermsPick = new Set(rolePerms(r));
+  roleCustom = false;
   if (permsOn()) renderRolePerms();
   else renderRoleLevels();
   renderRolePreview();
+  $("role-member-search").value = "";
+  showRoleTab(roleTab);
+  renderRoleMembers();
 }
 
 function renderRoleColors() {
