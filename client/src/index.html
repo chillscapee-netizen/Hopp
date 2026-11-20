@@ -63,6 +63,7 @@
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.7 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h12"/><path d="m4.6 4.3 15.1 6.8a1 1 0 0 1 0 1.8L4.6 19.7a.8.8 0 0 1-1.1-1L6 12 3.5 5.3a.8.8 0 0 1 1.1-1Z"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -651,6 +652,14 @@
             <input id="channel-name" maxlength="32" required autocomplete="off" placeholder="new-channel">
           </span>
         </label>
+        <label id="channel-private-row" class="row setting-row channel-private-row" hidden>
+          <span class="row-label">
+            <span class="row-title">Private channel</span>
+            <span class="row-sub">Hidden from everyone except the roles you pick.</span>
+          </span>
+          <input id="channel-private" type="checkbox" class="switch">
+        </label>
+        <div id="channel-private-roles" class="private-chips" hidden></div>
       </div>
       <div class="modal-foot">
         <button type="button" class="btn-link close-dialog">Cancel</button>
@@ -1025,7 +1034,7 @@
         </form>
         <section data-spanel="members" hidden>
           <h2>Members</h2>
-          <p class="hint">Everyone who has joined. Moderators can delete messages, pin and kick; admins also run channels, invites, bans and roles.</p>
+          <p class="hint">Everyone who has joined, staff first. Use ⋯ to give roles, kick or ban.</p>
           <div class="member-tools">
             <input id="member-search" type="text" placeholder="Search members" autocomplete="off">
             <span id="member-count" class="member-count"></span>
@@ -1071,12 +1080,8 @@
             </div>
             <form id="role-editor" class="role-editor" hidden>
               <div id="role-preview" class="role-preview"></div>
-              <div class="segmented role-tabs" role="tablist" aria-label="Role">
-                <button type="button" class="segment active" data-rtab="display" role="tab">Display</button>
-                <button type="button" class="segment" data-rtab="perms" role="tab">Permissions</button>
-                <button type="button" class="segment" data-rtab="members" role="tab">Members <span id="role-member-count" class="role-tab-count"></span></button>
-              </div>
               <div data-rpanel="display" class="role-panel">
+              <h3 class="role-step"><span>1</span>Name and colour</h3>
               <div class="role-section">
                 <label class="field">
                   <span class="field-label">Name</span>
@@ -1086,28 +1091,30 @@
                 <div id="role-colors" class="role-colors"></div>
               </div>
               <div class="role-section role-switches">
-                <span class="role-section-title">In the member list and mentions</span>
+                
               <label class="row setting-row">
                 <span class="row-label">
-                  <span class="row-title">Show separately</span>
-                  <span class="row-sub">People with this role get their own heading in the member list.</span>
+                  <span class="row-title">Give them their own group in the member list</span>
+                  <span class="row-sub">Like "Moderators — 3" above everyone else.</span>
                 </span>
                 <input id="role-hoist" type="checkbox" class="switch">
               </label>
               <label class="row setting-row">
                 <span class="row-label">
-                  <span class="row-title">Allow anyone to @mention this role</span>
-                  <span class="row-sub">Moderators can always mention it. Everyone with the role is notified.</span>
+                  <span class="row-title">Let anyone @mention this role</span>
+                  <span class="row-sub">Everyone who has it gets a notification. Moderators can always do it.</span>
                 </span>
                 <input id="role-mentionable" type="checkbox" class="switch">
               </label>
               </div>
               </div>
-              <div data-rpanel="perms" class="role-panel" hidden>
+              <div data-rpanel="perms" class="role-panel">
+                <h3 class="role-step"><span>2</span>What can they do?</h3>
                 <div id="role-levels" class="role-levels" role="radiogroup" aria-label="What they may do"></div>
                 <div id="role-perms" class="role-perms" hidden></div>
               </div>
-              <div data-rpanel="members" class="role-panel" hidden>
+              <div data-rpanel="members" class="role-panel">
+                <h3 class="role-step"><span>3</span>Who has it? <span id="role-member-count" class="role-tab-count"></span></h3>
                 <label class="role-member-search"><svg class="i"><use href="#i-search"/></svg><input id="role-member-search" placeholder="Add people: type a name" autocomplete="off" spellcheck="false"></label>
                 <ul id="role-member-results" class="role-member-list" hidden></ul>
                 <ul id="role-member-list" class="role-member-list"></ul>

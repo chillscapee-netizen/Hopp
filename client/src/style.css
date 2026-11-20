@@ -4493,3 +4493,48 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .welcome-helper .rules-card-words { flex: 1; }
 .welcome-helper strong { font-size: 15px; }
 #channel-dialog .type-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* The role on one page: three numbered steps. */
+.role-step { display: flex; align-items: center; gap: 10px; margin: 6px 0 0; font-size: 15px; }
+.role-step > span:first-child { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: color-mix(in srgb, var(--text) 12%, transparent); font-size: 12.5px; }
+.role-panel + .role-panel { padding-top: 18px; border-top: 1px solid var(--border); }
+.role-cards { display: grid; gap: 8px; }
+.role-card { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+.role-card:hover:not(:disabled) { background: var(--hover); }
+.role-card.active { border-color: var(--text); background: var(--layer-2); color: var(--text); }
+.role-card:disabled { opacity: 0.45; cursor: default; }
+.role-card > .i { flex: none; width: 22px; height: 22px; }
+.role-card-words { display: grid; gap: 2px; }
+.role-card-words strong { color: var(--text); font-size: 14.5px; }
+.role-card-words span { font-size: 13px; color: var(--muted); }
+.role-exact { justify-self: start; font-size: 13.5px; }
+
+/* What a role can do: start from a preset, then a plain checklist. */
+.role-starts { display: flex; align-items: center; gap: 12px; }
+.role-starts-label { color: var(--muted); font-size: 13px; font-weight: 600; }
+.role-starts .role-presets { flex: 1; grid-template-columns: repeat(3, 1fr); }
+.role-summary { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--layer-2); color: var(--text); font-size: 13.5px; line-height: 1.45; }
+.role-check-group { display: grid; gap: 6px; }
+.role-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.role-check { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border); color: var(--text-2); font-size: 13.5px; cursor: pointer; }
+.role-check:hover { background: var(--hover); }
+.role-check.on { border-color: color-mix(in srgb, var(--green) 55%, transparent); background: color-mix(in srgb, var(--green) 10%, transparent); color: var(--text); }
+.role-check.locked { opacity: 0.55; cursor: default; }
+.role-check input { flex: none; width: 16px; height: 16px; accent-color: var(--green); }
+.role-check-group:last-child .role-checks { grid-template-columns: 1fr; }
+
+/* Create channel: private, with the roles that may see it. */
+.channel-private-row { margin: 14px 0 8px; }
+.private-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.private-chips[hidden] { display: none; }
+.private-chip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); font-size: 13px; font-weight: 600; cursor: pointer; }
+.private-chip:has(input:checked) { border-color: var(--text); background: var(--layer-2); }
+.private-chip input { width: 14px; height: 14px; accent-color: var(--green); }
+
+/* Members: groups, and roles as chips. */
+#server-members .member-group { margin: 14px 2px 4px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; list-style: none; }
+#server-members .member-group:first-child { margin-top: 0; }
+.member-top { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.member-chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; background: var(--layer-2); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
+.member-chip .role-dot { width: 8px; height: 8px; }
+.member-more { margin-left: auto; }

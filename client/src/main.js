@@ -4163,6 +4163,7 @@ function afterChannelMade(run) {
 }
 
 let channelKind = "text";
+$("channel-private").addEventListener("change", () => ($("channel-private-roles").hidden = !$("channel-private").checked));
 /** The kinds of channel to make: what each is for, its icon, and a ready name for the special ones. */
 var CHANNEL_KINDS = {
   text: { icon: "hash", about: "For writing: messages, pictures, links and threads.", placeholder: "new-channel" },
@@ -4193,6 +4194,21 @@ function openChannelDialog(kind, inCategory) {
   const has = (f) => !!state.roster?.features?.includes(f);
   const exists = (id) => id != null && state.roster.channels.some((c) => c.id === id);
   document.querySelector('.type-option[data-kind="announce"]').hidden = !has("announce");
+  // Private: only the roles picked (and whoever sees every private channel).
+  const roles = state.roster?.roles ?? [];
+  $("channel-private-row").hidden = !rolesOn() || !may("manage_channels") || !roles.length;
+  $("channel-private").checked = false;
+  $("channel-private-roles").hidden = true;
+  $("channel-private-roles").replaceChildren(...roles.map((r) => {
+    const chip = el("label", "private-chip");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = String(r.id);
+    const dot = el("i", "role-dot");
+    dot.style.background = r.color ?? "var(--faint)";
+    chip.append(box, dot, el("span", null, r.name));
+    return chip;
+  }));
   document.querySelector('.type-option[data-kind="rules"]').hidden = !has("rules") || !may("manage_server") || exists(state.rules?.rules_channel);
   document.querySelector('.type-option[data-kind="welcome"]').hidden = !has("rules") || !may("manage_server") || exists(state.rules?.welcome_channel);
   setChannelKind(kind);
@@ -4208,10 +4224,11 @@ $("channel-form").addEventListener("submit", () => {
   if (!name) return;
   const kind = channelKind;
   const category = state.newChannelCategory;
+  const privateRoles = !$("channel-private-row").hidden && $("channel-private").checked ? [...document.querySelectorAll("#channel-private-roles input:checked")].map((b) => Number(b.value)) : null;
   // Only staff write in announcement and welcome channels (and #rules, which the server sets).
   const announce = kind === "announce" || kind === "welcome";
   afterChannelMade((made) => {
-    if (category || announce) call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: category ?? made.category ?? null, announce: announce || null });
+    if (category || announce || privateRoles) call("update_channel", { channel: made.id, name: made.name, topic: made.topic ?? null, category: category ?? made.category ?? null, announce: announce || null, privateRoles });
     const r = state.rules;
     if (kind === "rules") invoke("set_rules", { rules: r?.rules ?? "", welcomeChannel: r?.welcome_channel ?? null, rulesChannel: made.id }).catch((err) => toast(friendlyError(err), true));
     if (kind === "welcome") invoke("set_rules", { rules: r?.rules ?? "", welcomeChannel: made.id, rulesChannel: r?.rules_channel ?? null }).catch((err) => toast(friendlyError(err), true));
@@ -11520,18 +11537,6 @@ function rolesICanGive(target) {
   return [];
 }
 
-function roleSelect(target, onChange) {
-  const select = el("select", "row-select role-select");
-  for (const role of rolesICanGive(target)) {
-    const opt = el("option", "", role ? ROLE_LABEL[role] : "Member");
-    opt.value = role ?? "";
-    select.append(opt);
-  }
-  select.value = roleOf(target) ?? "";
-  select.addEventListener("change", () => onChange(select.value || null));
-  return select;
-}
-
 function renderUserRole(user) {
   const roles = rolesICanGive(user);
   const wrap = $("user-role-wrap");
@@ -11570,39 +11575,7 @@ async function transferOwnership(member) {
   }
 }
 
-/** Server settings → Members, with the server's own roles: who has which, and (for admins) a tick list to change it. */
-function memberRolesButton(m) {
-  const all = state.roster?.roles ?? [];
-  const has = all.filter((r) => m.roles?.includes(r.id));
-  const label = m.role === "owner" ? "Owner" : has.length ? has.map((r) => r.name).join(", ") : "No roles";
-  const givable = all.filter((r) => r.level !== "admin" || can("own"));
-  const mine = m.public_key === state.account?.publicKey;
-  const above = !can("own") && !mine && (ROLE_RANK[m.role] ?? 0) >= rankOf(me());
-  if (!may("manage_roles") || above || !givable.length) return el("span", "role-label member-roles", label);
-  const b = el("button", "row-select member-roles", "");
-  b.type = "button";
-  b.append(el("span", "ellipsis", label));
-  b.setAttribute("aria-label", "Roles for " + m.name);
-  b.addEventListener("click", () => {
-    const r = b.getBoundingClientRect();
-    openMenu(givable.map((role) => ({
-      label: role.name,
-      check: !!m.roles?.includes(role.id),
-      action: async (on) => {
-        try {
-          await invoke("assign_role", { publicKey: m.public_key, role: role.id, on });
-          m.roles = on ? [...new Set([...(m.roles ?? []), role.id])] : (m.roles ?? []).filter((id) => id !== role.id);
-          renderMemberList();
-        } catch (err) {
-          toast(friendlyError(err), true);
-        }
-      },
-    })), r.left, r.bottom + 4);
-  });
-  return b;
-}
-
-/** Server settings → Members: everyone who belongs here, online or not. */
+/** Server settings → Members: everyone who belongs here, staff first in groups, roles as chips. */
 function renderMemberList() {
   const list = $("server-members");
   if (!$("server-settings").open || list.closest("[data-spanel]")?.hidden) return;
@@ -11616,48 +11589,77 @@ function renderMemberList() {
     list.replaceChildren(el("li", "admin-empty", q ? "Nobody by that name." : "No members yet."));
     return;
   }
-  list.replaceChildren(
-    ...members.map((m) => {
-      const li = el("li", "admin-row member-admin-row");
-      const who = el("span", "admin-who");
-      const target = { ...m, owner: m.role === "owner" };
-      who.append(avatar(m.name, "s40", online.has(m.public_key) ? "online" : undefined, pictureFor(m.public_key)));
-      const text = el("span", "admin-text");
-      const name = el("strong", "ellipsis", m.name);
-      const joined = new Date(m.joined_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-      text.append(name, el("span", "admin-sub", `${m.nick && m.account_name && m.account_name !== m.nick ? m.account_name + " · " : ""}${online.has(m.public_key) ? "Online · " : ""}Joined ${joined}`));
-      who.append(text);
-      li.append(who);
-      const actions = el("span", "member-admin-actions");
-      if (rolesOn() && (state.roster?.roles ?? []).length) {
-        // The server's own roles decide here, the same ones the Roles tab makes.
-        actions.append(memberRolesButton(m));
-      } else if (rolesICanGive(target).length) {
-        actions.append(roleSelect(target, (role) => setRole(m, role)));
-      } else {
-        actions.append(el("span", `role-label ${m.role ?? "member"}`, m.role ? ROLE_LABEL[m.role] : "Member"));
-      }
-      if (may("kick") && m.public_key !== state.account?.publicKey && rankOf(me()) > (ROLE_RANK[m.role] ?? 0)) {
-        const kick = el("button", "icon-btn", "");
-        kick.type = "button";
-        kick.setAttribute("aria-label", `Kick ${m.name}`);
-        kick.append(icon("logout"));
-        kick.addEventListener("click", () => removeUser(false, { name: m.name, public_key: m.public_key, session_id: 0, offline: true }));
-        actions.append(kick);
-      }
-      if (isOwner() && m.role !== "owner") {
-        const give = el("button", "icon-btn", "");
-        give.type = "button";
-        give.dataset.tip = "Transfer ownership";
-        give.setAttribute("aria-label", `Transfer ownership to ${m.name}`);
-        give.append(icon("crown"));
-        give.addEventListener("click", () => transferOwnership(m));
-        actions.append(give);
-      }
-      li.append(actions);
-      return li;
-    }),
-  );
+  const roles = state.roster?.roles ?? [];
+  const groups = [["owner", "Owner"], ["admin", "Admins"], ["mod", "Moderators"], [null, "Members"]];
+  const rows = [];
+  for (const [level, title] of groups) {
+    const here = members.filter((m) => (m.role ?? null) === level);
+    if (!here.length) continue;
+    rows.push(el("li", "member-group", `${title} — ${here.length}`));
+    for (const m of here) rows.push(memberRow(m, online, roles));
+  }
+  list.replaceChildren(...rows);
+}
+
+/** One person: picture, name, their roles as chips, and ⋯ for what you may do. */
+function memberRow(m, online, roles) {
+  const li = el("li", "admin-row member-admin-row");
+  const who = el("span", "admin-who");
+  who.append(avatar(m.name, "s40", online.has(m.public_key) ? "online" : undefined, pictureFor(m.public_key)));
+  const text = el("span", "admin-text");
+  const top = el("span", "member-top");
+  top.append(el("strong", "ellipsis", m.name));
+  for (const r of roles.filter((r) => m.roles?.includes(r.id))) {
+    const chip = el("span", "member-chip");
+    const dot = el("i", "role-dot");
+    dot.style.background = r.color ?? "var(--faint)";
+    chip.append(dot, r.name);
+    top.append(chip);
+  }
+  const joined = new Date(m.joined_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  text.append(top, el("span", "admin-sub", `${m.nick && m.account_name && m.account_name !== m.nick ? m.account_name + " · " : ""}${online.has(m.public_key) ? "Online · " : ""}Joined ${joined}`));
+  who.append(text);
+  li.append(who);
+  // What I may do to them, in one menu.
+  const mine = m.public_key === state.account?.publicKey;
+  const above = !can("own") && !mine && (ROLE_RANK[m.role] ?? 0) >= rankOf(me());
+  const target = { name: m.name, public_key: m.public_key, session_id: 0, offline: true };
+  const items = [];
+  const givable = roles.filter((r) => rolePerms(r).every((p) => may(p)) && (!rolePerms(r).includes("administrator") || can("own")));
+  if (rolesOn() && roles.length && may("manage_roles") && !above && givable.length) {
+    items.push({ label: "Roles", icon: "shield", submenu: givable.map((role) => ({
+      label: role.name,
+      check: !!m.roles?.includes(role.id),
+      action: async (on) => {
+        try {
+          await invoke("assign_role", { publicKey: m.public_key, role: role.id, on });
+          m.roles = on ? [...new Set([...(m.roles ?? []), role.id])] : (m.roles ?? []).filter((id) => id !== role.id);
+          renderMemberList();
+        } catch (err) {
+          toast(friendlyError(err), true);
+        }
+      },
+    })) });
+  } else if (!rolesOn() && rolesICanGive({ ...m, owner: m.role === "owner" }).length) {
+    items.push({ label: "Role", icon: "shield", submenu: rolesICanGive({ ...m, owner: m.role === "owner" }).map((role) => ({ label: role ? ROLE_LABEL[role] : "Member", checked: (m.role ?? null) === role, action: () => setRole(m, role) })) });
+  }
+  if (!mine && !above && m.role !== "owner") {
+    if (may("kick")) items.push({ label: `Kick ${m.name}`, icon: "logout", danger: true, action: () => removeUser(false, target) });
+    if (may("ban")) items.push({ label: `Ban ${m.name}`, icon: "ban", danger: true, action: () => removeUser(true, target) });
+  }
+  if (isOwner() && m.role !== "owner") items.push("sep", { label: "Transfer ownership", icon: "crown", danger: true, action: () => transferOwnership(m) });
+  if (items.length) {
+    const more = el("button", "icon-btn member-more", "");
+    more.type = "button";
+    more.setAttribute("aria-label", "More for " + m.name);
+    more.append(icon("more"));
+    more.addEventListener("click", () => {
+      const r = more.getBoundingClientRect();
+      openMenu(items[0] === "sep" ? items.slice(1) : items, r.right - 200, r.bottom + 4);
+    });
+    li.append(more);
+  }
+  return li;
 }
 $("member-search").addEventListener("input", renderMemberList);
 
@@ -16937,6 +16939,9 @@ var PERM_GROUPS = [
     ["mute_members", "Mute members", "Mute and deafen people in voice, for everyone."],
     ["move_members", "Move members", "Move people to another voice channel, or disconnect them."],
   ]],
+  ["Channels", [
+    ["view_private", "See every private channel", "Read and join private channels without being picked for each."],
+  ]],
   ["Advanced", [
     ["administrator", "Administrator", "Everything above, and every private channel. Only the owner can give it."],
   ]],
@@ -16953,83 +16958,89 @@ var ROLE_PRESETS = [
   ["mod", "Moderator", MOD_SWITCHES, "Kick, time out, mute and move people, delete and pin messages, and mention @everyone."],
   ["admin", "Admin", ["administrator"], "Everything, and every private channel. Only the owner can give it."],
 ];
-/** Custom open: the switches show even when they match a quick start. */
-var roleCustom = false;
 
 function presetOf(set) {
   return ROLE_PRESETS.find(([, , list]) => list.length === set.size && list.every((p) => set.has(p)))?.[0] ?? null;
 }
 
-/** What the role may do: a quick start (Member, Moderator, Admin), or Custom with every switch. */
+/** What a role can do, in plain words, grouped as people think of it. */
+var PERM_CHECKS = [
+  ["Messages", [["manage_messages", "Delete and pin messages"], ["mention_everyone", "Mention @everyone"], ["bypass_slowmode", "Skip slowmode"], ["manage_events", "Cancel others' events"]]],
+  ["People", [["kick", "Kick people"], ["ban", "Ban people"], ["timeout", "Time people out"], ["manage_nicknames", "Change nicknames"]]],
+  ["Voice", [["mute_members", "Mute people"], ["move_members", "Move and disconnect people"]]],
+  ["Channels", [["view_private", "See every private channel"]]],
+  ["Server", [["manage_server", "Edit the server"], ["manage_channels", "Manage channels"], ["manage_roles", "Manage roles"], ["manage_emojis", "Manage emojis"], ["create_invites", "Create invites"], ["view_audit_log", "See the audit log"]]],
+  ["Everything", [["administrator", "Admin: can do everything, and sees every private channel"]]],
+];
+/** Short words for the summary line. */
+var PERM_SHORT = { manage_messages: "delete messages", mention_everyone: "mention @everyone", bypass_slowmode: "skip slowmode", manage_events: "cancel events", kick: "kick", ban: "ban", timeout: "time out people", manage_nicknames: "change nicknames", mute_members: "mute people", move_members: "move people in voice", view_private: "see every private channel", manage_server: "edit the server", manage_channels: "manage channels", manage_roles: "manage roles", manage_emojis: "manage emojis", create_invites: "create invites", view_audit_log: "see the audit log" };
+
+/** What they can do: a plain checklist, filled from Nothing, Moderator or Admin, then changed freely. */
 function renderRolePerms() {
   const box = $("role-perms");
   const preset = presetOf(rolePermsPick);
-  const custom = roleCustom || preset === null;
+  const admin = rolePermsPick.has("administrator");
+  // Start from: fills the list in; anything after is yours to change.
+  const starts = el("div", "role-starts");
+  starts.append(el("span", "role-starts-label", "Start from"));
   const seg = el("div", "segmented role-presets");
-  const pick = (key) => {
-    if (key === "custom") roleCustom = true;
-    else {
-      roleCustom = false;
-      rolePermsPick = new Set(ROLE_PRESETS.find(([k]) => k === key)[2]);
-    }
-    renderRolePerms();
-  };
-  for (const [key, label, list] of [...ROLE_PRESETS, ["custom", "Custom", null]]) {
+  for (const [key, label, list] of [["member", "Nothing", []], ["mod", "Moderator", MOD_SWITCHES], ["admin", "Admin", ["administrator"]]]) {
     const b = el("button", "segment", label);
     b.type = "button";
     b.dataset.preset = key;
-    b.disabled = !!list && (!list.every((p) => may(p)) || (list.includes("administrator") && !can("own")));
-    b.classList.toggle("active", custom ? key === "custom" : key === preset);
-    b.addEventListener("click", () => pick(key));
+    b.disabled = !list.every((p) => may(p)) || (list.includes("administrator") && !can("own"));
+    b.classList.toggle("active", key === preset);
+    b.addEventListener("click", () => {
+      rolePermsPick = new Set(list);
+      renderRolePerms();
+    });
     seg.append(b);
   }
-  const on = rolePermsPick.has("administrator") ? "Everything" : rolePermsPick.size === 1 ? "1 switch on" : `${rolePermsPick.size} switches on`;
-  const about = el("p", "role-perm-about", custom ? `${on}. Switches you don't have yourself are locked.` : ROLE_PRESETS.find(([k]) => k === preset)[3]);
-  if (!custom) return box.replaceChildren(seg, about);
-  const admin = rolePermsPick.has("administrator");
-  const groups = PERM_GROUPS.map(([title, rows]) => {
-    const g = el("div", "role-perm-group");
+  starts.append(seg);
+  // What this role can do, said plainly.
+  const can_ = PERM_ORDER.filter((p) => rolePermsPick.has(p) && PERM_SHORT[p]).map((p) => PERM_SHORT[p]);
+  const summary = el("p", "role-summary", admin ? "Can do everything in the server." : can_.length ? "Can " + (can_.length > 1 ? can_.slice(0, -1).join(", ") + " and " + can_.at(-1) : can_[0]) + "." : "Just a name and a colour: nothing extra.");
+  const groups = PERM_CHECKS.map(([title, rows]) => {
+    const g = el("div", "role-check-group");
     g.append(el("span", "role-section-title", title));
-    const list = el("div", "role-perm-list");
-    for (const [p, name, sub] of rows) {
-      const row = el("label", "role-perm");
-      // What you may not do yourself, you can't give (or take away); Administrator is the owner's.
+    const grid = el("div", "role-checks");
+    for (const [p, name] of rows) {
+      const row = el("label", "role-check");
+      // What you may not do yourself, you can't give (or take away); Admin is the owner's.
       const locked = p === "administrator" ? !can("own") : !may(p);
       const included = admin && p !== "administrator";
-      row.title = included ? "Included in Administrator." : locked ? (p === "administrator" ? "Only the owner can give this." : "You can't give what you can't do yourself.") : sub;
-      const sw = el("input");
-      sw.type = "checkbox";
-      sw.className = "switch";
-      sw.dataset.perm = p;
-      sw.checked = included || rolePermsPick.has(p);
-      sw.disabled = locked || included;
-      sw.addEventListener("change", () => {
-        if (sw.checked) rolePermsPick.add(p);
+      row.title = included ? "Included in Admin." : locked ? (p === "administrator" ? "Only the owner can give this." : "You can't give what you can't do yourself.") : "";
+      const box = el("input");
+      box.type = "checkbox";
+      box.dataset.perm = p;
+      box.checked = included || rolePermsPick.has(p);
+      box.disabled = locked || included;
+      box.addEventListener("change", () => {
+        if (box.checked) rolePermsPick.add(p);
         else rolePermsPick.delete(p);
         renderRolePerms();
       });
-      row.classList.toggle("locked", sw.disabled);
-      row.append(el("span", "role-perm-name", name), sw);
-      list.append(row);
+      row.classList.toggle("locked", box.disabled);
+      row.classList.toggle("on", box.checked);
+      row.append(box, el("span", null, name));
+      grid.append(row);
     }
-    g.append(list);
+    g.append(grid);
     return g;
   });
-  box.replaceChildren(seg, about, ...groups);
+  box.replaceChildren(starts, summary, ...groups);
 }
 
 // ---------- the role editor's tabs, and who has the role ----------
 
 var roleTab = "display";
+/** The role on one page, top to bottom: name and colour, what they can do, who has it. */
 function showRoleTab(tab) {
   roleTab = tab;
-  document.querySelectorAll("[data-rtab]").forEach((b) => b.classList.toggle("active", b.dataset.rtab === tab));
-  document.querySelectorAll("[data-rpanel]").forEach((p) => (p.hidden = p.dataset.rpanel !== tab));
-  // Members are given and taken at once; the rest waits for Save.
-  $("role-editor-foot").hidden = tab === "members";
-  if (tab === "members") renderRoleMembers();
+  renderRoleMembers();
+  // Asked for one part (a test, a link): it's scrolled to.
+  if (tab !== "display") document.querySelector(`[data-rpanel="${tab}"]`)?.scrollIntoView({ block: "nearest" });
 }
-document.querySelectorAll("[data-rtab]").forEach((b) => b.addEventListener("click", () => showRoleTab(b.dataset.rtab)));
 
 /** Everyone in the server: the member list once it's here, else who's online. */
 function rolePeople() {
@@ -17114,7 +17125,6 @@ function openRole(r, keepEdits) {
   $("role-levels").hidden = permsOn();
   $("role-perms").hidden = !permsOn();
   rolePermsPick = new Set(rolePerms(r));
-  roleCustom = false;
   if (permsOn()) renderRolePerms();
   else renderRoleLevels();
   renderRolePreview();

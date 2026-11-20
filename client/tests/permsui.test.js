@@ -66,13 +66,14 @@
     sw("administrator").click();
     await wait(30);
     check("Administrator includes everything", sw("kick").checked && sw("kick").disabled);
-    // A quick start hides the switches; Custom shows them.
+    // Start from Moderator fills the checklist in; it can still be changed.
     document.querySelector('#role-perms [data-preset="mod"]').click();
     await wait(30);
-    check("Moderator is one pick, without the list", !$("role-perms").querySelector("input[data-perm]"));
-    document.querySelector('#role-perms [data-preset="custom"]').click();
+    check("Moderator ticks its things", sw("kick").checked && sw("timeout").checked && !sw("ban").checked);
+    sw("kick").click();
     await wait(30);
-    check("Custom shows every switch", $("role-perms").querySelectorAll("input[data-perm]").length === 17);
+    check("and a moderator role can be changed (no kicking)", !sw("kick").checked && sw("timeout").checked && /time out/.test(document.querySelector(".role-summary").textContent));
+    check("every thing a role can do is listed", $("role-perms").querySelectorAll("input[data-perm]").length === 18);
 
     // Members: who has it, and adding someone by name.
     const given = [];
@@ -85,7 +86,6 @@
     add?.click();
     await wait(30);
     check("adding someone gives them the role at once", given.some((g) => g.on === true && g.role === 2));
-    check("no Save needed there", $("role-editor-foot").hidden);
     showRoleTab("display");
     $("server-settings").close();
 
