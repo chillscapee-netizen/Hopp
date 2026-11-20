@@ -5466,6 +5466,9 @@ async function setMuted(muted) {
   state.muted = muted;
   await call("set_muted", { muted });
   renderUserPanel();
+  // A voice channel's row and a call's show it too.
+  syncVoiceControls();
+  if (state.call) renderCall();
 }
 
 async function setDeafened(deafened) {
@@ -5473,6 +5476,8 @@ async function setDeafened(deafened) {
   state.deafened = deafened;
   await call("set_deafened", { deafened });
   renderUserPanel();
+  syncVoiceControls();
+  if (state.call) renderCall();
 }
 
 // Unmuting while deafened undeafens too.
