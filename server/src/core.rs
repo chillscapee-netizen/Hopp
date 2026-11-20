@@ -392,8 +392,8 @@ const JOINED: &str = "hopp-joined";
 const RULES_FIRST: &str = "Read and agree to this server's rules first. (Update Hopp if you don't see them.)";
 
 /// What a role may do, one switch each (as in Discord). Administrator is all of them.
-const PERMS: [&str; 17] = [
-    "manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "administrator",
+const PERMS: [&str; 18] = [
+    "manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "view_private", "administrator",
 ];
 /// The Moderator of before (a role's level, or the built-in one), as switches.
 const MOD_PERMS: [&str; 9] = ["manage_nicknames", "kick", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members"];
@@ -1560,7 +1560,8 @@ impl Core {
     /// Whether someone may see a channel: everyone, unless it's private to some roles (admins always).
     fn can_see(&self, key: &str, ch: Option<&Ch>) -> bool {
         let Some(roles) = ch.and_then(|c| c.private_roles.as_ref()).filter(|r| !r.is_empty()) else { return true };
-        if key.is_empty() || self.perms_of(key).contains("administrator") {
+        let mine = if key.is_empty() { HashSet::new() } else { self.perms_of(key) };
+        if key.is_empty() || mine.contains("administrator") || mine.contains("view_private") {
             return true;
         }
         let mine: HashSet<i64> = self.roles_of(key).into_iter().collect();
@@ -1575,7 +1576,8 @@ impl Core {
             keys.insert(owner);
         }
         keys.extend(self.strings("SELECT key FROM accounts WHERE role = 'admin'", []));
-        let admin_roles: HashSet<i64> = self.custom_roles().into_iter().filter(|r| r.level.as_deref() == Some("admin")).map(|r| r.id).collect();
+        // Roles that see every private channel: Administrator, or "See every private channel".
+        let admin_roles: HashSet<i64> = self.custom_roles().into_iter().filter(|r| r.perms.iter().any(|p| p == "administrator" || p == "view_private")).map(|r| r.id).collect();
         if let Ok(mut s) = self.db.prepare_cached("SELECT key, role FROM member_roles") {
             for (k, r) in s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).map(|rows| rows.flatten().collect::<Vec<_>>()).unwrap_or_default() {
                 if wanted.contains(&r) || admin_roles.contains(&r) {

@@ -165,7 +165,7 @@ const JOINED = "hopp-joined";
 const RULES_FIRST = "Read and agree to this server's rules first. (Update Hopp if you don't see them.)";
 
 /** What a role may do, one switch each (as in Discord). Administrator is all of them. */
-const PERMS = ["manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "administrator"] as const;
+const PERMS = ["manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "view_private", "administrator"] as const;
 type Perm = (typeof PERMS)[number];
 /** The Moderator of before (a role's level, or the built-in one), as switches. */
 const MOD_PERMS: Perm[] = ["manage_nicknames", "kick", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members"];
@@ -1232,7 +1232,8 @@ export class StromServer extends DurableObject<Env> {
   /** Whether someone may see a channel: everyone, unless it's private to some roles (admins always). */
   private canSee(key: string | undefined, ch: Channel | undefined): boolean {
     if (!ch?.private_roles?.length || !key) return true;
-    if (this.permsOf(key).has("administrator")) return true;
+    const perms = this.permsOf(key);
+    if (perms.has("administrator") || perms.has("view_private")) return true;
     const mine = new Set(this.rolesOf(key));
     return ch.private_roles.some((r) => mine.has(r));
   }
@@ -1248,7 +1249,8 @@ export class StromServer extends DurableObject<Env> {
     if (owner) keys.add(owner);
     for (const r of this.sql.exec("SELECT key FROM accounts WHERE role = 'admin'")) keys.add(String(r.key));
     const wanted = new Set(ch.private_roles);
-    const adminRoles = new Set(this.customRoles().filter((r) => r.level === "admin").map((r) => r.id));
+    // Roles that see every private channel: Administrator, or "See every private channel".
+    const adminRoles = new Set(this.customRoles().filter((r) => r.perms.includes("administrator") || r.perms.includes("view_private")).map((r) => r.id));
     for (const r of this.sql.exec("SELECT key, role FROM member_roles")) {
       if (wanted.has(Number(r.role)) || adminRoles.has(Number(r.role))) keys.add(String(r.key));
     }

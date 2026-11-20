@@ -986,6 +986,15 @@ test("roles: switches open just what they say, and only someone who has a switch
   const kept = (await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Builders"))).roles.find((r) => r.name === "Builders");
   assert.deepEqual(kept.perms, ["manage_channels"]);
 
+  // "See every private channel" opens private channels the role wasn't picked for.
+  owner.send({ type: "create_channel", name: "secret", kind: "text" });
+  const secretId = (await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "secret"))).channels.find((c) => c.name === "secret").id;
+  owner.send({ type: "update_channel", channel: secretId, name: "secret", private_roles: [kicker.id] });
+  await bob.waitFor((m) => m.type === "channels_updated" && !m.channels.some((c) => c.id === secretId));
+  const watchers = await make("Watchers", ["view_private"]);
+  await give(bob, watchers);
+  await bob.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.id === secretId));
+
   // Kick works for the one who has it.
   ann.send({ type: "kick", session_id: pat.id });
   await pat.waitFor((m) => m.type === "kicked");
