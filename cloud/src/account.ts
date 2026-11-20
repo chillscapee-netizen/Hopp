@@ -1349,7 +1349,10 @@ export class StromAccount extends DurableObject<Env> {
 
   /** Someone reacted to a message in a conversation with us. */
   async dmReacted(fromKey: string, conversation: string, id: string, sealed: string | null): Promise<boolean> {
-    const peer = this.group(conversation) ? conversation : fromKey;
+    // Only from a friend (in a DM) or someone in the group: never from someone blocked or gone.
+    const group = this.group(conversation);
+    if (group ? !group.members.includes(fromKey) : this.friend(fromKey)?.state !== "friend") return false;
+    const peer = group ? conversation : fromKey;
     const row = this.sql.exec("SELECT reactions FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
     if (!row) return false;
     const reactions = this.setReaction(row.reactions, fromKey, sealed);

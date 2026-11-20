@@ -2220,6 +2220,14 @@ async function connectTo(server, create, reconnecting) {
     if (state.voiceAway?.id === server.id) {
       state.voiceAway = null;
       state.awaySpeaking = false;
+      // Still sharing there: your own stream is ready in its voice channel again (you stay where you are).
+      if (typeof screenShare !== "undefined" && screenShare.stream && !watching) {
+        watching = { from: roster.me, pc: null, pending: [], local: true };
+        queueMicrotask(() => {
+          $("screen-video").srcObject = screenShare.stream;
+          renderScreenStage();
+        });
+      }
     }
     freshView();
     rememberServerLook(server, roster);

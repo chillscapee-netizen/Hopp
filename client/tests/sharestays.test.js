@@ -56,6 +56,19 @@
     for (let i = 0; i < 20 && !sent.some((m) => m.type === "screen_signal" && JSON.parse(m.data).k === "offer"); i++) await wait(50);
     check("a viewer asking meanwhile gets your stream", sent.some((m) => m.type === "screen_signal" && m.to === elin.session_id && JSON.parse(m.data).k === "offer"));
 
+    // Back to the first server: your stream is there in its voice channel again.
+    rows[0].click();
+    for (let i = 0; i < 40 && !(online() && activeServer()?.id === first.id); i++) await wait(50);
+    // (As a real server does: you're still in its voice channel.)
+    emit("roster", base);
+    await wait(150);
+    check("back: still sharing, and your own stream is ready again", !!screenShare.stream && watching?.local === true);
+    openTextChannel(1);
+    await wait(80);
+    check("it shows in the voice channel", !$("screen-stage").hidden);
+    rows[1].click();
+    for (let i = 0; i < 40 && !(online() && activeServer()?.id !== first.id); i++) await wait(50);
+    await wait(100);
     // Hanging up from away ends it.
     $("hangup-btn").click();
     await wait(60);
