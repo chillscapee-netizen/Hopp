@@ -4757,3 +4757,14 @@ html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34
 .head-search { flex: 0 6 180px; min-width: 96px; width: auto; }
 .head-search:focus-within { flex-basis: 260px; width: auto; }
 .head-title { flex-shrink: 1; min-width: 60px; max-width: 45%; }
+
+/* #rules and #welcome cards: no outline, a soft panel in the theme's own tint, the icon in the
+   theme's colour, and the empty state's button set apart on its own line. */
+.rules-card { border: none; background: color-mix(in srgb, var(--text) 5%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent); border-radius: 18px; padding: 22px 24px; }
+.rules-card-mark { background: color-mix(in srgb, var(--accent, var(--link)) 22%, transparent); color: var(--accent, var(--link)); border-radius: 16px; }
+.rules-card .rules-item { background: color-mix(in srgb, var(--text) 6%, transparent); border: none; }
+.rules-empty { flex-wrap: wrap; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
+
+/* The message box: no coloured outline when you type in it, just a touch lighter. */
+.composer-box, .composer-box:focus-within { border-color: transparent; box-shadow: none; outline: none; }
+.composer-box:focus-within { background: color-mix(in srgb, var(--layer-2) 100%, rgb(255 255 255 / 0.04)); }
