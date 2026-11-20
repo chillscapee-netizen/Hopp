@@ -984,3 +984,23 @@ test("reactions in DMs: sealed lists reach both people, are kept with the messag
   a.d.close();
   b.d.close();
 });
+
+test("typing in a DM reaches the friend at once and is never kept; strangers' don't", async () => {
+  const a = await userWithName("typist");
+  const b = await userWithName("watcher");
+  const c = await userWithName("stranger");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+  a.d.send({ type: "dm_typing", with: b.key.pub });
+  const seen = await b.d.waitFor((m) => m.type === "dm_typing");
+  assert.equal(seen.with, a.key.pub);
+  assert.equal(seen.from, a.key.pub);
+  c.d.send({ type: "dm_typing", with: b.key.pub });
+  await sleep(500);
+  assert.ok(!b.d.log.some((m) => m.type === "dm_typing" && m.from === c.key.pub), "a stranger's typing doesn't reach");
+  a.d.close();
+  b.d.close();
+  c.d.close();
+});

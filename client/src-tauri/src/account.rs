@@ -42,6 +42,7 @@ const ALLOWED: &[&str] = &[
     "group_send",
     "dm_edit",
     "dm_react",
+    "dm_typing",
     "dm_delete",
     "file_signal",
     "turn_login",

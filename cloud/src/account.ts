@@ -1075,6 +1075,14 @@ export class StromAccount extends DurableObject<Env> {
       }
       case "turn_login":
         return this.relayLogin(ws);
+      case "dm_typing": {
+        // "Typing…" in a DM or group: passed on at once, never kept.
+        const peer = String(msg.with ?? "").toLowerCase();
+        const group = this.group(peer);
+        const others = group ? group.members.filter((k) => k !== myKey) : this.friend(peer)?.state === "friend" ? [peer] : [];
+        await Promise.all(others.map((k) => accountOf(this.env, k).dmTyping(myKey, peer).catch(() => false)));
+        return;
+      }
       case "file_signal": {
         // Files go straight between friends' computers; this only passes their handshake
         // (sealed like a DM, so the cloud can't read it).
@@ -1736,6 +1744,15 @@ export class StromAccount extends DurableObject<Env> {
   }
 
   /** A file handshake from a friend. False when none of our devices is online. */
+  /** Someone is typing to us (or in a group we're in): our open devices show it. */
+  async dmTyping(fromKey: string, conversation: string): Promise<boolean> {
+    const group = this.group(conversation);
+    if (group ? !group.members.includes(fromKey) : this.friend(fromKey)?.state !== "friend") return false;
+    if (this.devices().length === 0) return false;
+    this.toDevices({ type: "dm_typing", with: group ? conversation : fromKey, from: fromKey });
+    return true;
+  }
+
   async fileSignal(fromKey: string, transfer: string, sealed: string): Promise<boolean> {
     if (this.friend(fromKey)?.state !== "friend") return false;
     if (this.devices().length === 0) return false;

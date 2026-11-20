@@ -4031,6 +4031,31 @@ function inviteCardView(p, known, link) {
   return card;
 }
 
+/** "Elin is typing…" under a DM's box, for the conversation that's open. */
+function renderDmTyping() {
+  const box = document.querySelector(".dm-typing");
+  const peer = document.querySelector(".dm-view")?.dataset.peer;
+  if (!box || !peer) return;
+  const now = Date.now();
+  const typers = state.dmTyping.get(peer);
+  const names = [];
+  for (const [key, until] of typers ?? []) {
+    if (until > now) names.push(personFor(key).display_name);
+    else typers.delete(key);
+  }
+  const said = names.join("\n");
+  if (box.dataset.said === said) return;
+  box.dataset.said = said;
+  if (!names.length) return box.replaceChildren();
+  const dots = el("span", "typing-dots");
+  dots.append(el("i"), el("i"), el("i"));
+  const who = names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : "Several people";
+  const text = el("span");
+  text.append(el("strong", "", who), names.length === 1 ? " is typing…" : " are typing…");
+  box.replaceChildren(dots, text);
+}
+setInterval(() => document.querySelector(".dm-typing") && renderDmTyping(), 1000);
+
 function renderTyping() {
   const now = Date.now();
   const typers = state.typing.get(state.view);
@@ -7464,6 +7489,8 @@ async function pushSync() {
 // (dm_seal / dm_open), stored as ciphertext in both accounts.
 
 state.conversations = new Map(); // peer key -> { last_at, last_read }
+state.dmTyping = new Map(); // peer -> Map(who -> until)
+state.dmTypingSent = new Map(); // peer -> when we last said we type
 state.dmMessages = new Map(); // peer key -> [{ id, from_key, sent_at, text, pending?, failed? }]
 state.dmComplete = new Set(); // peers whose whole history is loaded
 state.openDm = null;
@@ -7572,6 +7599,8 @@ function onDmEvent(m) {
   }
   if (m.type === "dm") {
     const peer = m.with;
+    // Their message came: they're done typing it.
+    if (state.dmTyping.get(peer)?.delete(m.message.from_key)) renderDmTyping();
     const conv = state.conversations.get(peer) ?? { last_at: 0, last_read: 0 };
     conv.last_at = Math.max(conv.last_at, m.message.sent_at);
     const mine = m.message.from_key === state.me?.key;
@@ -7602,6 +7631,12 @@ function onDmEvent(m) {
       msg.edited_at = m.edited_at;
       renderDmAreas(m.with);
     });
+    return true;
+  }
+  if (m.type === "dm_typing") {
+    if (!state.dmTyping.has(m.with)) state.dmTyping.set(m.with, new Map());
+    state.dmTyping.get(m.with).set(m.from, Date.now() + 7000);
+    renderDmTyping();
     return true;
   }
   if (m.type === "dm_reactions") {
@@ -7916,6 +7951,11 @@ function renderDmView(keepScroll) {
     input.addEventListener("input", () => {
       input.style.height = "auto";
       input.style.height = `${input.scrollHeight}px`;
+      // "Typing…" for them, at most every 5 seconds while you write (nothing kept anywhere).
+      if (input.value.trim() && Date.now() - (state.dmTypingSent.get(peer) ?? 0) > 5000) {
+        state.dmTypingSent.set(peer, Date.now());
+        invoke("account_send", { msg: { type: "dm_typing", with: peer } }).catch(() => {});
+      }
     });
     const row = el("div", "composer-row");
     const emoji = el("button", "composer-icon");
@@ -7970,7 +8010,8 @@ function renderDmView(keepScroll) {
     box.append(replyBar, tray, row);
     const lock = el("p", "dm-lock");
     lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
-    form.append(box);
+    const typingLine = el("div", "typing dm-typing");
+    form.append(box, typingLine);
     const jump = el("button", "jump-bar dm-jump-bar");
     jump.type = "button";
     jump.hidden = true;
