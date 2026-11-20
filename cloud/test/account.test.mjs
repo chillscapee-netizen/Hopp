@@ -939,3 +939,17 @@ test("an account saved to Hopp Cloud: saved by itself only, fetched with the rig
   r = await post({ action: "delete", id, key: me.pub, sig: sign(me, `hopp-backup-delete|${id}`) });
   assert.equal(r.status, 200);
 });
+
+test("a tunnel's host hears hopp-pong to its hopp-ping, so a quiet tunnel isn't taken for dead", async () => {
+  const id = crypto.randomBytes(16).toString("hex");
+  const secret = crypto.randomBytes(32).toString("hex");
+  const ws = new WebSocket(`${BASE}/tunnels/${id}/host?secret=${secret}`);
+  await new Promise((ok, no) => {
+    ws.addEventListener("open", ok);
+    ws.addEventListener("error", no);
+  });
+  const answer = new Promise((ok) => ws.addEventListener("message", (e) => ok(e.data)));
+  ws.send("hopp-ping");
+  assert.equal(await Promise.race([answer, sleep(WAIT_MS).then(() => "nothing")]), "hopp-pong");
+  ws.close();
+});

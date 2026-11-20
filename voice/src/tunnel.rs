@@ -129,7 +129,7 @@ where
         loop {
             let msg = tokio::select! {
                 frame = out_rx.recv() => match frame { Some(f) => Message::Binary(f.into()), None => break },
-                ping = ping_rx.recv() => match ping { Some(()) => Message::Ping(Vec::new().into()), None => break },
+                ping = ping_rx.recv() => match ping { Some(()) => Message::Text("hopp-ping".into()), None => break },
             };
             if sink.send(msg).await.is_err() {
                 break;
@@ -138,7 +138,7 @@ where
     });
     // A tunnel that went quiet may be gone without either side hearing of it (a router forgets
     // idle connections): friends would then wait on "Connecting" for nothing. So it says hello
-    // every 25 seconds (Cloudflare answers), and with no word back for a minute it's opened again.
+    // every 25 seconds (Hopp Cloud answers "hopp-pong" without waking up), and with no word back for a minute it's opened again.
     let mut tick = tokio::time::interval(Duration::from_secs(25));
     let mut heard = tokio::time::Instant::now();
     let mut conns: HashMap<u32, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();

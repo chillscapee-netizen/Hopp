@@ -37,6 +37,13 @@ async function sha256hex(text: string): Promise<string> {
 }
 
 export class HoppTunnel extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // The host says "hopp-ping" now and then to know the tunnel is still there: answered here
+    // without waking this object (so it costs nothing).
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("hopp-ping", "hopp-pong"));
+  }
+
   private host(): WebSocket | undefined {
     return this.ctx.getWebSockets("host")[0];
   }
