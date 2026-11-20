@@ -827,6 +827,11 @@ fn background(ui: &AppHandle, address: &str, generation: u64, roster: &Arc<Mutex
                 }),
             );
         }
+        // Watching together where you're in voice, while another server is in view: kept, so
+        // coming back shows what they're watching now.
+        ServerMsg::Watch { channel, video, position, playing, at_ago, by } => {
+            let _ = ui.emit("background-watch", serde_json::json!({ "address": address, "channel": channel, "video": video, "position": position, "playing": playing, "at_ago": at_ago, "by": by }));
+        }
         // Voice, typing, screens and answers are for the server in view.
         ServerMsg::VoiceSession { .. } | ServerMsg::VoicePeer { .. } | ServerMsg::Typing { .. } | ServerMsg::ScreenSignal { .. } => {}
         _ => {

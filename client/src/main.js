@@ -2120,8 +2120,9 @@ listen("roster", (e) => {
   const companyBefore = voiceCompany();
   const knownChannels = new Set((state.roster?.channels ?? []).map((c) => c.id));
   state.roster = e.payload;
-  // Out of the channel that was watching together: what it watches is told afresh on coming back.
-  if (state.watch && myVoice() !== state.watch.channel) state.watch = null;
+  // Out of the channel that was watching together (on this server; voice can go on in another
+  // while you look here): what it watches is told afresh on coming back.
+  if (state.watch && state.watch.server === state.activeId && myVoice() !== state.watch.channel) state.watch = null;
   // A server's events, once per connection (they follow as they change).
   if (state.roster.features?.includes("events") && eventsAsked !== state.activeId) {
     eventsAsked = state.activeId;
@@ -2491,9 +2492,9 @@ function personRow(m, i, status) {
 }
 
 listen("disconnected", () => {
-  // The connection is gone: what was being watched is told afresh on coming back.
-  state.watch = null;
   const server = activeServer();
+  // The connection is gone: what was being watched there is told afresh on coming back.
+  if (state.watch && (!server || state.watch.server === server.id)) state.watch = null;
   // We just left this server on purpose.
   if (!server && state.justLeft) {
     state.justLeft = false;
@@ -15343,7 +15344,7 @@ var watchPlayer = { frame: null, video: null, time: 0, state: -1, quietUntil: 0 
 
 function watchHere() {
   const w = state.watch;
-  return !!w?.video && online() && state.view === w.channel && myVoice() === w.channel;
+  return !!w?.video && online() && w.server === state.activeId && state.view === w.channel && myVoice() === w.channel;
 }
 
 /** Where the shared video should be now, in seconds. */
@@ -15379,11 +15380,22 @@ function stopWatchTogether() {
 $("watch-change").addEventListener("click", startWatching);
 $("watch-stop").addEventListener("click", stopWatchTogether);
 
+/** What a server's voice channel watches together (one at a time: you're in one voice channel). */
+function keepWatch(serverId, w) {
+  if (w.video) state.watch = { server: serverId, channel: w.channel, video: w.video, position: Number(w.position) || 0, playing: !!w.playing, by: w.by ?? "", receivedAt: Date.now() - (Number(w.at_ago) || 0) };
+  else if (!state.watch || state.watch.server === serverId) state.watch = null;
+}
+
 listen("watch", (e) => {
-  const w = e.payload ?? {};
-  state.watch = w.video ? { channel: w.channel, video: w.video, position: Number(w.position) || 0, playing: !!w.playing, by: w.by ?? "", receivedAt: Date.now() - (Number(w.at_ago) || 0) } : null;
+  keepWatch(state.activeId, e.payload ?? {});
   renderVoiceStage();
   applyWatch();
+});
+// The server you're in voice on, while another is in view.
+listen("background-watch", (e) => {
+  const w = e.payload ?? {};
+  const server = prefs.servers.find((s) => endpoint(s) === w.address);
+  if (server) keepWatch(server.id, w);
 });
 
 /** The player follows what's shared: the video, where it is, playing or paused. */

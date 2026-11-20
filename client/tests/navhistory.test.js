@@ -67,6 +67,10 @@
     for (let i = 0; i < 30 && state.activeId !== "a"; i++) await wait(100);
     await wait(100);
     check("back: the first server, on the channel you were on", state.activeId === "a" && where() === "ch3", state.activeId + " " + where());
+    check("and forward is still there (connecting didn't count as a new place)", !$("nav-forward").disabled, JSON.stringify(nav));
+    forward();
+    for (let i = 0; i < 30 && state.activeId !== "b"; i++) await wait(100);
+    check("forward: the other server again", state.activeId === "b", String(state.activeId));
 
     // The logo isn't ringed when Home is open (it was cut off at the top).
     $("home-btn").click();

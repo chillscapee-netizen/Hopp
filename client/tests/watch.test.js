@@ -57,6 +57,25 @@
     emit("roster", out);
     await wait(80);
     check("leaving the channel forgets what it was watching", state.watch === null && $("watch-stage").hidden);
+
+    // In voice here while another server is in view: kept, and changes there arrive.
+    const here = state.activeId;
+    emit("roster", r);
+    await wait(50);
+    emit("watch", { channel: 1, video: "ccccccccccc", position: 0, playing: true, at_ago: 0, by: "Elin" });
+    await wait(50);
+    state.activeId = "b";
+    emit("roster", out);
+    await wait(50);
+    check("another server's view doesn't forget it", state.watch?.video === "ccccccccccc" && state.watch.server === here);
+    const server = prefs.servers.find((s) => s.id === here);
+    emit("background-watch", { address: endpoint(server), channel: 1, video: "ddddddddddd", position: 12, playing: false, at_ago: 0, by: "Jonas" });
+    await wait(50);
+    check("a change there while away is kept", state.watch?.video === "ddddddddddd" && state.watch.playing === false);
+    check("and isn't shown on the other server", !watchHere());
+    state.activeId = here;
+    emit("roster", r);
+    await wait(50);
   } catch (e) {
     check("no crash: " + e.message + " " + String(e.stack).slice(0, 200), false);
   }
