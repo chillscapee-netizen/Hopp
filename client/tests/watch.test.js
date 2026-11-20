@@ -23,6 +23,7 @@
     button().click();
     await wait(50);
     check("it asks for a YouTube link", $("text-dialog").open);
+    check("and a whole link fits (not a name's 32 characters)", $("text-input").maxLength >= 200, String($("text-input").maxLength));
     $("text-input").value = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30";
     $("text-form").requestSubmit();
     await wait(150);

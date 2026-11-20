@@ -14970,7 +14970,8 @@ async function pickFriendGroup(f) {
 }
 
 /** A small dialog asking for a short text; null when cancelled. */
-function askText({ title, label, value = "", options = [], hint = "", ok = "Save" }) {
+/** Asks for a line of text; `max` characters (names are short; a link or a bio is longer). */
+function askText({ title, label, value = "", options = [], hint = "", ok = "Save", max = 32 }) {
   const dialog = $("text-dialog");
   $("text-title").textContent = title;
   $("text-label").textContent = label;
@@ -14978,6 +14979,7 @@ function askText({ title, label, value = "", options = [], hint = "", ok = "Save
   $("text-ok").textContent = ok;
   $("text-options").replaceChildren(...options.map((o) => Object.assign(document.createElement("option"), { value: o })));
   const input = $("text-input");
+  input.maxLength = max;
   input.value = value;
   openModal(dialog);
   input.focus();
@@ -15358,7 +15360,7 @@ function watchCommand(func, args = []) {
 }
 
 async function startWatching() {
-  const link = await askText({ title: "Watch together", label: "A YouTube link", value: "", ok: "Watch", hint: "Everyone in this voice channel sees it with you, at the same moment." });
+  const link = await askText({ title: "Watch together", label: "A YouTube link", value: "", ok: "Watch", max: 2000, hint: "Everyone in this voice channel sees it with you, at the same moment." });
   if (!link?.trim()) return;
   const video = youtubeId(link.trim());
   if (!video) return toast("That isn't a YouTube link.", true);
@@ -16579,7 +16581,7 @@ $("invites-create").addEventListener("click", () => {
 
 // About me: a line or two that friends and people in your servers see on your card.
 $("bio-edit").addEventListener("click", async () => {
-  const text = await askText({ title: "About me", label: "About me", value: state.me?.bio ?? "", hint: "Up to 190 characters. Friends and people in your servers see it on your card." });
+  const text = await askText({ title: "About me", label: "About me", value: state.me?.bio ?? "", max: 190, hint: "Up to 190 characters. Friends and people in your servers see it on your card." });
   if (text === null || text === undefined) return;
   accountSend({ type: "set_profile", bio: text.trim() }).catch((err) => toast(friendlyError(err), true));
 });
