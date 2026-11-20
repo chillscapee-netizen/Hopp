@@ -99,7 +99,7 @@ if (!calm && msgs && typing) {
   if (!shot) return;
   const slides = [...shot.querySelectorAll(".shot-slides img")];
   const dots = [...shot.querySelectorAll(".shot-dots button")];
-  const captions = ["Your friends, and who's around", "A server's chat, with reactions and a thread", "Add a friend by their username"];
+  const captions = ["Hang out in voice, with cameras and screen sharing", "Themes: greys, gradients or your own", "Run your server: roles, emojis, safety and more", "Your profile: banner, name colour and font", "Make a server on Hopp Cloud, or run your own"];
   let at = 0;
   const show = (i) => {
     at = (i + slides.length) % slides.length;
