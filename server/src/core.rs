@@ -1386,7 +1386,8 @@ impl Core {
     fn send_rules(&self, conn: ConnId, key: &str) {
         let welcome = self.meta("welcome_channel").and_then(|v| v.parse::<i64>().ok());
         let at: i64 = self.meta("rules_at").and_then(|v| v.parse().ok()).unwrap_or(0);
-        self.send(conn, &json!({ "type": "rules", "rules": self.meta("rules"), "at": at, "accepted": !self.needs_rules(key), "welcome_channel": welcome }));
+        let shown = self.meta("rules_channel").and_then(|v| v.parse::<i64>().ok());
+        self.send(conn, &json!({ "type": "rules", "rules": self.meta("rules"), "at": at, "accepted": !self.needs_rules(key), "welcome_channel": welcome, "rules_channel": shown }));
     }
 
     /// "Elin joined" in the welcome channel, as a message of its own (apps show it as a welcome).
@@ -2551,6 +2552,17 @@ impl Core {
                         return self.error(conn, "Pick a text channel for welcomes.");
                     }
                 }
+                // A #rules channel showing them (left as it is by apps that don't send it).
+                let rules_channel: Option<Option<i64>> = match msg.get("rules_channel") {
+                    None => None,
+                    Some(v) if v.is_null() => Some(None),
+                    Some(v) => Some(Some(int(v))),
+                };
+                if let Some(Some(c)) = rules_channel {
+                    if self.channel(c).is_none_or(|ch| ch.kind != "text") {
+                        return self.error(conn, "Pick a text channel for the rules.");
+                    }
+                }
                 // New rules: everyone agrees again (whoever wrote them already has).
                 if rules != self.meta("rules").unwrap_or_default() {
                     if rules.is_empty() {
@@ -2560,6 +2572,16 @@ impl Core {
                         self.set_meta("rules_at", &now_ms().to_string());
                     }
                     self.audit(&user.name, "rules", None, Some(if rules.is_empty() { "removed" } else { "changed" }));
+                }
+                match rules_channel {
+                    Some(None) => self.exec("DELETE FROM meta WHERE key = 'rules_channel'", []),
+                    Some(Some(c)) => {
+                        self.set_meta("rules_channel", &c.to_string());
+                        // Nobody writes in it but staff: it's for reading the rules.
+                        self.exec("UPDATE channels SET announce = 1 WHERE id = ?", [c]);
+                        self.channels_changed(false);
+                    }
+                    None => {}
                 }
                 match welcome {
                     Some(w) => self.set_meta("welcome_channel", &w.to_string()),

@@ -1024,6 +1024,14 @@ test("rules and welcomes: newcomers agree first, a welcome appears; announcement
   assert.match(await errorOf(ann), /Only moderators and admins/);
   owner.send({ type: "send_chat", channel: general, text: "news" });
   await ann.waitFor((m) => m.type === "chat" && m.message.text === "news");
+
+  // A #rules channel shows them: it's for reading, and everyone is told which it is.
+  owner.send({ type: "create_channel", name: "rules", kind: "text" });
+  const made = await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "rules"));
+  const rulesId = made.channels.find((c) => c.name === "rules").id;
+  owner.send({ type: "set_rules", rules: "Be kind. No spam.", welcome_channel: general, rules_channel: rulesId });
+  await ann.waitFor((m) => m.type === "channels_updated" && m.channels.find((c) => c.id === rulesId)?.announce === true);
+  await ann.waitFor((m) => m.type === "rules" && m.rules_channel === rulesId);
   owner.close();
   ann.close();
 });

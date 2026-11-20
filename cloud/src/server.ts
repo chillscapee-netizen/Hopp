@@ -1159,7 +1159,8 @@ export class StromServer extends DurableObject<Env> {
   /** The rules, where welcomes go, and whether this person has agreed. */
   private sendRules(ws: WebSocket, key: string) {
     const welcome = this.meta("welcome_channel");
-    this.send(ws, { type: "rules", rules: this.meta("rules"), at: Number(this.meta("rules_at") ?? 0), accepted: !this.needsRules(key), welcome_channel: welcome === null ? null : Number(welcome) });
+    const shown = this.meta("rules_channel");
+    this.send(ws, { type: "rules", rules: this.meta("rules"), at: Number(this.meta("rules_at") ?? 0), accepted: !this.needsRules(key), welcome_channel: welcome === null ? null : Number(welcome), rules_channel: shown === null ? null : Number(shown) });
   }
 
   /** "Elin joined" in the welcome channel, as a message of its own (apps show it as a welcome). */
@@ -2090,6 +2091,9 @@ export class StromServer extends DurableObject<Env> {
         if ([...rules].length > MAX_RULES_LEN) return this.error(ws, `Keep the rules under ${MAX_RULES_LEN} characters.`);
         const welcome = msg.welcome_channel == null ? null : Number(msg.welcome_channel);
         if (welcome !== null && this.channel(welcome)?.kind !== "text") return this.error(ws, "Pick a text channel for welcomes.");
+        // A #rules channel showing them (left as it is by apps that don't send it).
+        const rulesChannel = msg.rules_channel === undefined ? undefined : msg.rules_channel === null ? null : Number(msg.rules_channel);
+        if (rulesChannel != null && this.channel(rulesChannel)?.kind !== "text") return this.error(ws, "Pick a text channel for the rules.");
         // New rules: everyone agrees again (whoever wrote them already has).
         if (rules !== (this.meta("rules") ?? "")) {
           if (rules) {
@@ -2097,6 +2101,13 @@ export class StromServer extends DurableObject<Env> {
             this.setMeta("rules_at", String(Date.now()));
           } else this.sql.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at')");
           this.audit(user.name, "rules", null, rules ? "changed" : "removed");
+        }
+        if (rulesChannel === null) this.sql.exec("DELETE FROM meta WHERE key = 'rules_channel'");
+        else if (rulesChannel !== undefined) {
+          this.setMeta("rules_channel", String(rulesChannel));
+          // Nobody writes in it but staff: it's for reading the rules.
+          this.sql.exec("UPDATE channels SET announce = 1 WHERE id = ?", rulesChannel);
+          this.channelsChanged();
         }
         if (welcome === null) this.sql.exec("DELETE FROM meta WHERE key = 'welcome_channel'");
         else this.setMeta("welcome_channel", String(welcome));

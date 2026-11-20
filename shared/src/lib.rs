@@ -542,6 +542,9 @@ pub enum ClientMsg {
     SetRules {
         rules: String,
         welcome_channel: Option<ChannelId>,
+        /// The channel that shows the rules: `Some(Some(id))`, none: `Some(None)`; left out: as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rules_channel: Option<Option<ChannelId>>,
     },
     /// Agreeing to the server's rules.
     AcceptRules,
@@ -716,6 +719,8 @@ pub enum ServerMsg {
         accepted: bool,
         #[serde(default)]
         welcome_channel: Option<ChannelId>,
+        #[serde(default)]
+        rules_channel: Option<ChannelId>,
     },
     /// The event you planned is made.
     EventCreated { id: i64 },

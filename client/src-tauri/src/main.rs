@@ -647,8 +647,8 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::Watch { channel, video, position, playing, at_ago, by } => {
                     let _ = ui.emit("watch", serde_json::json!({ "channel": channel, "video": video, "position": position, "playing": playing, "at_ago": at_ago, "by": by }));
                 }
-                ServerMsg::Rules { rules, at, accepted, welcome_channel } => {
-                    let _ = ui.emit("rules", serde_json::json!({ "rules": rules, "at": at, "accepted": accepted, "welcome_channel": welcome_channel }));
+                ServerMsg::Rules { rules, at, accepted, welcome_channel, rules_channel } => {
+                    let _ = ui.emit("rules", serde_json::json!({ "rules": rules, "at": at, "accepted": accepted, "welcome_channel": welcome_channel, "rules_channel": rules_channel }));
                 }
                 ServerMsg::Events { events } => {
                     let _ = ui.emit("events", events);
@@ -1296,8 +1296,8 @@ fn update_channel(
 
 /// The server's rules and where welcomes go (those who may manage the server).
 #[tauri::command]
-fn set_rules(state: State<'_, AppState>, rules: String, welcome_channel: Option<ChannelId>) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::SetRules { rules, welcome_channel }))
+fn set_rules(state: State<'_, AppState>, rules: String, welcome_channel: Option<ChannelId>, rules_channel: Option<ChannelId>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetRules { rules, welcome_channel, rules_channel: Some(rules_channel) }))
 }
 
 /// Agreeing to the server's rules.
