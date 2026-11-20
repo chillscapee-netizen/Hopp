@@ -15414,7 +15414,10 @@ function applyWatch() {
     const frame = el("iframe");
     frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
     frame.title = "Watching together";
-    frame.src = `https://www.youtube-nocookie.com/embed/${w.video}?enablejsapi=1&autoplay=1&playsinline=1&rel=0&start=${Math.floor(watchExpected())}`;
+    // Like the players in chat: YouTube refuses to play (error 153) unless it's told where it's
+    // embedded, by the origin and the referrer.
+    frame.src = `https://www.youtube-nocookie.com/embed/${w.video}?enablejsapi=1&autoplay=1&playsinline=1&rel=0&origin=${encodeURIComponent(location.origin)}&start=${Math.floor(watchExpected())}`;
+    frame.referrerPolicy = "strict-origin-when-cross-origin";
     frame.addEventListener("load", () => {
       // Ask it to tell us how it's doing.
       frame.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: "watch", channel: "widget" }), "*");

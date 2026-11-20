@@ -31,6 +31,7 @@
     const frame = () => $("watch-frame").querySelector("iframe");
     check("it plays in the middle of the voice view", !$("watch-stage").hidden && /youtube-nocookie\.com\/embed\/dQw4w9WgXcQ/.test(frame()?.src ?? "") && !!document.querySelector("#voice-stage .watch-slot"));
     check("saying who started it", /started by Marcus/.test($("watch-by").textContent));
+    check("YouTube is told where it plays (else error 153)", /[?&]origin=/.test(frame()?.src ?? "") && frame()?.referrerPolicy === "strict-origin-when-cross-origin");
 
     // Someone else's change of video: the player follows.
     emit("watch", { channel: 1, video: "aaaaaaaaaaa", position: 5, playing: true, at_ago: 0, by: "Elin" });

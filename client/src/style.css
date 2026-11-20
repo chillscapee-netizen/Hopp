@@ -3326,7 +3326,9 @@ body, .shell { background: var(--app-bg, var(--app-solid)); }
 .page-head h2 { margin: 0 !important; }
 .user-card-bio { margin: 10px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 /* A long channel name stays on one line in the header. */
-.head-title { min-width: 0; flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head-title { min-width: 0; flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The topic gives way first: the channel's name matters more. */
+.head-topic { flex: 1 1 0; min-width: 0; }
 .welcome h1 { overflow-wrap: anywhere; }
 /* Cards in the chat and on Home: soft layers, no outlines (a YouTube card keeps its red edge). */
 .yt-card, .file-card, .attach-card { border: none; background: var(--sink); }
@@ -4293,13 +4295,13 @@ html.wallpaper .admin-body::-webkit-scrollbar-thumb { background: rgb(128 128 12
 .event-when label { display: grid; gap: 6px; }
 .event-when input, #event-description { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--deep); color: var(--text); font: inherit; font-size: 14px; color-scheme: inherit; }
 #event-description { resize: vertical; }
-.event-card { display: grid; gap: 4px; width: min(440px, 100%); margin: 4px 0 2px; padding: 14px 16px; border-radius: 12px; background: var(--layer-2); border-left: 4px solid var(--green); }
+.event-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; width: min(440px, 100%); margin: 4px 0 2px; padding: 14px 16px; border-radius: 12px; background: var(--layer-2); border-left: 4px solid var(--green); }
 .event-card.gone { display: flex; align-items: center; gap: 8px; border-left-color: var(--border-strong); color: var(--muted); font-size: 13.5px; }
 .event-card.gone .i { width: 16px; height: 16px; }
 .event-head { display: flex; align-items: center; gap: 8px; }
 .event-when-label, .event-head .event-when { display: inline; margin: 0; color: var(--green); font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
 .event-head .event-when.live { color: var(--red); }
-.event-name { font-size: 17px; }
+.event-name { font-size: 17px; overflow-wrap: anywhere; }
 .event-where { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
 .event-description { margin: 4px 0 0; color: var(--text-2); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .event-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
