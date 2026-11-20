@@ -1443,7 +1443,14 @@ function fitRailAcross() {
   }
   more?.remove();
   pop.replaceChildren();
-  if (!railAcross()) return;
+  const bar = list.parentElement;
+  if (!railAcross()) {
+    bar.style.paddingInline = "";
+    return;
+  }
+  // The servers stay centred between the two sides, whatever their width (a narrow window too).
+  const sides = Math.max(bar.querySelector(".tb-left")?.offsetWidth ?? 0, bar.querySelector(".tb-right")?.offsetWidth ?? 0);
+  if (sides) bar.style.paddingInline = sides + 20 + "px";
   // The room in the middle of the bar: its width less its sides and what sits before the list.
   const rail = list.parentElement;
   const rs = getComputedStyle(rail);
@@ -2318,6 +2325,8 @@ listen("voice-away", (e) => {
   setActivityFromVoice();
   renderVoicePanel();
   renderUserPanel();
+  // Your stream there: whoever left the channel stops getting it (it would use the relay for nothing).
+  if (typeof syncScreen === "function") syncScreen();
 });
 
 // ---------- server & voice events ----------

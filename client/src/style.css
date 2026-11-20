@@ -4744,3 +4744,16 @@ html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34
 .explain summary:hover { text-decoration: underline; }
 .explain ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 10px 12px 10px 28px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); line-height: 1.45; }
 .explain strong { color: var(--text-2); }
+
+/* A narrow window: on the taskbar you are your picture (name and status on hover), so the servers keep their room. */
+@media (max-width: 980px) { html.layout-taskbar .tb-left .me-text { display: none; } html.layout-taskbar .tb-left .me-card { padding-right: 4px; } }
+
+/* "Streamer mode" in the title bar sits left of whatever is there (updates, the admin shield), never on top of it. */
+.topbar:has(.admin-btn:not([hidden])) .streamer-pill { right: 234px; }
+.topbar:has(#update-btn[hidden]):has(.admin-btn:not([hidden])) .streamer-pill { right: 196px; }
+.topbar:has(#update-btn[hidden]):not(:has(.admin-btn:not([hidden]))) .streamer-pill { right: 158px; }
+
+/* A narrow window: the search box gives up room before the channel name does. */
+.head-search { flex: 0 6 180px; min-width: 96px; width: auto; }
+.head-search:focus-within { flex-basis: 260px; width: auto; }
+.head-title { flex-shrink: 1; min-width: 60px; max-width: 45%; }

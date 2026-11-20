@@ -2097,6 +2097,15 @@ fn init_logging(app: &tauri::App) {
     tracing::info!("Hopp {} starting", app.package_info().version);
 }
 
+/// "Default (Hörlurar)" or the chosen device, readable in Debug info.
+fn device_line(chosen: &Option<String>, default: &Option<String>) -> String {
+    match (chosen, default) {
+        (Some(name), _) => name.clone(),
+        (None, Some(d)) => format!("Default ({d})"),
+        (None, None) => "Default (none found)".to_string(),
+    }
+}
+
 /// What helps someone fix a problem: version, system, audio devices and the recent log.
 #[tauri::command]
 fn debug_info(app: AppHandle, state: State<'_, AppState>) -> String {
@@ -2106,21 +2115,19 @@ fn debug_info(app: AppHandle, state: State<'_, AppState>) -> String {
     let mut out = format!(
         "Hopp {}
 System: {} {}
-Microphone: {:?} (default {:?})
-Speakers: {:?} (default {:?})
-Inputs: {:?}
-Outputs: {:?}
+Microphone: {}
+Speakers: {}
+Inputs: {}
+Outputs: {}
 Connected: {}
 ",
         app.package_info().version,
         std::env::consts::OS,
         std::env::consts::ARCH,
-        chosen.input,
-        devices.default_input,
-        chosen.output,
-        devices.default_output,
-        devices.inputs,
-        devices.outputs,
+        device_line(&chosen.input, &devices.default_input),
+        device_line(&chosen.output, &devices.default_output),
+        devices.inputs.join(", "),
+        devices.outputs.join(", "),
         match connected {
             None => "no".to_string(),
             Some((cloud, voice)) => format!("yes ({}, voice {})", if cloud { "cloud" } else { "self-hosted" }, if voice { "on" } else { "off" }),
