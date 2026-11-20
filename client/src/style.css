@@ -4559,3 +4559,18 @@ html.rail-small .dm-peek .rail-icon.avatar { width: 40px; height: 40px; font-siz
 html.rail-large .dm-peek .rail-icon.avatar { width: 58px; height: 58px; font-size: 19px; }
 html.rail-small .rail-item.home .rail-icon .i { width: 24px; height: 24px; overflow: visible; }
 html.rail-small .rail-badge { transform: scale(0.85); transform-origin: bottom right; }
+
+/* Formatting shown while writing: the box's own letters are clear, the picture under it shows them styled. */
+.composer-mirror { position: absolute; z-index: 0; margin: 0; overflow: hidden; border-style: solid; border-color: transparent; box-sizing: border-box; color: var(--text); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; pointer-events: none; }
+textarea.mirrored { position: relative; z-index: 1; color: transparent; caret-color: var(--text); background: transparent; }
+textarea.mirrored::selection { color: transparent; background: color-mix(in srgb, var(--link) 35%, transparent); }
+.composer-mirror .md-mark { color: var(--faint); opacity: 0.55; }
+.composer-mirror .md-bold { -webkit-text-stroke: 0.5px currentColor; }
+.composer-mirror .md-italic { font-style: oblique 10deg; font-synthesis: style; }
+.composer-mirror .md-under { text-decoration: underline; }
+.composer-mirror .md-strike { text-decoration: line-through; color: var(--text-2); }
+.composer-mirror .md-code { border-radius: 4px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+.composer-mirror .md-spoiler { border-radius: 4px; background: color-mix(in srgb, var(--text) 22%, transparent); }
+.composer-mirror .md-heading { -webkit-text-stroke: 0.6px currentColor; color: var(--text); }
+.composer-mirror .md-small { color: var(--muted); }
+.composer-mirror .md-quote { color: var(--text-2); }

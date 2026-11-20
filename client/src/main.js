@@ -5068,6 +5068,7 @@ function placeFormatBar() {
   formatBar.style.top = Math.max(8, r.top - formatBar.offsetHeight - 10) + "px";
 }
 document.addEventListener("selectionchange", placeFormatBar);
+mirrorBox(chatInput);
 document.addEventListener("focusout", () => setTimeout(placeFormatBar, 0));
 window.addEventListener("keydown", (e) => {
   const box = formatInputs().find((b) => b === e.target);
@@ -5077,6 +5078,96 @@ window.addEventListener("keydown", (e) => {
   e.preventDefault();
   wrapSelection(box, wrap);
 });
+
+// ---------- formatting shown while writing ----------
+//
+// The box shows what a message will look like: bold is bold, italics lean, headings stand out,
+// and the marks (**, #, > …) fade back. It's a picture drawn under the box, letter for letter
+// (nothing changes width, so the caret stays where it is); what's sent is the same text as before.
+
+/** The text with its formatting, as HTML for the picture under the box. */
+function markupPreview(text) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const mark = (s) => `<span class="md-mark">${esc(s)}</span>`;
+  const inline = (s) => {
+    let out = "";
+    let rest = s;
+    const rules = [
+      [/^\*\*([^*\n]+?)\*\*/, "md-bold", "**"],
+      [/^__([^_\n]+?)__/, "md-under", "__"],
+      [/^~~([^~\n]+?)~~/, "md-strike", "~~"],
+      [/^\|\|([^|\n]+?)\|\|/, "md-spoiler", "||"],
+      [/^\*([^*\n]+?)\*/, "md-italic", "*"],
+      [/^`([^`\n]+?)`/, "md-code", "`"],
+    ];
+    while (rest) {
+      let hit = null;
+      for (const [re, cls, m] of rules) {
+        const found = rest.match(re);
+        if (found) {
+          hit = [found, cls, m];
+          break;
+        }
+      }
+      if (hit) {
+        const [found, cls, m] = hit;
+        out += mark(m) + `<span class="${cls}">${inline(found[1])}</span>` + mark(m);
+        rest = rest.slice(found[0].length);
+      } else {
+        out += esc(rest[0]);
+        rest = rest.slice(1);
+      }
+    }
+    return out;
+  };
+  return text
+    .split("\n")
+    .map((line) => {
+      const head = line.match(/^(#{1,3} |-# |- |> )(.*)$/);
+      if (!head) return inline(line);
+      const cls = head[1].startsWith("#") ? "md-heading" : head[1] === "-# " ? "md-small" : head[1] === "> " ? "md-quote" : "md-list";
+      return mark(head[1]) + `<span class="${cls}">${inline(head[2])}</span>`;
+    })
+    .join("\n") + "\u200b";
+}
+
+/** The picture under a message box, kept the same size, place and scroll as the box. */
+function mirrorBox(box) {
+  if (!box || box.dataset.mirrored) return;
+  box.dataset.mirrored = "1";
+  const mirror = el("div", "composer-mirror");
+  mirror.setAttribute("aria-hidden", "true");
+  box.before(mirror);
+  box.classList.add("mirrored");
+  const fit = () => {
+    const cs = getComputedStyle(box);
+    for (const p of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "wordSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "tabSize", "textIndent"]) mirror.style[p] = cs[p];
+    mirror.style.left = box.offsetLeft + "px";
+    mirror.style.top = box.offsetTop + "px";
+    mirror.style.width = box.offsetWidth + "px";
+    mirror.style.height = box.offsetHeight + "px";
+    mirror.scrollTop = box.scrollTop;
+  };
+  const draw = () => {
+    mirror.innerHTML = box.value ? markupPreview(box.value) : "";
+    fit();
+  };
+  box.addEventListener("input", draw);
+  box.addEventListener("scroll", () => (mirror.scrollTop = box.scrollTop));
+  new ResizeObserver(fit).observe(box);
+  // Set from code (a draft, a template, after sending): drawn again.
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+  Object.defineProperty(box, "value", {
+    get() {
+      return desc.get.call(this);
+    },
+    set(v) {
+      desc.set.call(this, v);
+      draw();
+    },
+  });
+  draw();
+}
 
 function autosize() {
   // Out of sight (while a server connects) nothing can be measured: its own one-line height,
@@ -7501,6 +7592,8 @@ function renderDmView(keepScroll) {
     const input = el("textarea");
     input.id = "dm-input";
     input.rows = 1;
+    // Formatting shown while writing, once the box is on the page.
+    setTimeout(() => mirrorBox(input), 0);
     input.maxLength = 2000;
     input.placeholder = p.group ? `Message ${p.display_name}` : `Message @${p.username ?? p.display_name}`;
     input.addEventListener("keydown", (e) => {
