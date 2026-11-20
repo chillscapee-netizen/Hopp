@@ -4804,3 +4804,13 @@ html.rail-small .folder-closed { padding: 3px; gap: 2px; border-radius: 12px !im
 html.rail-small .folder-mini { font-size: 9px; }
 html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 17px !important; }
 html.rail-large .folder-mini { font-size: 13px; }
+
+/* Closed folders, looked at closely in Discord: four round pictures almost touching (a hairline
+   apart), inside a rounded tile of the folder's lighter colour with a clear margin all round.
+   The same at small, normal and large. */
+.folder-closed { padding: 6px; gap: 1.5px; border-radius: 16px !important; background: color-mix(in srgb, var(--folder) 34%, rgb(255 255 255 / 0.10)); }
+.folder-mini { border-radius: 50%; font-size: 9.5px; }
+html.rail-small .folder-closed { padding: 5px; gap: 1px; border-radius: 13px !important; }
+html.rail-small .folder-mini { font-size: 8px; }
+html.rail-large .folder-closed { padding: 8px; gap: 2px; border-radius: 19px !important; }
+html.rail-large .folder-mini { font-size: 12px; }
