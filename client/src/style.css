@@ -4396,3 +4396,20 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .role-presets { width: 100%; grid-template-columns: repeat(4, 1fr); }
 .role-tabs .segment, .role-presets .segment { white-space: nowrap; padding: 0 10px; }
 .role-presets .segment:disabled { opacity: 0.4; cursor: default; }
+
+/* Rules to agree to, above the message box; and a welcome as a row of its own. */
+.rules-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 10px 12px; border-radius: 10px; background: var(--layer-2); color: var(--text-2); font-size: 14px; }
+.rules-bar[hidden] { display: none; }
+.rules-bar > span { flex: 1; }
+.rules-bar .i { width: 18px; height: 18px; color: var(--text); }
+.rules-body { max-height: 50vh; overflow-y: auto; padding: 12px 14px; border-radius: 10px; background: var(--layer-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+
+.join-msg { display: flex; align-items: baseline; gap: 6px; padding: 6px 16px 6px 72px; color: var(--muted); font-size: 14px; }
+.join-msg .join-name { color: var(--text); font-weight: 600; }
+.join-msg .msg-time { margin-left: 6px; font-size: 12px; }
+.rules-settings { display: grid; gap: 12px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.rules-settings[hidden] { display: none; }
+.rules-settings-title { margin: 0; font-size: 15px; }
+.rules-settings textarea { width: 100%; resize: vertical; }
+.rules-settings-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.saved-note { color: var(--green); font-size: 13px; font-weight: 600; }

@@ -24,6 +24,7 @@
     <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></symbol>
     <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
     <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8.5a4 4 0 0 1 0 7"/><path d="M18 6a8 8 0 0 1 0 12"/></symbol>
     <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></symbol>
     <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -357,6 +358,11 @@
               <span class="jump-go">Jump to present <svg class="i xs"><use href="#i-chevron"/></svg></span>
             </button>
             <form id="composer" class="composer">
+              <div id="rules-bar" class="rules-bar" hidden>
+                <svg class="i"><use href="#i-shield"/></svg>
+                <span>This server has rules to agree to before you join in.</span>
+                <button id="rules-open" type="button" class="btn primary sm">Read the rules</button>
+              </div>
               <div class="composer-box">
                 <div id="reply-bar" class="reply-bar" hidden>
                   <span id="reply-text" class="ellipsis"></span>
@@ -538,6 +544,13 @@
                 <span id="channel-edit-pictures-sub" class="row-sub">Members can share pictures in this channel.</span>
               </span>
               <input id="channel-edit-pictures" type="checkbox" class="switch">
+            </label>
+            <label id="channel-edit-announce-row" class="row" hidden>
+              <span class="row-label">
+                <span class="row-title">Announcement channel</span>
+                <span class="row-sub">Only moderators and admins write here; everyone else reads, reacts and can start threads.</span>
+              </span>
+              <input id="channel-edit-announce" type="checkbox" class="switch">
             </label>
           </div>
         </section>
@@ -899,6 +912,21 @@
     </form>
   </dialog>
 
+  <dialog id="rules-dialog" class="modal rules-dialog">
+    <form method="dialog">
+      <div class="modal-body">
+        <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+        <h2>Server rules</h2>
+        <p id="rules-server" class="modal-sub"></p>
+        <div id="rules-body" class="rules-body"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" id="rules-later" class="btn-link">Later</button>
+        <button type="button" id="rules-agree" class="btn primary">I agree</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="text-dialog" class="modal small">
     <form id="text-form" method="dialog">
       <div class="modal-body">
@@ -987,6 +1015,19 @@
             </span>
             <input id="overview-pictures" type="checkbox" class="switch">
           </label>
+          <div id="rules-settings" class="rules-settings" hidden>
+            <h3 class="rules-settings-title">Rules and welcomes</h3>
+            <label class="field">
+              <span class="field-label">Rules</span>
+              <textarea id="rules-text-input" rows="5" maxlength="2000" placeholder="Be kind. No spam. Keep it friendly."></textarea>
+              <span class="hint">New members read these and press I agree before they can write. Changing them asks everyone again. Leave empty for none.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Welcome new members in</span>
+              <select id="welcome-channel"></select>
+            </label>
+            <div class="rules-settings-foot"><span id="rules-saved" class="saved-note" hidden>Saved</span><button id="rules-save" type="button" class="btn primary sm">Save rules</button></div>
+          </div>
           <p id="overview-error" class="error" hidden></p>
           <div id="overview-save-bar" class="save-bar" hidden>
             <span>Careful, you have unsaved changes!</span>

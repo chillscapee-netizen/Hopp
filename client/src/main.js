@@ -1968,6 +1968,8 @@ async function connectTo(server, create, reconnecting) {
   state.events = [];
   state.eventsLoaded = false;
   eventsAsked = null;
+  // The rules come while connecting too: another server's don't carry over.
+  state.rules = null;
   state.replyTo = null;
   state.editing = null;
   state.latency = null;
@@ -2746,7 +2748,7 @@ function renderSidebar() {
     const row = el("button", "channel-row");
     row.classList.toggle("current", ch.id === state.view);
     row.classList.toggle("unread", ch.id !== state.view && channelUnread(address, ch.id));
-    row.append(icon(ch.private_roles?.length ? "lock" : "hash"), el("span", "ellipsis", ch.name));
+    row.append(icon(ch.private_roles?.length ? "lock" : ch.announce ? "megaphone" : "hash"), el("span", "ellipsis", ch.name));
     const mentions = channelMentions(address, ch.id);
     if (mentions) row.append(el("span", "count-badge", mentions > 99 ? "99+" : String(mentions)));
     row.addEventListener("click", () => openTextChannel(ch.id));
@@ -3103,7 +3105,11 @@ function renderChannelView() {
   $("chat-input").placeholder = composerHint(view);
   // In sight again: its height can be measured now (a draft may span several lines).
   if (composerWasHidden && view !== null) autosize();
-  $("chat-input").disabled = !!timedOutUntil(meUser());
+  const rulesFirst = rulesNeeded();
+  const readOnly = announceLocked(view);
+  $("chat-input").disabled = !!timedOutUntil(meUser()) || rulesFirst || readOnly;
+  $("rules-bar").hidden = !rulesFirst || view === null;
+  document.querySelector("#composer .composer-box").hidden = rulesFirst;
   $("chat-head-icon").innerHTML = isVoiceChannel(view) ? '<use href="#i-volume"/>' : channel(view)?.parent != null ? '<use href="#i-message"/>' : '<use href="#i-hash"/>';
   renderVoiceStage();
   $("attach-btn").hidden = !picturesAllowed() && !pollsHere();
@@ -3620,6 +3626,17 @@ function renderMessages(keepScrollUnlessAtBottom) {
         renderMessages(true);
       });
       line.append(icon("ban", "xs"), "Blocked message · ", show);
+      items.push(line);
+      prev = null;
+      continue;
+    }
+    if (m.text === JOINED) {
+      const line = el("li", "msg join-msg");
+      line.dataset.id = m.id;
+      line.msg = m;
+      const who = el("strong", "join-name", nameHere(m.author_key) ?? m.sender_name);
+      styleName(who, m.author_key, m.sender_name);
+      line.append(el("span", "join-wave", "👋"), who, " joined the server.", el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       items.push(line);
       prev = null;
       continue;
@@ -4292,10 +4309,83 @@ function openServerSettings() {
   tab("safety", !!state.roster?.features?.includes("automod") && may("manage_server"));
   tab("audit", modTools() && may("view_audit_log"));
   $("server-mod-label").hidden = document.querySelector('[data-stab="audit"]').hidden && document.querySelector('[data-stab="safety"]').hidden;
+  renderRulesSettings();
   showServerTab(document.querySelector("[data-stab]:not([hidden])")?.dataset.stab ?? "overview");
   openModal($("server-settings"));
   if (may("manage_server")) call("get_server_settings");
 }
+// ---------- rules and welcomes ----------
+//
+// A server can have rules that new members agree to before they write, react or join voice
+// (again when the rules change), and a channel where "Elin joined the server" appears.
+
+/** A welcome's text: shown as "Elin joined the server". */
+var JOINED = "hopp-joined";
+state.rules = null; // this server's: { rules, at, accepted, welcome_channel }
+var rulesShown = new Set();
+
+listen("rules", (e) => {
+  const r = e.payload ?? {};
+  // It arrives while connecting (before this server counts as active): it's this server's.
+  state.rules = { rules: r.rules ?? null, at: Number(r.at) || 0, accepted: !!r.accepted, welcome_channel: r.welcome_channel ?? null };
+  // Someone new: the rules once by themselves, the bar above the message box after that.
+  const seen = `${state.connectingId ?? state.activeId}|${state.rules.at}`;
+  if (rulesNeeded() && !rulesShown.has(seen)) {
+    rulesShown.add(seen);
+    openRules();
+  }
+  if (state.rules.accepted && $("rules-dialog").open) $("rules-dialog").close();
+  renderChannelView();
+  if ($("server-settings").open) renderRulesSettings();
+});
+
+/** Whether I must agree to this server's rules before joining in. */
+function rulesNeeded() {
+  const r = state.rules;
+  return !!r && !!r.rules && !r.accepted;
+}
+
+/** An announcement channel I may only read. */
+function announceLocked(view) {
+  return !!channel(view)?.announce && !may("manage_messages") && !may("manage_channels");
+}
+
+function openRules() {
+  if (!state.rules?.rules) return;
+  $("rules-server").textContent = (connectingServer() ?? activeServer())?.label ?? state.roster?.server_name ?? "";
+  $("rules-body").replaceChildren(messageText(state.rules.rules));
+  $("rules-agree").hidden = !rulesNeeded();
+  $("rules-later").textContent = rulesNeeded() ? "Later" : "Close";
+  openModal($("rules-dialog"));
+}
+$("rules-open").addEventListener("click", openRules);
+$("rules-later").addEventListener("click", () => $("rules-dialog").close());
+$("rules-agree").addEventListener("click", () => {
+  invoke("accept_rules").catch((err) => toast(friendlyError(err), true));
+  $("rules-dialog").close();
+});
+
+/** The rules and the welcome channel, in the server's overview (for those who run it). */
+function renderRulesSettings() {
+  const on = !!state.roster?.features?.includes("rules") && may("manage_server");
+  $("rules-settings").hidden = !on;
+  if (!on) return;
+  if (document.activeElement !== $("rules-text-input")) $("rules-text-input").value = state.rules?.rules ?? "";
+  const pick = $("welcome-channel");
+  const texts = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
+  pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))));
+  pick.value = state.rules?.welcome_channel != null ? String(state.rules.welcome_channel) : "";
+}
+$("rules-save").addEventListener("click", () => {
+  const welcome = $("welcome-channel").value;
+  invoke("set_rules", { rules: $("rules-text-input").value.trim(), welcomeChannel: welcome ? Number(welcome) : null })
+    .then(() => {
+      $("rules-saved").hidden = false;
+      setTimeout(() => ($("rules-saved").hidden = true), 2000);
+    })
+    .catch((err) => toast(friendlyError(err), true));
+});
+
 function showServerTab(tab) {
   if (tab === "roles") renderRolesTab();
   if (tab === "emojis") renderEmojiTab();
@@ -7322,6 +7412,7 @@ function plainText(text) {
 
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
+  if (text === JOINED) return "👋 joined the server";
   text = emojiWords(text);
   const forwarded = forwardParts(text);
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
@@ -8772,6 +8863,8 @@ function openChannelEdit(ch) {
   $("channel-edit-topic").value = ch.topic ?? "";
   $("channel-edit-topic-field").hidden = !text;
   $("channel-edit-pictures").checked = !ch.no_pictures;
+  $("channel-edit-announce").checked = !!ch.announce;
+  $("channel-edit-announce-row").hidden = ch.kind !== "text" || ch.parent != null || !state.roster?.features?.includes("announce");
   $("channel-edit-pictures-row").hidden = !text || !cloudLike();
   $("channel-edit-pictures-sub").textContent = state.roster?.pictures_off
     ? "Pictures are off for the whole server (Server settings → Overview)."
@@ -8831,8 +8924,10 @@ $("channel-edit-form").addEventListener("submit", () => {
   const privateRoles = $("channel-edit-private").hidden ? null : privateOn ? [...document.querySelectorAll("#channel-edit-private-roles input:checked")].map((b) => Number(b.value)) : [];
   const privateSame = privateRoles === null || JSON.stringify(privateRoles) === JSON.stringify(editingChannel.private_roles ?? []);
   const slowSame = slowmode === null || slowmode === (editingChannel.slowmode ?? 0);
-  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame && slowSame && privateSame) return;
-  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter, slowmode, privateRoles: privateSame ? null : privateRoles });
+  const announce = $("channel-edit-announce-row").hidden ? null : $("channel-edit-announce").checked;
+  const announceSame = announce === null || announce === !!editingChannel.announce;
+  if (name === editingChannel.name && topic === (editingChannel.topic ?? "") && category === (editingChannel.category ?? "") && picturesSame && voiceSame && slowSame && privateSame && announceSame) return;
+  call("update_channel", { channel: editingChannel.id, name, topic: topic || null, category: category || null, noPictures, userLimit, afkAfter, slowmode, privateRoles: privateSame ? null : privateRoles, announce: announceSame ? null : announce });
 });
 
 /** Drag a channel above or below another of the same kind. */
@@ -16196,6 +16291,7 @@ function timeoutItems(u) {
 function composerHint(view) {
   const until = timedOutUntil(meUser());
   if (until) return "You're timed out until " + clock(until);
+  if (announceLocked(view)) return `Only moderators and admins write in #${channelName(view)}`;
   const where = isVoiceChannel(view) || channel(view)?.parent != null ? "Message " + channelName(view) : "Message #" + channelName(view);
   const slow = channel(view)?.slowmode;
   return slow && !may("bypass_slowmode") ? where + " · slowmode " + slowText(slow) : where;
