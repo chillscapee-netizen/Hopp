@@ -36,7 +36,7 @@ const ACCOUNT_DATA = ["servers", "rail", "removedServers", "notify", "drafts", "
 /** Your own settings, which follow your Hopp ID to every device (and back after restoring
  *  with the phrase). What belongs to this computer stays here: microphone and speakers, voice
  *  processing, push to talk, the window. */
-const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "savedThemes", "chatSize", "chatSpace", "chatCompact", "railSize", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
+const SYNCED_SETTINGS = ["theme", "themeCustom", "themeColor", "savedThemes", "chatSize", "chatSpace", "chatCompact", "railSize", "layout", "appFont", "linkPreviews", "desktopNotify", "notifyText", "sounds", "soundStyle", "soundVolume", "soundEvents", "hideIp", "shareSound", "userVolumes", "streamerAuto", "attenuate", "attenuateLevel"];
 let applyingSettings = false;
 let accountScope = null;
 
@@ -7100,6 +7100,8 @@ function applySyncedSettings(remote) {
     $("chat-compact").checked = prefs.compact;
     prefs.railSize = load("railSize", "normal");
     $("rail-size").value = prefs.railSize;
+    prefs.layout = load("layout", "classic");
+    $("layout-pick").value = prefs.layout;
     prefs.appFont = load("appFont", "inter");
     $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
     prefs.savedThemes = loadSavedThemes();
@@ -14269,6 +14271,7 @@ function applyTheme() {
   root.setProperty("--chat-size", prefs.chatSize + "px");
   root.setProperty("--chat-space", prefs.chatSpace + "px");
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
+  document.documentElement.classList.toggle("layout-taskbar", prefs.layout === "taskbar");
   document.documentElement.classList.toggle("rail-small", prefs.railSize === "small");
   document.documentElement.classList.toggle("rail-large", prefs.railSize === "large");
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
@@ -14767,6 +14770,14 @@ $("app-font").value = APP_FONTS[prefs.appFont] ? prefs.appFont : "inter";
 $("app-font").addEventListener("change", (e) => {
   prefs.appFont = e.target.value;
   save("appFont", prefs.appFont);
+  applyTheme();
+});
+/** Where the servers are: down the left (classic) or along the bottom (taskbar). */
+prefs.layout = load("layout", "classic");
+$("layout-pick").value = prefs.layout;
+$("layout-pick").addEventListener("change", (e) => {
+  prefs.layout = e.target.value;
+  save("layout", prefs.layout);
   applyTheme();
 });
 /** How big the server list on the left is: small, normal or large. */
