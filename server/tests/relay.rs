@@ -463,7 +463,7 @@ async fn kick_and_ban() {
     let mut carol = FakeClient::connect_with(server.addr, "carol", &carol_key, Some(&server.invite)).await;
 
     carol.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
-    assert!(carol.error().await.contains("moderators"));
+    assert!(carol.error().await.contains("permission"));
 
     server.admin.send(ClientMsg::Kick { session_id: bob.session_id, public_key: None }).await;
     bob.wait_for(|m| matches!(m, ServerMsg::Kicked { banned: false })).await;
