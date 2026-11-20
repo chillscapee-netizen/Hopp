@@ -732,6 +732,19 @@ impl Core {
         level_of_perms(&self.perms_of(key).into_iter().collect::<Vec<_>>())
     }
 
+    /// What someone may do, for their name card (the owner and those without any: none).
+    fn staff_perms(&self, key: &str) -> Option<Vec<String>> {
+        if self.meta("owner").as_deref() == Some(key) {
+            return None;
+        }
+        let perms = self.perms_of(key);
+        if perms.contains("administrator") {
+            return Some(vec!["administrator".into()]);
+        }
+        let list: Vec<String> = PERMS.iter().filter(|p| perms.contains(**p)).map(|p| p.to_string()).collect();
+        (!list.is_empty()).then_some(list)
+    }
+
     /// Everything someone may do: the built-in role's and every role's switches together.
     fn perms_of(&self, key: &str) -> HashSet<String> {
         let all = || PERMS.iter().map(|p| p.to_string()).collect::<HashSet<_>>();
@@ -816,10 +829,13 @@ impl Core {
         for id in self.members() {
             let key = self.key_of(id);
             let role = self.role_of(&key);
-            if self.conns[&id].user.as_ref().and_then(|u| u.role.as_deref()) != role {
+            let perms = self.staff_perms(&key);
+            let user = self.conns[&id].user.as_ref();
+            if user.and_then(|u| u.role.as_deref()) != role || user.map(|u| &u.perms) != Some(&perms) {
                 self.update_user(id, |u| {
                     u.owner = role == Some("owner");
                     u.role = role.map(str::to_string);
+                    u.perms = perms;
                 });
             }
             if rank(role) >= Rank::Mod {
@@ -1294,6 +1310,7 @@ impl Core {
             owner: is_owner,
             public_key: key.clone(),
             role: role.map(str::to_string),
+            perms: self.staff_perms(&key),
             sharing: false,
             server_muted: false,
             server_deafened: false,
@@ -1556,12 +1573,15 @@ impl Core {
     fn member_roles_changed(&mut self, key: &str) {
         let roles: Vec<u32> = self.roles_of(key).into_iter().map(|r| r as u32).collect();
         let role = self.role_of(key);
+        let perms = self.staff_perms(key);
         for id in self.conns_of(key) {
             let roles = roles.clone();
+            let perms = perms.clone();
             self.update_user(id, |u| {
                 u.roles = roles;
                 u.owner = role == Some("owner");
                 u.role = role.map(str::to_string);
+                u.perms = perms;
             });
         }
         self.roles_changed();

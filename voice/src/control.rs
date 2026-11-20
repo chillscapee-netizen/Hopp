@@ -405,7 +405,7 @@ mod tests {
     use super::*;
 
     fn user(id: SessionId, voice: Option<ChannelId>) -> User {
-        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None, roles: vec![] }
+        User { session_id: id, name: format!("u{id}"), voice_channel: voice, muted: false, deafened: false, owner: false, public_key: String::new(), role: None, perms: None, sharing: false, server_muted: false, server_deafened: false, timed_out_until: None, roles: vec![] }
     }
 
     #[test]

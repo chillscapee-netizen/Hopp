@@ -186,6 +186,8 @@ interface User {
   owner: boolean;
   public_key: string;
   role?: Role;
+  /** What they may do, one switch each, when anything. */
+  perms?: string[];
   /** Sharing their screen with their voice channel. */
   sharing?: boolean;
   /** Muted or deafened by a moderator. */
@@ -699,6 +701,14 @@ export class StromServer extends DurableObject<Env> {
     return levelOfPerms([...this.permsOf(key)]);
   }
 
+  /** What someone may do, for their name card (the owner and those without any: none). */
+  private staffPerms(key: string): Perm[] | undefined {
+    if (this.meta("owner") === key) return undefined;
+    const perms = this.permsOf(key);
+    if (perms.has("administrator")) return ["administrator"];
+    return perms.size ? PERMS.filter((p) => perms.has(p)) : undefined;
+  }
+
   /** Everything someone may do: the built-in role's and every role's switches together. */
   private permsOf(key: string): Set<Perm> {
     if (this.meta("owner") === key) return new Set(PERMS);
@@ -738,11 +748,14 @@ export class StromServer extends DurableObject<Env> {
   private rolesChanged() {
     for (const [mws, m] of this.members()) {
       const role = this.roleOf(m.key!);
-      if (m.user!.role !== (role ?? undefined)) {
+      const perms = this.staffPerms(m.key!);
+      if (m.user!.role !== (role ?? undefined) || String(m.user!.perms ?? "") !== String(perms ?? "")) {
         this.updateUser(mws, m, (u) => {
           u.owner = role === "owner";
           if (role) u.role = role;
           else delete u.role;
+          if (perms) u.perms = perms;
+          else delete u.perms;
         });
       }
       if (rank(role) >= RANK.mod) this.send(mws, { type: "members", members: this.memberList() });
@@ -1092,6 +1105,8 @@ export class StromServer extends DurableObject<Env> {
     };
     const role = this.roleOf(key);
     if (role) user.role = role;
+    const perms = this.staffPerms(key);
+    if (perms) user.perms = perms;
     const custom = this.rolesOf(key);
     if (custom.length) user.roles = custom;
     const joined: Session = { stage: "joined", key, name, user, tokens: CHAT_BURST, refilled: now, joinedAt: now };
@@ -1228,6 +1243,9 @@ export class StromServer extends DurableObject<Env> {
         u.owner = role === "owner";
         if (role) u.role = role;
         else delete u.role;
+        const perms = this.staffPerms(key);
+        if (perms) u.perms = perms;
+        else delete u.perms;
       });
     }
     this.rolesChanged();

@@ -949,6 +949,8 @@ test("roles: switches open just what they say, and only someone who has a switch
   assert.equal(builder.level, null, "managing channels alone isn't moderating");
   const keeper = await make("Keeper", ["manage_roles", "kick"]);
   await give(ann, kicker);
+  const annCard = await bob.waitFor((m) => m.type === "user_updated" && m.user.public_key === ann.key.pub && m.user.perms);
+  assert.deepEqual(annCard.user.perms, ["kick"], "a name card says what they may do (so apps show just those buttons)");
   await give(bob, builder);
   await give(cat, keeper);
 

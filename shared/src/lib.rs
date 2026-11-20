@@ -144,6 +144,9 @@ pub struct User {
     /// "owner", "admin" or "mod" on cloud servers; `None` for everyone else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// What they may do, one switch each, when anything (servers whose welcome lists "perms").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perms: Option<Vec<String>>,
     /// Sharing their screen with their voice channel.
     #[serde(default)]
     pub sharing: bool,
@@ -187,6 +190,9 @@ pub struct RoleInfo {
     /// Anyone may @mention it (moderators always may).
     #[serde(default)]
     pub mentionable: bool,
+    /// What it may do, one switch each (servers whose welcome lists "perms"; others have only a level).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perms: Option<Vec<String>>,
 }
 
 /// One line of a server's audit log: who did what, to whom, when.
@@ -459,6 +465,9 @@ pub enum ClientMsg {
         level: Option<String>,
         #[serde(default)]
         mentionable: bool,
+        /// Its switches, on servers whose welcome lists "perms" (the level is for older ones).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        perms: Option<Vec<String>>,
     },
     UpdateRole {
         id: u32,
@@ -468,6 +477,8 @@ pub enum ClientMsg {
         level: Option<String>,
         #[serde(default)]
         mentionable: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        perms: Option<Vec<String>>,
     },
     DeleteRole { id: u32 },
     /// Admins, on servers whose welcome lists "emojis": a new emoji from an uploaded picture.
