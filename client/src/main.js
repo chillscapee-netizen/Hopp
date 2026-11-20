@@ -1253,7 +1253,9 @@ var railSettling = null;
  * below glide along with it instead of jumping.
  */
 function toggleFolder(f, head) {
-  const still = matchMedia("(prefers-reduced-motion: reduce)").matches || railAcross();
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Along the bottom a folder opens sideways (its servers slide out); the grow-down is for the side.
+  const across = railAcross();
   const box = head.closest(".folder-open") ?? head;
   const from = box.getBoundingClientRect().height;
   const ease = "cubic-bezier(0.2, 0.8, 0.2, 1)";
@@ -1267,7 +1269,7 @@ function toggleFolder(f, head) {
     // Closing, in two steps: its servers slide up and fade while it folds up (its tint and
     // folder icon fading too); then the closed folder grows in, in the same place.
     f.open = false;
-    if (still) return done();
+    if (still || across) return done();
     head.dataset.moving = "1";
     box.style.overflow = "hidden";
     const servers = [...box.querySelectorAll(":scope > .rail-item:not(.folder-head)")].reverse();
@@ -1294,7 +1296,10 @@ function toggleFolder(f, head) {
   f.open = true;
   railOpening = still ? null : f;
   done();
-  if (still) return;
+  if (still || across) {
+    setTimeout(() => (railOpening = null), 300);
+    return;
+  }
   const open = $("server-list").querySelector(`.folder-head[data-folder="${f.folder}"]`)?.closest(".folder-open");
   if (!open) return;
   const to = open.getBoundingClientRect().height;
@@ -5556,8 +5561,11 @@ function renderDeviceMenu(kind, anchor, list) {
       : { label: state.deafened ? "Undeafen" : "Deafen", icon: state.deafened ? "headphones" : "headphones-off", action: () => setDeafened(!state.deafened) },
     { label: "Voice settings", icon: "settings", action: () => openSettings("voice") },
   ];
-  const r = anchor.closest(".split").getBoundingClientRect();
+  const split = anchor.closest(".split");
+  const r = split.getBoundingClientRect();
   openMenu(items, r.left - 8, r.top, true);
+  // The button whose menu is open stays lit until it closes.
+  split.classList.add("menu-open");
   $("server-menu").dataset.owner = kind;
 }
 $("input-menu-btn").addEventListener("click", (e) => {
@@ -6251,6 +6259,7 @@ function renderMeterState(voice, clipping) {
 // ---------- popovers, user card & moderation ----------
 
 function closePopovers() {
+  document.querySelectorAll(".split.menu-open").forEach((x) => x.classList.remove("menu-open"));
   document.querySelectorAll(".popover").forEach((p) => (p.hidden = true));
   // A closed emoji picker lets go of its buttons, once it is still closed a moment later
   // (opening a popover closes the others first, the picker included).
@@ -6471,6 +6480,11 @@ window.addEventListener("keydown", (e) => {
 
 const appWindow = window.__TAURI__.window?.getCurrentWindow();
 $("win-min").addEventListener("click", () => appWindow?.minimize());
+// Full screen for a stream or a call fills the whole monitor, not only Hopp's window: the window
+// follows the page in and out (Esc, the button, or Windows' own way out).
+document.addEventListener("fullscreenchange", () => {
+  appWindow?.setFullscreen?.(!!document.fullscreenElement).catch?.(() => {});
+});
 $("win-max").addEventListener("click", () => appWindow?.toggleMaximize());
 // ---------- Windows settings ----------
 

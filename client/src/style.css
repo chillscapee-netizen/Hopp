@@ -4670,3 +4670,51 @@ html.layout-taskbar .server-list { overflow: hidden; mask-image: none !important
 .menu-item { min-width: 0; }
 .menu-text { flex: 1; }
 .menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Mic and headphones with their arrows: one button in two halves that meet without a seam; the
+   half under the pointer lights a little more, and the one whose menu is open stays lit. */
+.split { border-radius: 8px; overflow: hidden; }
+.split button { border-radius: 0; }
+.split-main { width: 30px; }
+.split-more { width: 15px; color: var(--faint); }
+.split-more .i { width: 11px; height: 11px; stroke-width: 2.8; }
+.split:hover { background: var(--hover); }
+.split button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.split.menu-open { background: var(--active); }
+.split.menu-open .split-more { color: var(--text); }
+.split-main .i { width: 19px; height: 19px; }
+.split.on button:hover { background: color-mix(in srgb, var(--red) 10%, transparent); }
+
+/* Taskbar profile card: you and your sound, one calm panel. The card part lights on hover (it
+   opens your profile), a thin line sets the buttons apart, and the name never pushes them away. */
+.tb-left { padding: 0 6px 0 4px; gap: 4px; }
+.tb-left .me-card { height: 40px; padding: 0 8px 0 4px; border-radius: 9px; transition: background 120ms; }
+.tb-left .me-card:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.tb-left .me-card .avatar { width: 32px; height: 32px; }
+.tb-left .me-name { font-size: 13.5px; }
+.tb-left .me-name, .tb-left .me-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 92px; }
+.tb-left .panel-controls { padding-left: 6px; border-left: 1px solid color-mix(in srgb, var(--text) 12%, transparent); }
+
+/* Taskbar motion: servers lift a little on hover, the line under the one you're in grows in,
+   "+N" opens with a short rise, and a folder's servers slide out sideways. */
+html.layout-taskbar .rail-item .rail-icon { transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), border-radius 160ms, background 160ms; }
+html.layout-taskbar #server-list .rail-item:hover .rail-icon, html.layout-taskbar #home-btn:hover .rail-icon { transform: translateY(-2px); }
+html.layout-taskbar .rail-item::before { transition: width 200ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms; }
+.rail-more-pop:not([hidden]) { animation: tb-rise 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes tb-rise { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+html.layout-taskbar .folder-open.opening > .rail-item:not(.folder-head) { animation: tb-slide 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+html.layout-taskbar .folder-open > .rail-item:nth-child(3) { animation-delay: 25ms; }
+html.layout-taskbar .folder-open > .rail-item:nth-child(n+4) { animation-delay: 50ms; }
+@keyframes tb-slide { from { opacity: 0; transform: translateX(-10px) scale(0.92); } }
+@media (prefers-reduced-motion: reduce) {
+  html.layout-taskbar .rail-item .rail-icon, html.layout-taskbar .rail-item::before { transition: none; }
+  .rail-more-pop:not([hidden]), html.layout-taskbar .folder-open > .rail-item { animation: none !important; }
+  html.layout-taskbar #server-list .rail-item:hover .rail-icon { transform: none; }
+}
+
+/* Folders along the bottom at every server size, and inside the "+N" panel: never cut. */
+html.layout-taskbar .folder-open { height: auto; padding: 4px 8px 4px 4px; align-self: center; }
+html.layout-taskbar.rail-large .folder-open .rail-icon { width: 46px; height: 46px; }
+html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34px; }
+.rail-more-pop .folder-open { flex-wrap: wrap; height: auto; max-width: 100%; padding: 4px; }
+.rail-more-pop .folder-open .rail-item { width: 48px; height: 48px; }
