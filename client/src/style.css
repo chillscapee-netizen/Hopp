@@ -4735,3 +4735,12 @@ html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34
 .auth-ways { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; }
 .auth-ways .sep { color: var(--faint); }
 .field-label .optional { color: var(--faint); font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+/* "How does this work?": a short explanation that folds out under the email field. */
+.explain { margin-top: 6px; font-size: 13px; color: var(--muted); }
+.explain summary { width: fit-content; color: var(--link); font-weight: 600; cursor: pointer; list-style: none; }
+.explain summary::-webkit-details-marker { display: none; }
+.explain summary::before { content: "ⓘ "; }
+.explain summary:hover { text-decoration: underline; }
+.explain ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 10px 12px 10px 28px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); line-height: 1.45; }
+.explain strong { color: var(--text-2); }

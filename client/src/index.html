@@ -171,7 +171,16 @@
           <label class="field">
             <span class="field-label">Email <span class="optional">(optional)</span></span>
             <input id="create-email" type="email" autocomplete="email" placeholder="you@example.com">
-            <span class="hint">With your email and password you can log in on any computer, like a new one, so your account is never stuck on this one. Hopp never emails you.</span>
+            <span class="hint">With your email and password you can log in on any computer, so your account is never stuck on this one.</span>
+            <details class="explain" id="create-email-explain">
+              <summary>How does this work?</summary>
+              <ul>
+                <li><strong>Your email is your login name.</strong> On another computer, choose "Log in with email" and type your email and password. Your account comes back with your servers, friends and name.</li>
+                <li><strong>Hopp can't open your account.</strong> It's saved to Hopp Cloud locked with your password, and your email is kept only in a scrambled form.</li>
+                <li><strong>Why Hopp doesn't send you emails:</strong> no codes, no newsletters, no ads. Sending email would mean another company handling your address, so Hopp doesn't.</li>
+                <li><strong>Forgot your password?</strong> Your recovery phrase lets you choose a new one. You'll get it right after making your account, with a button to email it to yourself.</li>
+              </ul>
+            </details>
           </label>
           <label class="check auth-check"><input id="create-remember" type="checkbox" checked> Keep me logged in on this computer</label>
           <p id="create-error" class="error" hidden></p>
@@ -1519,6 +1528,15 @@
               <span class="row-label">
                 <span class="row-title">Log in with email</span>
                 <span id="cloud-backup-sub" class="row-sub">Save your Hopp ID to Hopp Cloud, locked with your password, so your email and password bring it back on a new computer. Hopp never emails you.</span>
+                <details class="explain" id="cloud-backup-explain">
+              <summary>How does this work?</summary>
+              <ul>
+                <li><strong>Your email is your login name.</strong> On another computer, choose "Log in with email" and type your email and password. Your account comes back with your servers, friends and name.</li>
+                <li><strong>Hopp can't open your account.</strong> It's saved to Hopp Cloud locked with your password, and your email is kept only in a scrambled form.</li>
+                <li><strong>Why Hopp doesn't send you emails:</strong> no codes, no newsletters, no ads. Sending email would mean another company handling your address, so Hopp doesn't.</li>
+                <li><strong>Forgot your password?</strong> Your recovery phrase lets you choose a new one. You'll get it right after making your account, with a button to email it to yourself.</li>
+              </ul>
+            </details>
               </span>
               <button id="cloud-backup-btn" type="button" class="btn sm">Set up</button>
             </div>
