@@ -3632,12 +3632,14 @@ function renderMessages(keepScrollUnlessAtBottom) {
       });
       line.append(icon("ban", "xs"), "Blocked message · ", show);
       items.push(line);
-      prev = null;
+      // Same day still (no new divider), but the next message starts a group of its own.
+      prev = { ...m, author_key: "", sender_name: "" };
       continue;
     }
     if (m.text === JOINED) {
       items.push(joinRow(m, day));
-      prev = null;
+      // Same day still (no new divider), but the next message starts a group of its own.
+      prev = { ...m, author_key: "", sender_name: "" };
       continue;
     }
     const key = `${activeServer()?.address}|${m.id}`;
@@ -4366,7 +4368,8 @@ function joinRow(m, day) {
   body.append(words);
   // Saying hi is a reply with a wave (not to yourself, and only where you may write).
   const key = `${activeServer()?.address}|${m.id}`;
-  if (m.author_key !== state.account?.publicKey && !rulesNeeded() && !announceLocked(m.channel) && !timedOutUntil(meUser())) {
+  // Not in a channel only staff write in: welcomes there stay tidy, without a row of waves.
+  if (m.author_key !== state.account?.publicKey && !rulesNeeded() && !channel(m.channel)?.announce && !timedOutUntil(meUser())) {
     const wave = el("button", "join-wave", "");
     wave.type = "button";
     const done = wavedAt.has(key);
@@ -4468,7 +4471,7 @@ function renderRulesSettings() {
   }
   const pick = $("welcome-channel");
   const texts = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
-  pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))));
+  pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))), ...(may("manage_channels") ? [new Option("+ Create a #welcome channel", "new")] : []));
   pick.value = state.rules?.welcome_channel != null ? String(state.rules.welcome_channel) : "";
   const shown = $("rules-channel-pick");
   const canMake = may("manage_channels");
@@ -4516,19 +4519,31 @@ $("rules-add").addEventListener("click", () => {
 $("rules-save").addEventListener("click", () => {
   const welcome = $("welcome-channel").value;
   const shown = $("rules-channel-pick").value;
-  const save = (rulesChannel) =>
-    invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel: welcome ? Number(welcome) : null, rulesChannel })
+  const save = (rulesChannel, welcomeChannel) =>
+    invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel, rulesChannel })
       .then(() => {
         $("rules-saved").hidden = false;
         setTimeout(() => ($("rules-saved").hidden = true), 2000);
       })
       .catch((err) => toast(friendlyError(err), true));
-  // A new #rules channel first, then the rules pointing at it.
-  if (shown === "new") {
-    afterChannelMade((made) => save(made.id));
-    return call("create_channel", { name: "rules", kind: "text" });
-  }
-  save(shown ? Number(shown) : null);
+  /** A new text channel, once the server has made it. */
+  const make = (name) =>
+    new Promise((done) => {
+      afterChannelMade(done);
+      call("create_channel", { name, kind: "text" });
+    });
+  (async () => {
+    // New channels first (#rules, #welcome), then the rules pointing at them.
+    const rulesChannel = shown === "new" ? (await make("rules")).id : shown ? Number(shown) : null;
+    let welcomeChannel = welcome && welcome !== "new" ? Number(welcome) : null;
+    if (welcome === "new") {
+      const made = await make("welcome");
+      // Only staff write there: it's for welcomes and what admins say to newcomers.
+      call("update_channel", { channel: made.id, name: made.name, topic: null, category: made.category ?? null, announce: true });
+      welcomeChannel = made.id;
+    }
+    save(rulesChannel, welcomeChannel);
+  })();
 });
 
 function showServerTab(tab) {
@@ -4857,6 +4872,104 @@ chatInput.addEventListener("keydown", async (e) => {
     sendChat(state.view, text, replyTo);
   }
 });
+// ---------- formatting: a bar over selected text, and Ctrl + B / I / U ----------
+//
+// Messages already understand headings (#, ##, ###), small print (-#), bold, italics,
+// underline, strikethrough, lists, quotes, code, spoilers and links; this puts them in reach.
+
+var formatBar = el("div", "format-bar");
+formatBar.hidden = true;
+document.body.append(formatBar);
+var formatBox = null;
+
+/** The boxes people write messages in. */
+function formatInputs() {
+  return [chatInput, document.getElementById("dm-input")].filter(Boolean);
+}
+
+/** Puts marks around the selection (or takes them off again). */
+function wrapSelection(box, before, after = before) {
+  const { selectionStart: a, selectionEnd: b, value } = box;
+  const sel = value.slice(a, b);
+  if (value.slice(a - before.length, a) === before && value.slice(b, b + after.length) === after) {
+    box.setRangeText(sel, a - before.length, b + after.length, "select");
+  } else {
+    box.setRangeText(before + sel + after, a, b, "end");
+    box.setSelectionRange(a + before.length, a + before.length + sel.length);
+  }
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Starts each selected line with a mark (a heading, a list, a quote), or takes it off. */
+function prefixLines(box, prefix) {
+  const { selectionStart: a, selectionEnd: b, value } = box;
+  const start = value.lastIndexOf("\n", a - 1) + 1;
+  let end = value.indexOf("\n", b);
+  if (end < 0) end = value.length;
+  const lines = value.slice(start, end).split("\n");
+  const all = lines.every((l) => l.startsWith(prefix));
+  const plain = (l) => l.replace(/^(?:#{1,3} |-# |- |> )/, "");
+  box.setRangeText(lines.map((l) => (all ? l.slice(prefix.length) : prefix + plain(l))).join("\n"), start, end, "select");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+var FORMATS = [
+  ["H1", "Big heading", (b) => prefixLines(b, "# ")],
+  ["H2", "Heading", (b) => prefixLines(b, "## ")],
+  ["H3", "Small heading", (b) => prefixLines(b, "### ")],
+  "sep",
+  ["B", "Bold (Ctrl + B)", (b) => wrapSelection(b, "**")],
+  ["I", "Italic (Ctrl + I)", (b) => wrapSelection(b, "*")],
+  ["U", "Underline (Ctrl + U)", (b) => wrapSelection(b, "__")],
+  ["S", "Strikethrough", (b) => wrapSelection(b, "~~")],
+  "sep",
+  ["•", "List", (b) => prefixLines(b, "- ")],
+  ["❝", "Quote", (b) => prefixLines(b, "> ")],
+  ["</>", "Code", (b) => (b.value.slice(b.selectionStart, b.selectionEnd).includes("\n") ? wrapSelection(b, "```\n", "\n```") : wrapSelection(b, "`"))],
+  ["▒", "Spoiler", (b) => wrapSelection(b, "||")],
+  ["🔗", "Link", (b) => wrapSelection(b, "[", "](https://)")],
+];
+formatBar.append(...FORMATS.map((f) => {
+  if (f === "sep") return el("span", "format-sep");
+  const [label, tip, run] = f;
+  const b = el("button", "format-btn format-" + label.replace(/[^a-z0-9]/gi, "x"), label);
+  b.type = "button";
+  b.dataset.tip = tip;
+  b.setAttribute("aria-label", tip);
+  // Keep the selection: the box stays focused while the bar is used.
+  b.addEventListener("mousedown", (e) => e.preventDefault());
+  b.addEventListener("click", () => {
+    if (!formatBox) return;
+    run(formatBox);
+    placeFormatBar();
+  });
+  return b;
+}));
+
+/** Over the selection's box while some text is selected; gone otherwise. */
+function placeFormatBar() {
+  const box = formatInputs().find((b) => b === document.activeElement);
+  formatBox = box ?? null;
+  if (!box || box.disabled || box.selectionStart === box.selectionEnd) {
+    formatBar.hidden = true;
+    return;
+  }
+  formatBar.hidden = false;
+  const r = box.getBoundingClientRect();
+  formatBar.style.left = Math.max(8, r.left) + "px";
+  formatBar.style.top = Math.max(8, r.top - formatBar.offsetHeight - 10) + "px";
+}
+document.addEventListener("selectionchange", placeFormatBar);
+document.addEventListener("focusout", () => setTimeout(placeFormatBar, 0));
+window.addEventListener("keydown", (e) => {
+  const box = formatInputs().find((b) => b === e.target);
+  if (!box || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  const wrap = { b: "**", i: "*", u: "__" }[e.key.toLowerCase()];
+  if (!wrap) return;
+  e.preventDefault();
+  wrapSelection(box, wrap);
+});
+
 function autosize() {
   // Out of sight (while a server connects) nothing can be measured: its own one-line height,
   // and measured again once it shows. A height taken then was too low and showed a scrollbar.

@@ -4468,3 +4468,13 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .rules-card-words h2 { margin: 0; font-size: 22px; }
 .rules-card-words span { color: var(--muted); font-size: 13.5px; }
 .rules-card .rules-item { background: var(--layer-2); }
+
+/* The formatting bar over selected text. */
+.format-bar { position: fixed; z-index: 60; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 10px; background: var(--elev); border: 1px solid var(--border); box-shadow: 0 10px 28px rgb(0 0 0 / 0.35); }
+.format-bar[hidden] { display: none; }
+.format-btn { min-width: 30px; height: 30px; padding: 0 6px; border: none; border-radius: 7px; background: none; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.format-btn:hover { background: var(--hover); color: var(--text); }
+.format-I { font-style: italic; font-family: Georgia, serif; }
+.format-U { text-decoration: underline; }
+.format-S { text-decoration: line-through; }
+.format-sep { width: 1px; height: 18px; margin: 0 3px; background: var(--border); }
