@@ -56,11 +56,6 @@ pub fn backup_id(email: &str) -> String {
     hex::encode(Sha256::digest(format!("hopp-backup:{}", email.trim().to_lowercase()).as_bytes()))
 }
 
-/// The nonce an account signs to save or remove its copy in Hopp Cloud.
-pub fn backup_nonce(text: &str) -> Vec<u8> {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(text.as_bytes()).to_vec()
-}
 
 /// An unlocked identity, able to sign server challenges.
 #[derive(Clone)]
@@ -194,6 +189,14 @@ impl Identity {
     }
 
     /// Signs a server's login challenge.
+    /// Signs a request about this account's copy in Hopp Cloud. Its own prefix, so no server's
+    /// login challenge can ever be turned into one (and the other way round).
+    pub fn sign_backup(&self, text: &str) -> String {
+        let mut msg = b"hopp-backup-v1\0".to_vec();
+        msg.extend_from_slice(text.as_bytes());
+        hex::encode(self.key.sign(&msg).to_bytes())
+    }
+
     pub fn sign_challenge(&self, nonce: &[u8]) -> String {
         hex::encode(self.key.sign(&strom_shared::auth_message(nonce)).to_bytes())
     }

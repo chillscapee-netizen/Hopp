@@ -232,64 +232,70 @@ export class UserDirectory extends DurableObject<Env> {
    * kept), and what comes back is still locked with the password.
    */
   async backup(body: Record<string, unknown>, ip: string | undefined): Promise<{ status: number; body: unknown }> {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return { status: 400, body: { error: "Bad request." } };
     const id = String(body.id ?? "");
     if (!/^[0-9a-f]{64}$/.test(id)) return { status: 400, body: { error: "Bad email." } };
     const action = body.action;
     const local = !ip || ip === "127.0.0.1" || ip === "::1";
-    const ipTag = "ip:" + (await sha256Hex("ip:" + (ip ?? "") + ":" + new Date().toISOString().slice(0, 13)));
+    // A connection's tag: its IPv4 address, or its IPv6 network (/64: one home or phone has many).
+    const net = ip?.includes(":") ? ip.split(":").slice(0, 4).join(":") : (ip ?? "");
+    const ipTag = "ip:" + (await sha256Hex("ip:" + net));
     if (action === "fetch") {
       const login = String(body.login ?? "");
       if (!/^[0-9a-f]{64}$/.test(login)) return { status: 400, body: { error: "Bad login." } };
-      // A connection may try 30 times an hour, and guess wrong 10 times per email; an email takes
-      // 200 wrong guesses an hour from everywhere together. Right ones are never counted, and one
-      // connection's guesses don't lock the owner out on theirs.
-      if (!local && !this.backupTry(ipTag, 30)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+      const loginHash = await sha256Hex(login);
+      // From here on nothing waits, so counting can't be raced by requests sent together.
+      const tooMany = { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
+      if (!local && !this.backupTry(ipTag, 30)) return tooMany;
+      const row = this.sql.exec("SELECT stored FROM saved_accounts WHERE id = ? AND login = ? ORDER BY at DESC LIMIT 1", id, loginHash).toArray()[0];
+      // The right email and password always get in: only wrong guesses are limited (10 an hour per
+      // email from one connection, 200 from everywhere together), so nobody can lock the owner out.
       const wrongTag = "id:" + id + ":" + ipTag;
       const count = (tag: string) => Number(this.sql.exec("SELECT n FROM backup_tries WHERE tag = ? AND until > ?", tag, Date.now()).toArray()[0]?.n ?? 0);
-      if (count(wrongTag) >= 10 || count("id:" + id) >= 200) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
-      const row = this.sql.exec("SELECT stored FROM saved_accounts WHERE id = ? AND login = ?", id, await sha256Hex(login)).toArray()[0];
-      if (!row) {
-        this.backupTry(wrongTag, 10);
-        this.backupTry("id:" + id, 200);
-        return { status: 403, body: { error: "Wrong email or password." } };
-      }
-      return { status: 200, body: { stored: JSON.parse(String(row.stored)) } };
+      if (row) return { status: 200, body: { stored: JSON.parse(String(row.stored)) } };
+      if (count(wrongTag) >= 10 || count("id:" + id) >= 200) return tooMany;
+      this.backupTry(wrongTag, 10);
+      this.backupTry("id:" + id, 200);
+      return { status: 403, body: { error: "Wrong email or password." } };
     }
     const key = String(body.key ?? "").toLowerCase();
     const signature = hexToBytes(String(body.sig ?? ""));
+    const at = Number(body.at);
     if (!/^[0-9a-f]{64}$/.test(key) || !signature) return { status: 400, body: { error: "Bad signature." } };
-    const signedText = action === "save" ? `hopp-backup|${id}|${body.login}|${body.stored}` : `hopp-backup-delete|${id}`;
-    const nonce = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(signedText)));
+    // Signed with its own prefix (never a server's login challenge) and the time: no old request
+    // can be sent again, and nothing older than what's kept can replace it.
+    if (!Number.isFinite(at) || Math.abs(Date.now() - at) > 5 * 60_000) return { status: 400, body: { error: "Your computer's clock is off. Set it right and try again." } };
+    const signedText = action === "save" ? `save|${at}|${id}|${body.login}|${body.stored}` : `delete|${at}|${id}`;
     let valid = false;
     try {
       const pub = await crypto.subtle.importKey("raw", hexToBytes(key)!, { name: "Ed25519" }, false, ["verify"]);
-      valid = await crypto.subtle.verify({ name: "Ed25519" }, pub, signature, authMessage(nonce));
+      const signed = new Uint8Array([...new TextEncoder().encode("hopp-backup-v1\0"), ...new TextEncoder().encode(signedText)]);
+      valid = await crypto.subtle.verify({ name: "Ed25519" }, pub, signature, signed);
     } catch {
       valid = false;
     }
     if (!valid) return { status: 403, body: { error: "Bad signature." } };
+    const kept = this.sql.exec("SELECT id, at FROM saved_accounts WHERE key = ?", key).toArray()[0];
+    if (kept && Number(kept.at) >= at) return { status: 409, body: { error: "A newer change was already made. Try again." } };
     if (action === "delete") {
-      this.sql.exec("DELETE FROM saved_accounts WHERE key = ?", key);
+      this.sql.exec("DELETE FROM saved_accounts WHERE key = ? AND id = ?", key, id);
       return { status: 200, body: { ok: true } };
     }
     if (action !== "save") return { status: 400, body: { error: "Unknown action." } };
     const login = String(body.login ?? "");
     const storedText = String(body.stored ?? "");
     if (!/^[0-9a-f]{64}$/.test(login) || storedText.length > 4000) return { status: 400, body: { error: "Bad account." } };
-    let stored: { public_key?: string };
+    let stored: unknown;
     try {
       stored = JSON.parse(storedText);
     } catch {
       return { status: 400, body: { error: "Bad account." } };
     }
-    if (stored.public_key !== key) return { status: 400, body: { error: "That isn't this account." } };
+    if (!stored || typeof stored !== "object" || (stored as { public_key?: unknown }).public_key !== key) return { status: 400, body: { error: "That isn't this account." } };
     if (!local && !this.backupTry("save:" + ipTag, 20)) return { status: 429, body: { error: "Too many tries. Wait an hour and try again." } };
-    const loginHash = await sha256Hex(login);
-    // The same email and password for another account would be ambiguous: choose another password.
-    const clash = this.sql.exec("SELECT key FROM saved_accounts WHERE id = ? AND login = ? AND key != ?", id, loginHash, key).toArray()[0];
-    if (clash) return { status: 409, body: { error: "Use a different password for this account." } };
-    // One saved copy per account: a new email or password replaces the old.
-    this.sql.exec("INSERT OR REPLACE INTO saved_accounts (key, id, login, stored, at) VALUES (?, ?, ?, ?, ?)", key, id, loginHash, storedText, Date.now());
+    // One saved copy per account: a new email or password replaces the old. Nothing here says
+    // whether another account uses the same email (so a save can't be used to test a guess).
+    this.sql.exec("INSERT OR REPLACE INTO saved_accounts (key, id, login, stored, at) VALUES (?, ?, ?, ?, ?)", key, id, await sha256Hex(login), storedText, at);
     return { status: 200, body: { ok: true } };
   }
 
@@ -566,6 +572,8 @@ export class UserDirectory extends DurableObject<Env> {
 
 export class StromAccount extends DurableObject<Env> {
   private sql: SqlStorage;
+  /** When this account last said it's typing, per conversation (in memory only). */
+  private typingAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -1042,7 +1050,7 @@ export class StromAccount extends DurableObject<Env> {
           .exec("SELECT id, from_key, sealed, sent_at, edited_at, reactions FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
           .toArray()
           .reverse()
-          .map((row) => ({ ...row, reactions: row.reactions ? JSON.parse(String(row.reactions)) : null }));
+          .map((row) => ({ ...row, reactions: this.reactionsOut(row.reactions) }));
         return this.send(ws, { type: "dm_history", with: peer, messages: rows, complete: rows.length < DM_HISTORY });
       }
       case "dm_read": {
@@ -1088,11 +1096,12 @@ export class StromAccount extends DurableObject<Env> {
       case "turn_login":
         return this.relayLogin(ws);
       case "dm_typing": {
-        // "Typing…" in a DM or group: passed on at once, never kept; at most every 2 seconds.
-        const now = Date.now();
-        if (now - Number(this.meta("typing_at") ?? 0) < 2000) return;
-        this.setMeta("typing_at", String(now));
+        // "Typing…" in a DM or group: passed on at once, never kept; at most every 2 seconds per
+        // conversation (counted in memory, so it costs no storage).
         const peer = String(msg.with ?? "").toLowerCase();
+        const now = Date.now();
+        if (now - (this.typingAt.get(peer) ?? 0) < 2000) return;
+        this.typingAt.set(peer, now);
         const group = this.group(peer);
         const others = group ? group.members.filter((k) => k !== myKey) : this.friend(peer)?.state === "friend" ? [peer] : [];
         await Promise.all(others.map((k) => accountOf(this.env, k).dmTyping(myKey, peer).catch(() => false)));
@@ -1345,34 +1354,53 @@ export class StromAccount extends DurableObject<Env> {
         if (typeof one !== "string" || !/^[0-9a-f]+$/.test(one) || one.length > 2000) return error("That reaction can't be saved.");
       }
     }
-    const reactions = this.setReaction(row.reactions, myKey, sealedFor(myKey) as string | null);
+    // Kept and shown on your devices at once, before the others hear (so a later change can't
+    // be overtaken); each copy keeps a person's newest only.
+    const reactions = this.setReaction(row.reactions, myKey, sealedFor(myKey) as string | null, now);
     this.sql.exec("UPDATE dms SET reactions = ? WHERE peer = ? AND id = ?", reactions, peer, id);
-    await Promise.all(others.map((k) => accountOf(this.env, k).dmReacted(myKey, peer, id, (sealedFor(k) as string | null) ?? null).catch(() => false)));
-    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: reactions ? JSON.parse(reactions) : null });
+    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: this.reactionsOut(reactions) });
+    await Promise.all(others.map((k) => accountOf(this.env, k).dmReacted(myKey, peer, id, (sealedFor(k) as string | null) ?? null, now).catch(() => false)));
   }
 
   /** One person's reactions in a message's reactions (null takes them out). */
-  private setReaction(current: unknown, who: string, sealed: string | null): string | null {
-    const all: Record<string, string> = current ? JSON.parse(String(current)) : {};
+  private setReaction(current: unknown, who: string, sealed: string | null, at: number): string | null {
+    const all = this.reactionsIn(current);
+    // An older change arriving late doesn't undo a newer one.
+    if ((all[who]?.at ?? 0) > at) return current ? String(current) : null;
     if (sealed === null) delete all[who];
-    else all[who] = sealed;
+    else all[who] = { s: sealed, at };
     // A message keeps reactions from at most 50 people.
     const keys = Object.keys(all);
     if (keys.length > 50) for (const k of keys.slice(0, keys.length - 50)) delete all[k];
     return Object.keys(all).length ? JSON.stringify(all) : null;
   }
 
+  /** A message's reactions as kept: { person: { s: sealed, at } } (earlier ones were just sealed). */
+  private reactionsIn(current: unknown): Record<string, { s: string; at: number }> {
+    const raw: Record<string, unknown> = current ? JSON.parse(String(current)) : {};
+    const out: Record<string, { s: string; at: number }> = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = typeof v === "string" ? { s: v, at: 0 } : (v as { s: string; at: number });
+    return out;
+  }
+
+  /** As the app gets them: { person: sealed }. */
+  private reactionsOut(current: unknown): Record<string, string> | null {
+    if (!current) return null;
+    return Object.fromEntries(Object.entries(this.reactionsIn(current)).map(([k, v]) => [k, v.s]));
+  }
+
   /** Someone reacted to a message in a conversation with us. */
-  async dmReacted(fromKey: string, conversation: string, id: string, sealed: string | null): Promise<boolean> {
-    // Only from a friend (in a DM) or someone in the group: never from someone blocked or gone.
+  async dmReacted(fromKey: string, conversation: string, id: string, sealed: string | null, at = Date.now()): Promise<boolean> {
+    // Only from a friend (in a DM) or someone in the group you haven't blocked.
     const group = this.group(conversation);
+    if (this.friend(fromKey)?.state === "blocked") return false;
     if (group ? !group.members.includes(fromKey) : this.friend(fromKey)?.state !== "friend") return false;
     const peer = group ? conversation : fromKey;
     const row = this.sql.exec("SELECT reactions FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
     if (!row) return false;
-    const reactions = this.setReaction(row.reactions, fromKey, sealed);
+    const reactions = this.setReaction(row.reactions, fromKey, sealed, at);
     this.sql.exec("UPDATE dms SET reactions = ? WHERE peer = ? AND id = ?", reactions, peer, id);
-    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: reactions ? JSON.parse(reactions) : null });
+    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: this.reactionsOut(reactions) });
     return true;
   }
 
@@ -1763,6 +1791,7 @@ export class StromAccount extends DurableObject<Env> {
 
   /** Someone is typing to us (or in a group we're in): our open devices show it. */
   async dmTyping(fromKey: string, conversation: string): Promise<boolean> {
+    if (this.friend(fromKey)?.state === "blocked") return false;
     const group = this.group(conversation);
     if (group ? !group.members.includes(fromKey) : this.friend(fromKey)?.state !== "friend") return false;
     if (this.devices().length === 0) return false;

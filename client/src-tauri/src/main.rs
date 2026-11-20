@@ -346,8 +346,10 @@ async fn cloud_backup_save(state: State<'_, AppState>, cloud: String, email: Str
     // The email stays here; whether the phrase was saved goes along (on a new computer it still was).
     sent.backup_email = None;
     let text = serde_json::to_string(&sent).map_err(|e| e.to_string())?;
-    let sig = identity.sign_challenge(&strom_voice::identity::backup_nonce(&format!("hopp-backup|{id}|{login}|{text}")));
-    backup_post(&cloud, serde_json::json!({ "action": "save", "id": id, "login": login, "stored": text, "key": identity.public_key(), "sig": sig })).await?;
+    // Signed with the time, so an old request can't be sent again later.
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let sig = identity.sign_backup(&format!("save|{at}|{id}|{login}|{text}"));
+    backup_post(&cloud, serde_json::json!({ "action": "save", "at": at, "id": id, "login": login, "stored": text, "key": identity.public_key(), "sig": sig })).await?;
     stored.backup_email = Some(email);
     write_stored(&state, &stored)
 }
@@ -359,8 +361,9 @@ async fn cloud_backup_remove(state: State<'_, AppState>, cloud: String) -> CmdRe
     let mut stored = unlock_stored(&state)?;
     let Some(email) = stored.backup_email.clone() else { return Ok(()) };
     let id = strom_voice::identity::backup_id(&email);
-    let sig = identity.sign_challenge(&strom_voice::identity::backup_nonce(&format!("hopp-backup-delete|{id}")));
-    backup_post(&cloud, serde_json::json!({ "action": "delete", "id": id, "key": identity.public_key(), "sig": sig })).await?;
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let sig = identity.sign_backup(&format!("delete|{at}|{id}"));
+    backup_post(&cloud, serde_json::json!({ "action": "delete", "at": at, "id": id, "key": identity.public_key(), "sig": sig })).await?;
     stored.backup_email = None;
     write_stored(&state, &stored)
 }

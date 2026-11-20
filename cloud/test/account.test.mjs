@@ -906,45 +906,60 @@ test("a server on someone's computer gets short invite links with its name, made
   host.close();
 });
 
-test("an account saved to Hopp Cloud: saved by itself only, fetched with the right login, guesses limited, removed", async () => {
+test("an account saved to Hopp Cloud: signed by itself only (never with a login challenge), right logins always get in, wrong guesses limited, old requests refused", async () => {
   const me = newKey();
   const other = newKey();
   const id = crypto.randomBytes(32).toString("hex");
   const login = crypto.randomBytes(32).toString("hex");
   const stored = JSON.stringify({ version: 1, name: "Tester", public_key: me.pub, salt: "00", nonce: "00", secret: "00" });
-  const sign = (key, text) => crypto.sign(null, authMessage(crypto.createHash("sha256").update(text).digest("hex")), key.privateKey).toString("hex");
+  const sign = (key, text) => crypto.sign(null, Buffer.concat([Buffer.from("hopp-backup-v1\0"), Buffer.from(text)]), key.privateKey).toString("hex");
   const post = (body) => fetch(`${HTTP}/backup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const save = (key, at, l, st) => post({ action: "save", at, id, login: l, stored: st, key: key.pub, sig: sign(key, `save|${at}|${id}|${l}|${st}`) });
 
   // Signed by someone else: refused.
-  let r = await post({ action: "save", id, login, stored, key: me.pub, sig: sign(other, `hopp-backup|${id}|${login}|${stored}`) });
+  const atX = Date.now();
+  let r = await post({ action: "save", at: atX, id, login, stored, key: me.pub, sig: sign(other, `save|${atX}|${id}|${login}|${stored}`) });
   assert.equal(r.status, 403);
-  // Signed by the account itself: saved.
-  r = await post({ action: "save", id, login, stored, key: me.pub, sig: sign(me, `hopp-backup|${id}|${login}|${stored}`) });
+  // A server's login challenge signed by the account can't be used for this.
+  const at0 = Date.now();
+  const challenge = crypto.createHash("sha256").update(`delete|${at0}|${id}`).digest("hex");
+  const loginSig = crypto.sign(null, authMessage(challenge), me.privateKey).toString("hex");
+  r = await post({ action: "delete", at: at0, id, key: me.pub, sig: loginSig });
+  assert.equal(r.status, 403);
+  // Saved by the account itself.
+  const at1 = Date.now();
+  r = await save(me, at1, login, stored);
   assert.equal(r.status, 200, await r.clone().text());
-  // Nobody can take an email: another account under it with its own password is just another copy;
-  // the very same email and password for two accounts is refused.
-  const theirs = JSON.stringify({ version: 1, name: "Other", public_key: other.pub, salt: "00", nonce: "00", secret: "00" });
-  r = await post({ action: "save", id, login, stored: theirs, key: other.pub, sig: sign(other, `hopp-backup|${id}|${login}|${theirs}`) });
+  // An old request can't be sent again (nor one from long ago).
+  r = await save(me, at1, login, stored);
   assert.equal(r.status, 409);
+  r = await save(me, Date.now() - 10 * 60_000, login, stored);
+  assert.equal(r.status, 400);
+  // Another account under the same email with its own password is just another copy.
+  const theirs = JSON.stringify({ version: 1, name: "Other", public_key: other.pub, salt: "00", nonce: "00", secret: "00" });
   const otherLogin = crypto.randomBytes(32).toString("hex");
-  r = await post({ action: "save", id, login: otherLogin, stored: theirs, key: other.pub, sig: sign(other, `hopp-backup|${id}|${otherLogin}|${theirs}`) });
+  r = await save(other, Date.now(), otherLogin, theirs);
   assert.equal(r.status, 200);
   r = await post({ action: "fetch", id, login: otherLogin });
   assert.equal((await r.json()).stored.public_key, other.pub);
-  // The right login gets it back, exactly as saved; a wrong one doesn't.
+  // The right login gets it back, exactly as saved.
   r = await post({ action: "fetch", id, login });
-  assert.equal(r.status, 200);
   assert.equal((await r.json()).stored.public_key, me.pub);
-  r = await post({ action: "fetch", id, login: crypto.randomBytes(32).toString("hex") });
-  assert.equal(r.status, 403);
-  // The right login is never counted, so nobody can lock you out by logging in; wrong ones are limited.
-  for (let i = 0; i < 12; i++) assert.equal((await post({ action: "fetch", id, login })).status, 200);
+  // Wrong guesses are limited, and even then the right login still gets in.
   let limited = false;
   for (let i = 0; i < 12 && !limited; i++) limited = (await post({ action: "fetch", id, login: crypto.randomBytes(32).toString("hex") })).status === 429;
   assert.ok(limited, "wrong guesses are limited");
+  r = await post({ action: "fetch", id, login });
+  assert.equal(r.status, 200, "the owner is never locked out");
+  // Not an object: a plain no, not a crash.
+  r = await fetch(`${HTTP}/backup`, { method: "POST", headers: { "content-type": "application/json" }, body: "null" });
+  assert.equal(r.status, 400);
   // Removed by the account: gone.
-  r = await post({ action: "delete", id, key: me.pub, sig: sign(me, `hopp-backup-delete|${id}`) });
+  const at2 = Date.now() + 1;
+  r = await post({ action: "delete", at: at2, id, key: me.pub, sig: sign(me, `delete|${at2}|${id}`) });
   assert.equal(r.status, 200);
+  r = await post({ action: "fetch", id, login });
+  assert.ok([403, 429].includes(r.status), "gone (or still resting after the guesses above)");
 });
 
 test("a tunnel's host hears hopp-pong to its hopp-ping, so a quiet tunnel isn't taken for dead", async () => {
