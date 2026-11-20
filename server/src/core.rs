@@ -88,8 +88,8 @@ const MAX_IMAGE_STORE: i64 = 100_000_000;
 const IMAGES_PER_DAY: i64 = 40;
 pub const UPLOAD_CLOCK_SKEW_MS: u64 = 5 * 60_000;
 /// Hopp Cloud's features; a server on someone's computer has every one of them.
-const FEATURES: [&str; 19] = [
-    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch",
+const FEATURES: [&str; 20] = [
+    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms",
 ];
 
 static ENDPOINT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$").unwrap());
@@ -381,6 +381,42 @@ impl Ch {
     }
 }
 
+/// What a role may do, one switch each (as in Discord). Administrator is all of them.
+const PERMS: [&str; 17] = [
+    "manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "administrator",
+];
+/// The Moderator of before (a role's level, or the built-in one), as switches.
+const MOD_PERMS: [&str; 9] = ["manage_nicknames", "kick", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members"];
+/// Switches that put someone among the moderators: who they may act on, and who may act on them.
+const MOD_LIKE: [&str; 7] = ["kick", "ban", "timeout", "manage_messages", "mute_members", "move_members", "manage_nicknames"];
+
+fn perms_of_level(level: Option<&str>) -> Vec<String> {
+    match level {
+        Some("admin") => vec!["administrator".into()],
+        Some("mod") => MOD_PERMS.iter().map(|p| p.to_string()).collect(),
+        _ => vec![],
+    }
+}
+
+/// A role's switches as kept (a role made before switches has its level instead).
+fn read_perms(perms: Option<&str>, level: Option<&str>) -> Vec<String> {
+    match perms {
+        Some(p) => p.split(',').filter(|x| PERMS.contains(x)).map(str::to_string).collect(),
+        None => perms_of_level(level),
+    }
+}
+
+/// For apps that know only levels: the nearest one.
+fn level_of_perms(perms: &[String]) -> Option<&'static str> {
+    if perms.iter().any(|p| p == "administrator") {
+        Some("admin")
+    } else if perms.iter().any(|p| MOD_LIKE.contains(&p.as_str())) {
+        Some("mod")
+    } else {
+        None
+    }
+}
+
 #[derive(Clone)]
 struct RoleInfo {
     id: i64,
@@ -390,11 +426,12 @@ struct RoleInfo {
     level: Option<String>,
     position: i64,
     mentionable: bool,
+    perms: Vec<String>,
 }
 
 impl RoleInfo {
     fn json(&self) -> Value {
-        json!({ "id": self.id, "name": self.name, "color": self.color, "hoist": self.hoist, "level": self.level, "position": self.position, "mentionable": self.mentionable })
+        json!({ "id": self.id, "name": self.name, "color": self.color, "hoist": self.hoist, "level": self.level, "position": self.position, "mentionable": self.mentionable, "perms": self.perms })
     }
 }
 
@@ -687,21 +724,32 @@ impl Core {
         out
     }
 
-    /// Someone's role here; the owner is kept in meta, everyone else in accounts.
+    /// Where someone stands: owner, admin (Administrator), moderator (any moderating switch), or neither.
     fn role_of(&self, key: &str) -> Option<&'static str> {
         if self.meta("owner").as_deref() == Some(key) {
             return Some("owner");
         }
-        let r: Option<String> = self.db.query_row("SELECT role FROM accounts WHERE key = ?", [key], |r| r.get(0)).optional().ok().flatten().flatten();
-        // The server's own roles can carry moderator or admin rights too: the highest counts.
-        let levels = self.strings("SELECT r.level FROM roles r JOIN member_roles m ON m.role = r.id WHERE m.key = ? AND r.level IS NOT NULL", [key]);
-        if r.as_deref() == Some("admin") || levels.iter().any(|l| l == "admin") {
-            return Some("admin");
+        level_of_perms(&self.perms_of(key).into_iter().collect::<Vec<_>>())
+    }
+
+    /// Everything someone may do: the built-in role's and every role's switches together.
+    fn perms_of(&self, key: &str) -> HashSet<String> {
+        let all = || PERMS.iter().map(|p| p.to_string()).collect::<HashSet<_>>();
+        if self.meta("owner").as_deref() == Some(key) {
+            return all();
         }
-        if r.as_deref() == Some("mod") || levels.iter().any(|l| l == "mod") {
-            return Some("mod");
+        let base: Option<String> = self.db.query_row("SELECT role FROM accounts WHERE key = ?", [key], |r| r.get(0)).optional().ok().flatten().flatten();
+        let mut out: HashSet<String> = perms_of_level(base.as_deref()).into_iter().collect();
+        if let Ok(mut q) = self.db.prepare_cached("SELECT r.perms, r.level FROM roles r JOIN member_roles m ON m.role = r.id WHERE m.key = ?") {
+            for (p, l) in q.query_map([key], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))).map(|rows| rows.flatten().collect::<Vec<_>>()).unwrap_or_default() {
+                out.extend(read_perms(p.as_deref(), l.as_deref()));
+            }
         }
-        None
+        if out.contains("administrator") {
+            all()
+        } else {
+            out
+        }
     }
 
     fn member_list(&self) -> Vec<Value> {
@@ -774,7 +822,7 @@ impl Core {
                     u.role = role.map(str::to_string);
                 });
             }
-            if rank(role) >= Rank::Admin {
+            if rank(role) >= Rank::Mod {
                 let list = self.member_list();
                 self.send(id, &json!({ "type": "members", "members": list }));
             }
@@ -1061,7 +1109,7 @@ impl Core {
         }
         // Pictures off: none in chat, but admins still upload the server's own emojis (a picture
         // sent in chat is refused when it's sent, admins too).
-        if self.meta("pictures_off").as_deref() == Some("1") && kind.starts_with("image/") && rank(self.role_of(key)) < Rank::Admin {
+        if self.meta("pictures_off").as_deref() == Some("1") && kind.starts_with("image/") && !self.perms_of(key).contains("manage_emojis") {
             return fail(403, "Pictures are turned off in this server.");
         }
         let now = now_ms() as i64;
@@ -1301,16 +1349,18 @@ impl Core {
     // ---------- roles and private channels ----------
 
     fn custom_roles(&self) -> Vec<RoleInfo> {
-        let Ok(mut s) = self.db.prepare_cached("SELECT id, name, color, hoist, level, position, mentionable FROM roles ORDER BY position DESC, id") else { return vec![] };
+        let Ok(mut s) = self.db.prepare_cached("SELECT id, name, color, hoist, level, position, mentionable, perms FROM roles ORDER BY position DESC, id") else { return vec![] };
         s.query_map([], |r| {
+            let perms = read_perms(r.get::<_, Option<String>>(7)?.as_deref(), r.get::<_, Option<String>>(4)?.as_deref());
             Ok(RoleInfo {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 color: r.get(2)?,
                 hoist: r.get::<_, Option<i64>>(3)?.unwrap_or(0) != 0,
-                level: r.get::<_, Option<String>>(4)?.filter(|l| l == "admin" || l == "mod"),
+                level: level_of_perms(&perms).map(str::to_string),
                 position: r.get(5)?,
                 mentionable: r.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
+                perms,
             })
         })
         .map(|rows| rows.flatten().collect())
@@ -1380,8 +1430,9 @@ impl Core {
     }
 
     /// Why AutoMod holds a message back, or None. Moderators and admins are free of it.
-    fn automod_says(&mut self, conn: ConnId, body: &str, my_rank: Rank, sending: bool) -> Option<String> {
-        if my_rank >= Rank::Mod {
+    fn automod_says(&mut self, conn: ConnId, body: &str, _my_rank: Rank, sending: bool) -> Option<String> {
+        // Whoever may manage messages isn't held back.
+        if self.perms_of(&self.key_of(conn)).contains("manage_messages") {
             return None;
         }
         let (words, limit, repeats) = self.automod();
@@ -1415,8 +1466,8 @@ impl Core {
         None
     }
 
-    fn allow_pings(&self, text: &str, my_rank: Rank) -> String {
-        if my_rank >= Rank::Mod {
+    fn allow_pings(&self, text: &str, key: &str) -> String {
+        if self.perms_of(key).contains("mention_everyone") {
             return text.to_string();
         }
         let mut out = text.to_string();
@@ -1444,7 +1495,7 @@ impl Core {
     /// Whether someone may see a channel: everyone, unless it's private to some roles (admins always).
     fn can_see(&self, key: &str, ch: Option<&Ch>) -> bool {
         let Some(roles) = ch.and_then(|c| c.private_roles.as_ref()).filter(|r| !r.is_empty()) else { return true };
-        if key.is_empty() || rank(self.role_of(key)) >= Rank::Admin {
+        if key.is_empty() || self.perms_of(key).contains("administrator") {
             return true;
         }
         let mine: HashSet<i64> = self.roles_of(key).into_iter().collect();
@@ -1521,6 +1572,24 @@ impl Core {
         let user = self.user_of(conn);
         let key = self.key_of(conn);
         let level = |v: &Value| v.as_str().filter(|l| *l == "admin" || *l == "mod").map(str::to_string);
+        let mine = self.perms_of(&key);
+        // The switches asked for (or an old app's level); you only give what you have yourself.
+        let wanted = |msg: &Value| -> Result<Vec<String>, &'static str> {
+            let mut asked: Vec<String> = match msg["perms"].as_array() {
+                Some(a) => a.iter().filter_map(|p| p.as_str()).filter(|p| PERMS.contains(p)).map(str::to_string).collect(),
+                None => perms_of_level(level(&msg["level"]).as_deref()),
+            };
+            asked.sort_by_key(|p| PERMS.iter().position(|x| x == p));
+            asked.dedup();
+            if asked.iter().any(|p| p == "administrator") && !owner {
+                return Err("Only the owner can give a role Administrator.");
+            }
+            if asked.iter().any(|p| !mine.contains(p)) {
+                return Err("You can only give a role what you may do yourself.");
+            }
+            Ok(asked)
+        };
+        let may_roles = mine.contains("manage_roles");
         let color = |v: &Value| v.as_str().filter(|c| ROLE_COLOR.is_match(c)).map(str::to_lowercase);
         let name = |v: &Value| text(v).trim().chars().take(32).collect::<String>();
         let changed = |core: &Core| core.broadcast(&json!({ "type": "roles_updated", "roles": core.custom_roles().iter().map(RoleInfo::json).collect::<Vec<_>>() }), None);
@@ -1531,39 +1600,51 @@ impl Core {
         };
         match t {
             "create_role" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can manage roles.");
+                if !may_roles {
+                    return fail(self, "Only people who may manage roles (admins and the owner) can do that.");
                 }
                 if self.custom_roles().len() >= MAX_ROLES {
                     return fail(self, &format!("A server has at most {MAX_ROLES} roles."));
                 }
-                let lv = level(&msg["level"]);
-                if lv.as_deref() == Some("admin") && !owner {
-                    return fail(self, "Only the owner can make admin roles.");
-                }
+                let perms = match wanted(msg) {
+                    Ok(p) => p,
+                    Err(e) => return fail(self, e),
+                };
                 let n = Some(name(&msg["name"])).filter(|n| !n.is_empty()).unwrap_or_else(|| "new role".into());
                 let top = self.count("SELECT coalesce(max(position), 0) FROM roles", []);
                 self.exec(
-                    "INSERT INTO roles (name, color, hoist, level, position, mentionable) VALUES (?, ?, ?, ?, ?, ?)",
-                    params![n, color(&msg["color"]), truthy(&msg["hoist"]).then_some(1), lv, top + 1, truthy(&msg["mentionable"]).then_some(1)],
+                    "INSERT INTO roles (name, color, hoist, level, position, mentionable, perms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    params![n, color(&msg["color"]), truthy(&msg["hoist"]).then_some(1), level_of_perms(&perms), top + 1, truthy(&msg["mentionable"]).then_some(1), perms.join(",")],
                 );
                 self.audit(&user.name, "create_role", Some(&n), None);
                 changed(self);
                 true
             }
             "update_role" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can manage roles.");
+                if !may_roles {
+                    return fail(self, "Only people who may manage roles (admins and the owner) can do that.");
                 }
                 let Some(role) = self.custom_roles().into_iter().find(|r| r.id == int(&msg["id"])) else { return fail(self, "That role doesn't exist anymore.") };
-                let lv = level(&msg["level"]);
-                if (lv.as_deref() == Some("admin") || role.level.as_deref() == Some("admin")) && !owner {
+                if role.perms.iter().any(|p| p == "administrator") && !owner {
                     return fail(self, "Only the owner can change admin roles.");
+                }
+                // An app from before switches sends only a level: what it doesn't know stays as it was.
+                let perms = if msg["perms"].is_array() || !msg["level"].is_null() || msg.get("level").is_some() {
+                    match wanted(msg) {
+                        Ok(p) => p,
+                        Err(e) => return fail(self, e),
+                    }
+                } else {
+                    role.perms.clone()
+                };
+                // Taking a switch away is giving it in reverse: only someone who has it.
+                if role.perms.iter().any(|p| !perms.contains(p) && !mine.contains(p)) {
+                    return fail(self, "You can only change what a role may do within what you may do yourself.");
                 }
                 let n = Some(name(&msg["name"])).filter(|n| !n.is_empty()).unwrap_or(role.name.clone());
                 self.exec(
-                    "UPDATE roles SET name = ?, color = ?, hoist = ?, level = ?, mentionable = ? WHERE id = ?",
-                    params![n, color(&msg["color"]), truthy(&msg["hoist"]).then_some(1), lv, truthy(&msg["mentionable"]).then_some(1), role.id],
+                    "UPDATE roles SET name = ?, color = ?, hoist = ?, level = ?, mentionable = ?, perms = ? WHERE id = ?",
+                    params![n, color(&msg["color"]), truthy(&msg["hoist"]).then_some(1), level_of_perms(&perms), truthy(&msg["mentionable"]).then_some(1), perms.join(","), role.id],
                 );
                 self.audit(&user.name, "update_role", Some(&n), None);
                 changed(self);
@@ -1571,8 +1652,8 @@ impl Core {
                 true
             }
             "create_emoji" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can add emojis.");
+                if !mine.contains("manage_emojis") {
+                    return fail(self, "Only people who may manage emojis (admins and the owner) can add them.");
                 }
                 let n = text(&msg["name"]).trim().to_lowercase();
                 let image = text(&msg["image"]);
@@ -1595,8 +1676,8 @@ impl Core {
                 true
             }
             "delete_emoji" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can remove emojis.");
+                if !mine.contains("manage_emojis") {
+                    return fail(self, "Only people who may manage emojis (admins and the owner) can remove them.");
                 }
                 let id = int(&msg["id"]);
                 let row: Option<(String, String)> = self.db.query_row("SELECT name, image FROM emojis WHERE id = ?", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten();
@@ -1608,12 +1689,15 @@ impl Core {
                 true
             }
             "delete_role" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can manage roles.");
+                if !may_roles {
+                    return fail(self, "Only people who may manage roles (admins and the owner) can do that.");
                 }
                 let Some(role) = self.custom_roles().into_iter().find(|r| r.id == int(&msg["id"])) else { return true };
-                if role.level.as_deref() == Some("admin") && !owner {
+                if role.perms.iter().any(|p| p == "administrator") && !owner {
                     return fail(self, "Only the owner can delete admin roles.");
+                }
+                if role.perms.iter().any(|p| !mine.contains(p)) {
+                    return fail(self, "You can only delete a role that may do no more than you.");
                 }
                 let holders = self.strings("SELECT key FROM member_roles WHERE role = ?", [role.id]);
                 self.exec("DELETE FROM roles WHERE id = ?", [role.id]);
@@ -1627,8 +1711,8 @@ impl Core {
                 true
             }
             "reorder_roles" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can manage roles.");
+                if !may_roles {
+                    return fail(self, "Only people who may manage roles (admins and the owner) can do that.");
                 }
                 let order: Vec<i64> = msg["order"].as_array().map(|a| a.iter().map(int).collect()).unwrap_or_default();
                 let mut ids: Vec<i64> = self.custom_roles().iter().map(|r| r.id).collect();
@@ -1646,13 +1730,17 @@ impl Core {
                 true
             }
             "assign_role" => {
-                if my_rank < Rank::Admin {
-                    return fail(self, "Only admins and the owner can give roles.");
+                if !may_roles {
+                    return fail(self, "Only people who may manage roles (admins and the owner) can give roles.");
                 }
                 let target_key = text(&msg["public_key"]);
                 let Some(role) = self.custom_roles().into_iter().find(|r| r.id == int(&msg["role"])) else { return fail(self, "That role doesn't exist anymore.") };
-                if role.level.as_deref() == Some("admin") && !owner {
+                if role.perms.iter().any(|p| p == "administrator") && !owner {
                     return fail(self, "Only the owner can give admin roles.");
+                }
+                // Giving a role is giving what it may do: only what you may do yourself.
+                if role.perms.iter().any(|p| !mine.contains(p)) {
+                    return fail(self, "You can only give roles that may do no more than you.");
                 }
                 let Some(target) = self.member_list().into_iter().find(|m| m["public_key"] == target_key.as_str()) else {
                     return fail(self, "They're not a member of this server anymore.");
@@ -1718,11 +1806,13 @@ impl Core {
         let owner = user.owner;
         let my_role = self.role_of(&key);
         let my_rank = rank(my_role);
-        let allowed = |core: &Core, min: Rank| {
-            if my_rank >= min {
+        let my_perms = self.perms_of(&key);
+        // May do this, or a polite no.
+        let allowed = |core: &Core, p: &str| {
+            if my_perms.contains(p) {
                 return true;
             }
-            core.error(conn, if min == Rank::Admin { "Only admins and the owner can do that." } else { "Only moderators, admins and the owner can do that." });
+            core.error(conn, "You don't have permission to do that. Ask the server's owner or admins.");
             false
         };
 
@@ -1752,7 +1842,7 @@ impl Core {
                 }
             }
             "disconnect_voice" | "move_voice" | "server_mute" => {
-                if !allowed(self, Rank::Mod) {
+                if !allowed(self, if t == "server_mute" { "mute_members" } else { "move_members" }) {
                     return;
                 }
                 let target = int(&msg["session_id"]);
@@ -1847,7 +1937,7 @@ impl Core {
             "edit_message" => {
                 let channel = int(&msg["channel"]);
                 let id = int(&msg["id"]);
-                let new_text = self.allow_pings(text(&msg["text"]).trim(), my_rank);
+                let new_text = self.allow_pings(text(&msg["text"]).trim(), &key);
                 if new_text.is_empty() || chars(&new_text) > MAX_CHAT_LEN {
                     return self.error(conn, &format!("Messages must be 1–{MAX_CHAT_LEN} characters."));
                 }
@@ -1911,7 +2001,7 @@ impl Core {
                 self.broadcast_channel(channel, &json!({ "type": "reactions", "channel": channel, "id": id, "reactions": reactions }), None);
             }
             "pin" => {
-                if !allowed(self, Rank::Mod) {
+                if !allowed(self, "manage_messages") {
                     return;
                 }
                 let channel = int(&msg["channel"]);
@@ -1962,7 +2052,7 @@ impl Core {
                 let id = int(&msg["id"]);
                 let author: Option<String> = self.db.query_row("SELECT author_key FROM messages WHERE channel = ? AND id = ?", params![channel, id], |r| r.get(0)).optional().ok().flatten();
                 let Some(author) = author else { return self.error(conn, "That message no longer exists.") };
-                if author != key && (my_rank < Rank::Mod || (!owner && rank(self.role_of(&author)) >= my_rank)) {
+                if author != key && (!my_perms.contains("manage_messages") || (!owner && rank(self.role_of(&author)) >= my_rank)) {
                     return self.error(conn, "You can only delete your own messages.");
                 }
                 if author != key {
@@ -1984,7 +2074,7 @@ impl Core {
                 self.broadcast_channel(channel, &json!({ "type": "typing", "channel": channel, "session_id": user.session_id }), Some(conn));
             }
             "create_channel" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_channels") {
                     return;
                 }
                 let kind = if msg["kind"] == "voice" { "voice" } else { "text" };
@@ -2038,7 +2128,7 @@ impl Core {
             }
             "update_channel" => self.update_channel(conn, msg, &user, my_rank),
             "reorder_channels" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_channels") {
                     return;
                 }
                 let order: Vec<i64> = msg["order"].as_array().map(|a| a.iter().map(int).collect()).unwrap_or_default();
@@ -2058,8 +2148,8 @@ impl Core {
                 let id = int(&msg["channel"]);
                 let target = self.channel(id);
                 // A thread: moderators, or whoever started it; a channel: admins.
-                let thread_ok = target.as_ref().is_some_and(|t| t.parent.is_some() && (my_rank >= Rank::Mod || t.creator.as_deref() == Some(key.as_str())));
-                if !thread_ok && !allowed(self, Rank::Admin) {
+                let thread_ok = target.as_ref().is_some_and(|t| t.parent.is_some() && (my_perms.contains("manage_messages") || t.creator.as_deref() == Some(key.as_str())));
+                if !thread_ok && !allowed(self, "manage_channels") {
                     return;
                 }
                 let Some(target) = target else { return self.error(conn, "That channel doesn't exist.") };
@@ -2086,7 +2176,7 @@ impl Core {
                 let Some((name, old_nick)) = row else { return self.error(conn, "They're not a member of this server anymore.") };
                 let own = target == key;
                 if !own {
-                    if !allowed(self, Rank::Mod) {
+                    if !allowed(self, "manage_nicknames") {
                         return;
                     }
                     if rank(self.role_of(&target)) >= my_rank {
@@ -2106,7 +2196,7 @@ impl Core {
                 }
             }
             "timeout" => {
-                if !allowed(self, Rank::Mod) {
+                if !allowed(self, "timeout") {
                     return;
                 }
                 let target = int(&msg["session_id"]);
@@ -2152,7 +2242,7 @@ impl Core {
                 }
             }
             "get_audit_log" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "view_audit_log") {
                     return;
                 }
                 let entries: Vec<Value> = self
@@ -2168,7 +2258,7 @@ impl Core {
                 self.send(conn, &json!({ "type": "audit_log", "entries": entries }));
             }
             "unban" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "ban") {
                     return;
                 }
                 let target = text(&msg["public_key"]);
@@ -2178,7 +2268,7 @@ impl Core {
                 self.send(conn, &json!({ "type": "bans", "bans": self.bans() }));
             }
             "create_invite" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "create_invites") {
                     return;
                 }
                 let now = now_ms() as i64;
@@ -2209,14 +2299,14 @@ impl Core {
                 }
             }
             "revoke_invite" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "create_invites") {
                     return;
                 }
                 self.exec("DELETE FROM invites WHERE code = ?", [text(&msg["code"])]);
                 self.send(conn, &json!({ "type": "invites", "invites": self.invites() }));
             }
             "update_server" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_server") {
                     return;
                 }
                 let name = text(&msg["name"]).trim().to_string();
@@ -2308,7 +2398,7 @@ impl Core {
                 let id = int(&msg["id"]);
                 let ev: Option<(String, String)> = self.db.query_row("SELECT creator, name FROM events WHERE id = ?", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten();
                 let Some((creator, name)) = ev else { return self.events_changed() };
-                if creator != key && my_rank < Rank::Mod {
+                if creator != key && !my_perms.contains("manage_events") {
                     return self.error(conn, "Only whoever planned it, and moderators, can cancel an event.");
                 }
                 self.exec("DELETE FROM event_rsvp WHERE event = ?", [id]);
@@ -2334,7 +2424,7 @@ impl Core {
                 self.events_changed();
             }
             "get_automod" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_server") {
                     return;
                 }
                 let (words, limit, repeats) = self.automod();
@@ -2342,7 +2432,7 @@ impl Core {
                 self.send(conn, &json!({ "type": "automod", "words": words, "mention_limit": limit, "block_repeats": repeats, "invites_paused": paused }));
             }
             "set_automod" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_server") {
                     return;
                 }
                 let mut words: Vec<String> = Vec::new();
@@ -2365,7 +2455,7 @@ impl Core {
                 self.send(conn, &json!({ "type": "automod", "words": words, "mention_limit": limit, "block_repeats": repeats, "invites_paused": paused }));
             }
             "get_server_settings" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_server") {
                     return;
                 }
                 self.send(conn, &json!({ "type": "invites", "invites": self.invites() }));
@@ -2374,7 +2464,7 @@ impl Core {
             }
             "get_members" => self.send(conn, &json!({ "type": "members", "members": self.member_list() })),
             "set_role" => {
-                if !allowed(self, Rank::Admin) {
+                if !allowed(self, "manage_roles") {
                     return;
                 }
                 let target_key = text(&msg["public_key"]);
@@ -2463,7 +2553,7 @@ impl Core {
 
     fn send_chat(&mut self, conn: ConnId, msg: &Value, user: &User, key: &str, my_rank: Rank) {
         let ch = self.channel(int(&msg["channel"]));
-        let body = self.allow_pings(text(&msg["text"]).trim(), my_rank);
+        let body = self.allow_pings(text(&msg["text"]).trim(), key);
         // Voice channels have a chat too, for the people in them.
         let Some(ch) = ch.filter(|c| c.kind == "text" || c.kind == "voice") else { return self.error(conn, "That channel doesn't exist.") };
         if body.is_empty() || chars(&body) > MAX_CHAT_LEN {
@@ -2478,7 +2568,7 @@ impl Core {
         }
         // Slowmode: a pause between each person's messages here (moderators are free).
         let slow = ch.slowmode.unwrap_or(0);
-        if slow > 0 && my_rank < Rank::Mod {
+        if slow > 0 && !self.perms_of(key).contains("bypass_slowmode") {
             let last = self.conns[&conn].last_sent.get(&ch.id).copied().unwrap_or(0);
             let wait = ((last + slow as u64 * 1000) as i64 - now as i64 + 999).div_euclid(1000);
             if wait > 0 {
@@ -2609,9 +2699,9 @@ impl Core {
         self.send(conn, &json!({ "type": "search_results", "query": query, "messages": messages }));
     }
 
-    fn update_channel(&mut self, conn: ConnId, msg: &Value, user: &User, my_rank: Rank) {
-        if my_rank < Rank::Admin {
-            return self.error(conn, "Only admins and the owner can do that.");
+    fn update_channel(&mut self, conn: ConnId, msg: &Value, user: &User, _my_rank: Rank) {
+        if !self.perms_of(&self.key_of(conn)).contains("manage_channels") {
+            return self.error(conn, "You don't have permission to do that. Ask the server's owner or admins.");
         }
         let Some(ch) = self.channel(int(&msg["channel"])) else { return self.error(conn, "That channel doesn't exist.") };
         let name = normalize_channel_name(&text(&msg["name"]), &ch.kind);
@@ -2665,9 +2755,8 @@ impl Core {
     }
 
     fn remove_member(&mut self, conn: ConnId, msg: &Value, user: &User, key: &str, my_rank: Rank, banned: bool) {
-        let need = if banned { Rank::Admin } else { Rank::Mod };
-        if my_rank < need {
-            return self.error(conn, if need == Rank::Admin { "Only admins and the owner can do that." } else { "Only moderators, admins and the owner can do that." });
+        if !self.perms_of(key).contains(if banned { "ban" } else { "kick" }) {
+            return self.error(conn, "You don't have permission to do that. Ask the server's owner or admins.");
         }
         // Someone who's here (by their session), or a member who isn't right now (by Hopp ID).
         let by_key = msg["public_key"].as_str().filter(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))).map(str::to_string);
@@ -2762,7 +2851,7 @@ fn create_tables(db: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, channel INTEGER NOT NULL, starts_at INTEGER NOT NULL, creator TEXT NOT NULL, creator_name TEXT NOT NULL, created_at INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS event_rsvp (event INTEGER NOT NULL, key TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY (event, key));
-         CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0, mentionable INTEGER);
+         CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, color TEXT, hoist INTEGER, level TEXT, position INTEGER NOT NULL DEFAULT 0, mentionable INTEGER, perms TEXT);
          CREATE TABLE IF NOT EXISTS member_roles (key TEXT NOT NULL, role INTEGER NOT NULL, PRIMARY KEY (key, role));
          CREATE TABLE IF NOT EXISTS member_status (key TEXT PRIMARY KEY, status TEXT NOT NULL, at INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT);
@@ -2777,6 +2866,8 @@ fn create_tables(db: &Connection) -> rusqlite::Result<()> {
            id TEXT PRIMARY KEY, uploader TEXT NOT NULL, type TEXT NOT NULL, data BLOB NOT NULL,
            size INTEGER NOT NULL, created_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);",
     )?;
+    // Servers made before roles had switches: the column comes now (an error means it's there).
+    let _ = db.execute("ALTER TABLE roles ADD COLUMN perms TEXT", []);
     // Hopp still has no outbox for accounts here: a server on someone's computer can't reach
     // the cloud's accounts, so news reaches people while their app is connected.
     Ok(())

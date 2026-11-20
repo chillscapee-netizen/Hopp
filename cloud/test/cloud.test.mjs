@@ -927,6 +927,69 @@ test("timeouts, slowmode, bans that delete history, and the audit log", async ()
   bob.close();
 });
 
+test("roles: switches open just what they say, and only someone who has a switch gives it", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("perms"));
+  const ann = await join(id, "ann", { invite });
+  const bob = await join(id, "bob", { invite });
+  const cat = await join(id, "cat", { invite });
+  const pat = await join(id, "pat", { invite });
+  const make = async (name, perms) => {
+    owner.send({ type: "create_role", name, perms });
+    const made = await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === name));
+    return made.roles.find((r) => r.name === name);
+  };
+  const give = async (who, role) => {
+    owner.send({ type: "assign_role", public_key: who.key.pub, role: role.id, on: true });
+    await owner.waitFor((m) => m.type === "user_updated" && m.user.public_key === who.key.pub && m.user.roles?.includes(role.id));
+  };
+  const kicker = await make("Kicker", ["kick"]);
+  assert.deepEqual([kicker.perms, kicker.level], [["kick"], "mod"], "a role says what it may do (and the nearest level, for older apps)");
+  const builder = await make("Builder", ["manage_channels"]);
+  assert.equal(builder.level, null, "managing channels alone isn't moderating");
+  const keeper = await make("Keeper", ["manage_roles", "kick"]);
+  await give(ann, kicker);
+  await give(bob, builder);
+  await give(cat, keeper);
+
+  // Kick, and nothing else.
+  ann.send({ type: "create_channel", name: "nope", kind: "text" });
+  assert.match(await errorOf(ann), /permission/);
+  ann.send({ type: "ban", session_id: pat.id });
+  assert.match(await errorOf(ann), /permission/);
+  // Channels, and nothing else.
+  bob.send({ type: "create_channel", name: "builds", kind: "text" });
+  await bob.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "builds"));
+  bob.send({ type: "kick", session_id: pat.id });
+  assert.match(await errorOf(bob), /permission/);
+
+  // Managing roles: only what you may do yourself, never Administrator.
+  cat.send({ type: "create_role", name: "Banner", perms: ["ban"] });
+  assert.match(await errorOf(cat), /what you may do yourself/);
+  cat.send({ type: "create_role", name: "Boss", perms: ["administrator"] });
+  assert.match(await errorOf(cat), /owner/);
+  cat.send({ type: "assign_role", public_key: pat.key.pub, role: builder.id, on: true });
+  assert.match(await errorOf(cat), /no more than you/);
+  cat.send({ type: "create_role", name: "Bouncer", perms: ["kick"] });
+  await cat.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Bouncer"));
+  cat.send({ type: "update_role", id: builder.id, name: "Builder", perms: [] });
+  assert.match(await errorOf(cat), /within what you may do/);
+
+  // An app from before switches still makes a Moderator by its level.
+  owner.send({ type: "create_role", name: "Old mods", level: "mod" });
+  const old = (await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Old mods"))).roles.find((r) => r.name === "Old mods");
+  assert.ok(old.perms.includes("timeout") && old.perms.includes("kick") && !old.perms.includes("ban"));
+  // ...and an old app saving its name keeps the switches it doesn't know about.
+  owner.send({ type: "update_role", id: builder.id, name: "Builders" });
+  const kept = (await owner.waitFor((m) => m.type === "roles_updated" && m.roles.some((r) => r.name === "Builders"))).roles.find((r) => r.name === "Builders");
+  assert.deepEqual(kept.perms, ["manage_channels"]);
+
+  // Kick works for the one who has it.
+  ann.send({ type: "kick", session_id: pat.id });
+  await pat.waitFor((m) => m.type === "kicked");
+  for (const c of [owner, ann, bob, cat]) c.close();
+});
+
 test("roles: colours and levels, and private channels nobody else sees", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("roles"));

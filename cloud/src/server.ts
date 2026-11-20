@@ -156,7 +156,20 @@ const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
 interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[]; parent?: number; starter?: number; last_at?: number; creator?: string }
-interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number; mentionable: boolean }
+interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number; mentionable: boolean; perms: Perm[] }
+
+/** What a role may do, one switch each (as in Discord). Administrator is all of them. */
+const PERMS = ["manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "administrator"] as const;
+type Perm = (typeof PERMS)[number];
+/** The Moderator of before (a role's level, or the built-in one), as switches. */
+const MOD_PERMS: Perm[] = ["manage_nicknames", "kick", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members"];
+/** Switches that put someone among the moderators: who they may act on, and who may act on them. */
+const MOD_LIKE: Perm[] = ["kick", "ban", "timeout", "manage_messages", "mute_members", "move_members", "manage_nicknames"];
+const permsOfLevel = (level: unknown): Perm[] => (level === "admin" ? ["administrator"] : level === "mod" ? [...MOD_PERMS] : []);
+/** A role's switches as kept (a roles made before switches has its level instead). */
+const readPerms = (v: unknown, level: unknown): Perm[] => (typeof v === "string" ? v.split(",").filter((p): p is Perm => (PERMS as readonly string[]).includes(p)) : permsOfLevel(level));
+/** For apps that know only levels: the nearest one. */
+const levelOfPerms = (perms: Perm[]): "admin" | "mod" | null => (perms.includes("administrator") ? "admin" : perms.some((p) => MOD_LIKE.includes(p)) ? "mod" : null);
 /** @everyone and @here as words of their own. */
 const CROWD = /(^|[^\p{L}\p{N}_@])@(everyone|here)(?![\p{L}\p{N}_])/gu;
 const ROLE_MENTION = /<@&(\d+)>/g;
@@ -356,6 +369,7 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("creator")) this.sql.exec("ALTER TABLE channels ADD COLUMN creator TEXT");
     const roleColumns = new Set(this.sql.exec("PRAGMA table_info(roles)").toArray().map((c) => String(c.name)));
     if (!roleColumns.has("mentionable")) this.sql.exec("ALTER TABLE roles ADD COLUMN mentionable INTEGER");
+    if (!roleColumns.has("perms")) this.sql.exec("ALTER TABLE roles ADD COLUMN perms TEXT");
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
     if (!accountColumns.has("nick")) this.sql.exec("ALTER TABLE accounts ADD COLUMN nick TEXT");
@@ -519,7 +533,7 @@ export class StromServer extends DurableObject<Env> {
     if (!member || banned) return fail("You're not a member of this server.", 403);
     // Pictures off: none in chat, but admins still upload the server's own emojis (a picture
     // sent in chat is refused when it's sent, admins too).
-    if (this.meta("pictures_off") === "1" && type.startsWith("image/") && rank(this.roleOf(key)) < RANK.admin) return fail("Pictures are turned off in this server.", 403);
+    if (this.meta("pictures_off") === "1" && type.startsWith("image/") && !this.permsOf(key).has("manage_emojis")) return fail("Pictures are turned off in this server.", 403);
     const now = Date.now();
     const today = Number(this.sql.exec("SELECT count(*) AS n FROM images WHERE uploader = ? AND created_at > ?", key, now - 86_400_000).one().n);
     if (today >= IMAGES_PER_DAY) return fail("You've shared a lot of pictures today. Try again tomorrow.", 429);
@@ -595,7 +609,8 @@ export class StromServer extends DurableObject<Env> {
 
   /** Why AutoMod holds a message back, or null. Moderators and admins are free of it. */
   private automodSays(ws: WebSocket, s: Session, text: string, myRank: number, sending: boolean): string | null {
-    if (myRank >= RANK.mod) return null;
+    // Whoever may manage messages isn't held back.
+    if (this.permsOf(s.key!).has("manage_messages")) return null;
     const rules = this.automod();
     const lower = wordsOf(text).toLowerCase();
     if (rules.words.length) {
@@ -678,14 +693,18 @@ export class StromServer extends DurableObject<Env> {
   }
 
   /** Someone's role here; the owner is kept in meta, everyone else in accounts. */
+  /** Where someone stands: owner, admin (Administrator), moderator (any moderating switch), or neither. */
   private roleOf(key: string): Role | null {
     if (this.meta("owner") === key) return "owner";
-    const r = this.sql.exec("SELECT role FROM accounts WHERE key = ?", key).toArray()[0]?.role;
-    // The server's own roles can carry moderator or admin rights too: the highest counts.
-    const levels = this.sql.exec("SELECT r.level FROM roles r JOIN member_roles m ON m.role = r.id WHERE m.key = ? AND r.level IS NOT NULL", key).toArray().map((x) => String(x.level));
-    if (r === "admin" || levels.includes("admin")) return "admin";
-    if (r === "mod" || levels.includes("mod")) return "mod";
-    return null;
+    return levelOfPerms([...this.permsOf(key)]);
+  }
+
+  /** Everything someone may do: the built-in role's and every role's switches together. */
+  private permsOf(key: string): Set<Perm> {
+    if (this.meta("owner") === key) return new Set(PERMS);
+    const out = new Set<Perm>(permsOfLevel(this.sql.exec("SELECT role FROM accounts WHERE key = ?", key).toArray()[0]?.role));
+    for (const r of this.sql.exec("SELECT r.perms, r.level FROM roles r JOIN member_roles m ON m.role = r.id WHERE m.key = ?", key)) for (const p of readPerms(r.perms, r.level)) out.add(p);
+    return out.has("administrator") ? new Set(PERMS) : out;
   }
 
   private memberList(): Member[] {
@@ -726,7 +745,7 @@ export class StromServer extends DurableObject<Env> {
           else delete u.role;
         });
       }
-      if (rank(role) >= RANK.admin) this.send(mws, { type: "members", members: this.memberList() });
+      if (rank(role) >= RANK.mod) this.send(mws, { type: "members", members: this.memberList() });
     }
   }
 
@@ -1090,7 +1109,7 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
@@ -1109,23 +1128,27 @@ export class StromServer extends DurableObject<Env> {
 
   /** The server's own roles, highest first. */
   private customRoles(): RoleInfo[] {
-    return this.sql.exec("SELECT id, name, color, hoist, level, position, mentionable FROM roles ORDER BY position DESC, id").toArray().map((r) => ({
-      id: Number(r.id),
-      name: String(r.name),
-      color: r.color === null ? null : String(r.color),
-      hoist: !!r.hoist,
-      level: r.level === "admin" || r.level === "mod" ? (r.level as "admin" | "mod") : null,
-      position: Number(r.position),
-      mentionable: !!r.mentionable,
-    }));
+    return this.sql.exec("SELECT id, name, color, hoist, level, position, mentionable, perms FROM roles ORDER BY position DESC, id").toArray().map((r) => {
+      const perms = readPerms(r.perms, r.level);
+      return {
+        id: Number(r.id),
+        name: String(r.name),
+        color: r.color === null ? null : String(r.color),
+        hoist: !!r.hoist,
+        level: levelOfPerms(perms),
+        position: Number(r.position),
+        mentionable: !!r.mentionable,
+        perms,
+      };
+    });
   }
 
   /**
    * Who may ping many at once: moderators may use @everyone, @here and any role; others only
    * roles that allow it. Anything else stays in the text as plain words that ping nobody.
    */
-  private allowPings(text: string, myRank: number): string {
-    if (myRank >= RANK.mod) return text;
+  private allowPings(text: string, myRank: number, key?: string): string {
+    if (key ? this.permsOf(key).has("mention_everyone") : myRank >= RANK.mod) return text;
     const roles = new Map(this.customRoles().map((r) => [r.id, r]));
     return text
       .replace(CROWD, (_, before, word) => `${before}@\u200b${word}`)
@@ -1142,7 +1165,7 @@ export class StromServer extends DurableObject<Env> {
   /** Whether someone may see a channel: everyone, unless it's private to some roles (admins always). */
   private canSee(key: string | undefined, ch: Channel | undefined): boolean {
     if (!ch?.private_roles?.length || !key) return true;
-    if (rank(this.roleOf(key)) >= RANK.admin) return true;
+    if (this.permsOf(key).has("administrator")) return true;
     const mine = new Set(this.rolesOf(key));
     return ch.private_roles.some((r) => mine.has(r));
   }
@@ -1215,30 +1238,42 @@ export class StromServer extends DurableObject<Env> {
     const user = s.user!;
     const fail = (text: string) => (this.error(ws, text), true);
     const level = (v: unknown) => (v === "admin" || v === "mod" ? v : null);
+    const mine = this.permsOf(s.key!);
+    /** The switches asked for (or an old app's level); you only give what you have yourself. */
+    const wanted = (): Perm[] | string => {
+      const asked = Array.isArray(msg.perms) ? [...new Set(msg.perms.map(String))].filter((p): p is Perm => (PERMS as readonly string[]).includes(p as string)) : permsOfLevel(level(msg.level));
+      if (asked.includes("administrator") && !owner) return "Only the owner can give a role Administrator.";
+      if (asked.some((p) => !mine.has(p))) return "You can only give a role what you may do yourself.";
+      return asked;
+    };
     const color = (v: unknown) => (typeof v === "string" && ROLE_COLOR.test(v) ? v.toLowerCase() : null);
     const name = (v: unknown) => String(v ?? "").trim().slice(0, 32);
     const changed = () => this.broadcast({ type: "roles_updated", roles: this.customRoles() });
     switch (msg.type) {
       case "create_role": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        if (!mine.has("manage_roles")) return fail("Only people who may manage roles (admins and the owner) can do that.");
         if (this.customRoles().length >= MAX_ROLES) return fail(`A server has at most ${MAX_ROLES} roles.`);
-        const lv = level(msg.level);
-        if (lv === "admin" && !owner) return fail("Only the owner can make admin roles.");
+        const perms = wanted();
+        if (typeof perms === "string") return fail(perms);
         const n = name(msg.name) || "new role";
         const top = Number(this.sql.exec("SELECT max(position) AS p FROM roles").toArray()[0]?.p ?? 0);
-        this.sql.exec("INSERT INTO roles (name, color, hoist, level, position, mentionable) VALUES (?, ?, ?, ?, ?, ?)", n, color(msg.color), msg.hoist ? 1 : null, lv, top + 1, msg.mentionable ? 1 : null);
+        this.sql.exec("INSERT INTO roles (name, color, hoist, level, position, mentionable, perms) VALUES (?, ?, ?, ?, ?, ?, ?)", n, color(msg.color), msg.hoist ? 1 : null, levelOfPerms(perms), top + 1, msg.mentionable ? 1 : null, perms.join(","));
         this.audit(user.name, "create_role", n, null);
         changed();
         return true;
       }
       case "update_role": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        if (!mine.has("manage_roles")) return fail("Only people who may manage roles (admins and the owner) can do that.");
         const role = this.customRoles().find((r) => r.id === Number(msg.id));
         if (!role) return fail("That role doesn't exist anymore.");
-        const lv = level(msg.level);
-        if ((lv === "admin" || role.level === "admin") && !owner) return fail("Only the owner can change admin roles.");
+        if (role.perms.includes("administrator") && !owner) return fail("Only the owner can change admin roles.");
+        // An app from before switches sends only a level: what it doesn't know stays as it was.
+        const perms = Array.isArray(msg.perms) || msg.level !== undefined ? wanted() : role.perms;
+        if (typeof perms === "string") return fail(perms);
+        // Taking a switch away is giving it in reverse: only someone who has it.
+        if (role.perms.some((p) => !perms.includes(p) && !mine.has(p))) return fail("You can only change what a role may do within what you may do yourself.");
         const n = name(msg.name) || role.name;
-        this.sql.exec("UPDATE roles SET name = ?, color = ?, hoist = ?, level = ?, mentionable = ? WHERE id = ?", n, color(msg.color), msg.hoist ? 1 : null, lv, msg.mentionable ? 1 : null, role.id);
+        this.sql.exec("UPDATE roles SET name = ?, color = ?, hoist = ?, level = ?, mentionable = ?, perms = ? WHERE id = ?", n, color(msg.color), msg.hoist ? 1 : null, levelOfPerms(perms), msg.mentionable ? 1 : null, perms.join(","), role.id);
         this.audit(user.name, "update_role", n, null);
         changed();
         // Its level decides what its people may do.
@@ -1246,7 +1281,7 @@ export class StromServer extends DurableObject<Env> {
         return true;
       }
       case "create_emoji": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can add emojis.");
+        if (!mine.has("manage_emojis")) return fail("Only people who may manage emojis (admins and the owner) can add them.");
         const name = String(msg.name ?? "").trim().toLowerCase();
         const image = String(msg.image ?? "");
         if (!EMOJI_NAME.test(name)) return fail("Emoji names are 2–32 characters: lowercase letters, numbers and _.");
@@ -1261,7 +1296,7 @@ export class StromServer extends DurableObject<Env> {
         return true;
       }
       case "delete_emoji": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can remove emojis.");
+        if (!mine.has("manage_emojis")) return fail("Only people who may manage emojis (admins and the owner) can remove them.");
         const row = this.sql.exec("SELECT name, image FROM emojis WHERE id = ?", Number(msg.id)).toArray()[0];
         if (!row) return true;
         this.sql.exec("DELETE FROM emojis WHERE id = ?", Number(msg.id));
@@ -1271,10 +1306,11 @@ export class StromServer extends DurableObject<Env> {
         return true;
       }
       case "delete_role": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        if (!mine.has("manage_roles")) return fail("Only people who may manage roles (admins and the owner) can do that.");
         const role = this.customRoles().find((r) => r.id === Number(msg.id));
         if (!role) return true;
-        if (role.level === "admin" && !owner) return fail("Only the owner can delete admin roles.");
+        if (role.perms.includes("administrator") && !owner) return fail("Only the owner can delete admin roles.");
+        if (role.perms.some((p) => !mine.has(p))) return fail("You can only delete a role that may do no more than you.");
         const holders = this.sql.exec("SELECT key FROM member_roles WHERE role = ?", role.id).toArray().map((r) => String(r.key));
         this.sql.exec("DELETE FROM roles WHERE id = ?", role.id);
         this.sql.exec("DELETE FROM member_roles WHERE role = ?", role.id);
@@ -1285,7 +1321,7 @@ export class StromServer extends DurableObject<Env> {
         return true;
       }
       case "reorder_roles": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can manage roles.");
+        if (!mine.has("manage_roles")) return fail("Only people who may manage roles (admins and the owner) can do that.");
         const order = Array.isArray(msg.order) ? msg.order.map(Number) : [];
         const ids = this.customRoles().map((r) => r.id);
         if (order.length !== ids.length || [...order].sort((a, b) => a - b).join() !== [...ids].sort((a, b) => a - b).join()) return fail("The roles changed meanwhile. Try again.");
@@ -1294,11 +1330,13 @@ export class StromServer extends DurableObject<Env> {
         return true;
       }
       case "assign_role": {
-        if (myRank < RANK.admin) return fail("Only admins and the owner can give roles.");
+        if (!mine.has("manage_roles")) return fail("Only people who may manage roles (admins and the owner) can give roles.");
         const key = String(msg.public_key ?? "");
         const role = this.customRoles().find((r) => r.id === Number(msg.role));
         if (!role) return fail("That role doesn't exist anymore.");
-        if (role.level === "admin" && !owner) return fail("Only the owner can give admin roles.");
+        if (role.perms.includes("administrator") && !owner) return fail("Only the owner can give admin roles.");
+        // Giving a role is giving what it may do: only what you may do yourself.
+        if (role.perms.some((p) => !mine.has(p))) return fail("You can only give roles that may do no more than you.");
         const target = this.memberList().find((m) => m.public_key === key);
         if (!target) return fail("They're not a member of this server anymore.");
         if (key !== s.key && rank(target.role) >= myRank && !owner) return fail("You can't change the roles of someone at your level or above.");
@@ -1347,9 +1385,11 @@ export class StromServer extends DurableObject<Env> {
       return owner;
     };
     /** At least this role, or a polite no. */
-    const allowed = (min: Role) => {
-      if (myRank >= RANK[min]) return true;
-      this.error(ws, min === "admin" ? "Only admins and the owner can do that." : "Only moderators, admins and the owner can do that.");
+    const myPerms = this.permsOf(s.key!);
+    /** May do this, or a polite no. */
+    const allowed = (p: Perm) => {
+      if (myPerms.has(p)) return true;
+      this.error(ws, "You don't have permission to do that. Ask the server's owner or admins.");
       return false;
     };
 
@@ -1374,7 +1414,7 @@ export class StromServer extends DurableObject<Env> {
       case "disconnect_voice":
       case "move_voice":
       case "server_mute": {
-        if (!allowed("mod")) return;
+        if (!allowed(msg.type === "server_mute" ? "mute_members" : "move_members")) return;
         const target = Number(msg.session_id);
         const found = this.members().find(([, m]) => m.user!.session_id === target);
         if (!found) return this.error(ws, "That person isn't connected anymore.");
@@ -1445,7 +1485,7 @@ export class StromServer extends DurableObject<Env> {
         });
       case "send_chat": {
         const ch = this.channel(Number(msg.channel));
-        const text = this.allowPings(String(msg.text ?? "").trim(), myRank);
+        const text = this.allowPings(String(msg.text ?? "").trim(), myRank, s.key!);
         // Voice channels have a chat too, for the people in them.
         if (ch?.kind !== "text" && ch?.kind !== "voice") return this.error(ws, "That channel doesn't exist.");
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
@@ -1455,7 +1495,7 @@ export class StromServer extends DurableObject<Env> {
         if (held) return this.error(ws, held);
         // Slowmode: a pause between each person's messages here (moderators are free).
         const slow = Number(this.channels().find((c) => c.id === ch.id)?.slowmode ?? 0);
-        if (slow && myRank < RANK.mod) {
+        if (slow && !myPerms.has("bypass_slowmode")) {
           const last = s.lastSent?.[ch.id] ?? 0;
           const wait = Math.ceil((last + slow * 1000 - now) / 1000);
           if (wait > 0) return this.error(ws, `Slowmode is on here. Wait ${wait} s.`);
@@ -1514,7 +1554,7 @@ export class StromServer extends DurableObject<Env> {
       case "edit_message": {
         const channel = Number(msg.channel);
         const id = Number(msg.id);
-        const text = this.allowPings(String(msg.text ?? "").trim(), myRank);
+        const text = this.allowPings(String(msg.text ?? "").trim(), myRank, s.key!);
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const m = this.message(channel, id);
         if (!m) return this.error(ws, "That message no longer exists.");
@@ -1559,7 +1599,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcastChannel(channel, { type: "reactions", channel, id, reactions });
       }
       case "pin": {
-        if (!allowed("mod")) return;
+        if (!allowed("manage_messages")) return;
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         if (!this.message(channel, id)) return this.error(ws, "That message no longer exists.");
@@ -1637,7 +1677,7 @@ export class StromServer extends DurableObject<Env> {
         const id = Number(msg.id);
         const row = this.sql.exec("SELECT author_key FROM messages WHERE channel = ? AND id = ?", channel, id).toArray()[0];
         if (!row) return this.error(ws, "That message no longer exists.");
-        if (row.author_key !== s.key && (myRank < RANK.mod || (!owner && rank(this.roleOf(String(row.author_key))) >= myRank))) {
+        if (row.author_key !== s.key && (!myPerms.has("manage_messages") || (!owner && rank(this.roleOf(String(row.author_key))) >= myRank))) {
           return this.error(ws, "You can only delete your own messages.");
         }
         if (row.author_key !== s.key) {
@@ -1656,7 +1696,7 @@ export class StromServer extends DurableObject<Env> {
         return this.broadcastChannel(Number(msg.channel), { type: "typing", channel: Number(msg.channel), session_id: user.session_id }, ws);
       }
       case "create_channel": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_channels")) return;
         const kind: ChannelKind = msg.kind === "voice" ? "voice" : "text";
         const name = normalizeChannelName(msg.name, kind);
         if (!name || [...name].length > MAX_NAME_LEN) return this.error(ws, `Channel names must be 1–${MAX_NAME_LEN} characters.`);
@@ -1685,7 +1725,7 @@ export class StromServer extends DurableObject<Env> {
         return this.channelsChanged();
       }
       case "update_channel": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_channels")) return;
         const ch = this.channel(Number(msg.channel));
         if (!ch) return this.error(ws, "That channel doesn't exist.");
         const name = normalizeChannelName(msg.name, ch.kind);
@@ -1725,7 +1765,7 @@ export class StromServer extends DurableObject<Env> {
         return this.channelsChanged(changedPeople);
       }
       case "reorder_channels": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_channels")) return;
         const order = Array.isArray(msg.order) ? msg.order.map(Number) : [];
         const ids = this.channels().map((c) => c.id);
         if (order.length !== ids.length || [...order].sort((a, b) => a - b).join() !== [...ids].sort((a, b) => a - b).join()) {
@@ -1738,7 +1778,7 @@ export class StromServer extends DurableObject<Env> {
         const id = Number(msg.channel);
         const target = this.channel(id);
         // A thread: moderators, or whoever started it; a channel: admins.
-        if (!(target?.parent !== undefined && (myRank >= RANK.mod || target.creator === s.key)) && !allowed("admin")) return;
+        if (!(target?.parent !== undefined && (myPerms.has("manage_messages") || target.creator === s.key)) && !allowed("manage_channels")) return;
         if (!target) return this.error(ws, "That channel doesn't exist.");
         // Its threads go with it.
         for (const t of this.channels().filter((c) => c.parent === id)) this.dropChannel(t.id);
@@ -1752,7 +1792,7 @@ export class StromServer extends DurableObject<Env> {
       case "kick":
       case "ban": {
         const banned = msg.type === "ban";
-        if (!allowed(banned ? "admin" : "mod")) return;
+        if (!allowed(banned ? "ban" : "kick")) return;
         // Someone who's here (by their session), or a member who isn't right now (by Hopp ID).
         const byKey = typeof msg.public_key === "string" && /^[0-9a-f]{64}$/.test(msg.public_key) ? msg.public_key : null;
         const here = byKey ? this.members().find(([, m]) => m.key === byKey) : this.members().find(([, m]) => m.user!.session_id === Number(msg.session_id));
@@ -1802,7 +1842,7 @@ export class StromServer extends DurableObject<Env> {
         if (!row) return this.error(ws, "They're not a member of this server anymore.");
         const self = key === s.key;
         if (!self) {
-          if (!allowed("mod")) return;
+          if (!allowed("manage_nicknames")) return;
           if (rank(this.roleOf(key)) >= myRank) return this.error(ws, "You can't change the nickname of someone with the same role as you or higher.");
         }
         this.sql.exec("UPDATE accounts SET nick = ? WHERE key = ?", nick || null, key);
@@ -1815,7 +1855,7 @@ export class StromServer extends DurableObject<Env> {
         return;
       }
       case "timeout": {
-        if (!allowed("mod")) return;
+        if (!allowed("timeout")) return;
         const target = Number(msg.session_id);
         const found = this.members().find(([, m]) => m.user!.session_id === target);
         if (!found) return this.error(ws, "That person isn't connected anymore.");
@@ -1846,18 +1886,18 @@ export class StromServer extends DurableObject<Env> {
         return;
       }
       case "get_audit_log": {
-        if (!allowed("admin")) return;
+        if (!allowed("view_audit_log")) return;
         const entries = this.sql.exec("SELECT at, actor, action, target, detail FROM audit ORDER BY id DESC LIMIT 200").toArray()
           .map((r) => ({ at: Number(r.at), actor: String(r.actor), action: String(r.action), target: r.target === null ? null : String(r.target), detail: r.detail === null ? null : String(r.detail) }));
         return this.send(ws, { type: "audit_log", entries });
       }
       case "unban":
-        if (!allowed("admin")) return;
+        if (!allowed("ban")) return;
         this.audit(user.name, "unban", String(this.sql.exec("SELECT name FROM bans WHERE key = ?", String(msg.public_key ?? "")).toArray()[0]?.name ?? "someone"), null);
         this.sql.exec("DELETE FROM bans WHERE key = ?", String(msg.public_key ?? ""));
         return this.send(ws, { type: "bans", bans: this.bans() });
       case "create_invite": {
-        if (!allowed("admin")) return;
+        if (!allowed("create_invites")) return;
         const now = Date.now();
         const hours = msg.expires_in_hours == null ? null : Math.max(1, Number(msg.expires_in_hours));
         const maxUses = msg.max_uses == null ? null : Math.max(1, Number(msg.max_uses));
@@ -1882,14 +1922,14 @@ export class StromServer extends DurableObject<Env> {
         return this.wipe();
       }
       case "revoke_invite": {
-        if (!allowed("admin")) return;
+        if (!allowed("create_invites")) return;
         const code = String(msg.code ?? "");
         this.sql.exec("DELETE FROM invites WHERE code = ?", code);
         await inviteIndex(this.env).remove(code);
         return this.send(ws, { type: "invites", invites: this.invites() });
       }
       case "update_server": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_server")) return;
         const name = String(msg.name ?? "").trim();
         const icon = msg.icon == null ? null : String(msg.icon);
         if (!name || [...name].length > MAX_SERVER_NAME_LEN) {
@@ -1944,7 +1984,7 @@ export class StromServer extends DurableObject<Env> {
       case "delete_event": {
         const ev = this.sql.exec("SELECT creator, name FROM events WHERE id = ?", Number(msg.id)).toArray()[0];
         if (!ev) return this.eventsChanged();
-        if (ev.creator !== s.key && myRank < RANK.mod) return this.error(ws, "Only whoever planned it, and moderators, can cancel an event.");
+        if (ev.creator !== s.key && !myPerms.has("manage_events")) return this.error(ws, "Only whoever planned it, and moderators, can cancel an event.");
         this.sql.exec("DELETE FROM event_rsvp WHERE event = ?", Number(msg.id));
         this.sql.exec("DELETE FROM events WHERE id = ?", Number(msg.id));
         if (ev.creator !== s.key) this.audit(user.name, "cancel_event", String(ev.name), null);
@@ -1960,10 +2000,10 @@ export class StromServer extends DurableObject<Env> {
         return this.eventsChanged();
       }
       case "get_automod":
-        if (!allowed("admin")) return;
+        if (!allowed("manage_server")) return;
         return this.send(ws, { type: "automod", ...this.automod(), invites_paused: this.meta("invites_paused") === "1" });
       case "set_automod": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_server")) return;
         const words = [...new Set((Array.isArray(msg.words) ? msg.words : []).map((w: unknown) => String(w).trim().toLowerCase()).filter((w: string) => w && [...w].length <= AUTOMOD_WORD_LEN))].slice(0, AUTOMOD_WORDS);
         const limit = Math.max(0, Math.min(50, Math.floor(Number(msg.mention_limit)) || 0));
         const rules: Automod = { words, mention_limit: limit, block_repeats: !!msg.block_repeats };
@@ -1975,7 +2015,7 @@ export class StromServer extends DurableObject<Env> {
         return this.send(ws, { type: "automod", ...rules, invites_paused: paused });
       }
       case "get_server_settings":
-        if (!allowed("admin")) return;
+        if (!allowed("manage_server")) return;
         this.send(ws, { type: "invites", invites: this.invites() });
         this.send(ws, { type: "members", members: this.memberList() });
         return this.send(ws, { type: "bans", bans: this.bans() });
@@ -1983,7 +2023,7 @@ export class StromServer extends DurableObject<Env> {
         // Who's a member is no secret among members: it's how people who are offline show in the list.
         return this.send(ws, { type: "members", members: this.memberList() });
       case "set_role": {
-        if (!allowed("admin")) return;
+        if (!allowed("manage_roles")) return;
         const key = String(msg.public_key ?? "");
         const role: Role | null = msg.role === "admin" || msg.role === "mod" ? msg.role : null;
         if (msg.role != null && role === null) return this.error(ws, "Unknown role.");
