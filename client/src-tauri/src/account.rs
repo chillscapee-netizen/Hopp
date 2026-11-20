@@ -41,6 +41,7 @@ const ALLOWED: &[&str] = &[
     "group_leave",
     "group_send",
     "dm_edit",
+    "dm_react",
     "dm_delete",
     "file_signal",
     "turn_login",

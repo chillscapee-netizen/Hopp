@@ -953,3 +953,34 @@ test("a tunnel's host hears hopp-pong to its hopp-ping, so a quiet tunnel isn't 
   assert.equal(await Promise.race([answer, sleep(WAIT_MS).then(() => "nothing")]), "hopp-pong");
   ws.close();
 });
+
+test("reactions in DMs: sealed lists reach both people, are kept with the message, and can be taken back", async () => {
+  const a = await userWithName("reacter");
+  const b = await userWithName("reactee");
+  a.d.send({ type: "friend_request", username: b.name });
+  await b.d.waitFor((m) => m.type === "friend");
+  b.d.send({ type: "friend_accept", key: a.key.pub });
+  await a.d.waitFor((m) => m.type === "friend" && m.friend.state === "friend");
+  a.d.send({ type: "dm_send", to: b.key.pub, sealed: "aa", nonce: "n1" });
+  const sent = (await b.d.waitFor((m) => m.type === "dm")).message;
+
+  // B reacts to A's message: both get the sealed list, under B's key.
+  b.d.send({ type: "dm_react", with: a.key.pub, id: sent.id, sealed: "beef" });
+  const atA = await a.d.waitFor((m) => m.type === "dm_reactions" && m.id === sent.id);
+  assert.equal(atA.reactions[b.key.pub], "beef");
+  const atB = await b.d.waitFor((m) => m.type === "dm_reactions" && m.id === sent.id);
+  assert.equal(atB.with, a.key.pub);
+  // Kept with the message.
+  a.d.send({ type: "dm_history", with: b.key.pub });
+  const history = await a.d.waitFor((m) => m.type === "dm_history");
+  assert.equal(history.messages.find((m) => m.id === sent.id).reactions[b.key.pub], "beef");
+  // Not hex: refused.
+  b.d.send({ type: "dm_react", with: a.key.pub, id: sent.id, sealed: "not hex!" });
+  assert.match((await b.d.waitFor((m) => m.type === "error" && m.for === "dm_react")).message, /can't be saved/);
+  // Taken back: gone for both.
+  b.d.send({ type: "dm_react", with: a.key.pub, id: sent.id, sealed: null });
+  const cleared = await a.d.waitFor((m) => m.type === "dm_reactions" && m.id === sent.id);
+  assert.equal(cleared.reactions, null);
+  a.d.close();
+  b.d.close();
+});

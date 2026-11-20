@@ -7494,12 +7494,63 @@ async function decrypt(peer, m) {
   }
 }
 
+/** A message's reactions opened: [{ emoji, keys }] like a server's, from { reactor: sealed list }. */
+async function openDmReactions(peer, sealedByKey) {
+  const byEmoji = new Map();
+  for (const [key, sealed] of Object.entries(sealedByKey ?? {})) {
+    let list = [];
+    try {
+      // A DM's copies are sealed between its two people; in a group, between the reactor and you.
+      const text = await invoke("dm_open", { peer: isGroup(peer) ? key : peer, sealed });
+      list = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(list)) continue;
+    for (const emoji of list.slice(0, 20)) {
+      if (typeof emoji !== "string" || emoji.length > 64) continue;
+      if (!byEmoji.has(emoji)) byEmoji.set(emoji, []);
+      byEmoji.get(emoji).push(key);
+    }
+  }
+  return [...byEmoji].map(([emoji, keys]) => ({ emoji, keys }));
+}
+
+/** Adds or takes back your reaction on a DM: your whole list goes, sealed for each person. */
+async function reactDm(peer, m, emoji, on) {
+  const me = state.me?.key;
+  const mine = (m.reactions ?? []).filter((r) => r.keys.includes(me)).map((r) => r.emoji);
+  const next = on ? [...new Set([...mine, emoji])].slice(-20) : mine.filter((e) => e !== emoji);
+  // Shown at once; the cloud's answer puts it right.
+  const others = (m.reactions ?? []).map((r) => ({ emoji: r.emoji, keys: r.keys.filter((k) => k !== me) }));
+  for (const e of next) {
+    const r = others.find((x) => x.emoji === e);
+    if (r) r.keys.push(me);
+    else others.push({ emoji: e, keys: [me] });
+  }
+  m.reactions = others.filter((r) => r.keys.length);
+  renderDmView(true);
+  try {
+    let sealed = null;
+    if (next.length) {
+      const text = JSON.stringify(next);
+      if (isGroup(peer)) {
+        sealed = {};
+        for (const k of state.groups.get(peer)?.members ?? []) sealed[k] = await invoke("dm_seal", { peer: k, text });
+      } else sealed = await invoke("dm_seal", { peer, text });
+    }
+    await invoke("account_send", { msg: { type: "dm_react", with: peer, id: m.id, sealed } });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
 async function addDmMessages(peer, raw, prepend) {
   const seen = new Set((state.dmMessages.get(peer) ?? []).map((m) => m.id));
   const opened = [];
   for (const m of raw) {
     if (seen.has(m.id)) continue;
-    opened.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, edited_at: m.edited_at ?? null, text: await decrypt(peer, m) });
+    opened.push({ id: m.id, from_key: m.from_key, sent_at: m.sent_at, edited_at: m.edited_at ?? null, text: await decrypt(peer, m), reactions: m.reactions ? await openDmReactions(peer, m.reactions) : [] });
   }
   // Others may have arrived while these were being opened: merge into the list as it is now.
   const list = state.dmMessages.get(peer) ?? [];
@@ -7553,6 +7604,15 @@ function onDmEvent(m) {
     });
     return true;
   }
+  if (m.type === "dm_reactions") {
+    const msg = state.dmMessages.get(m.with)?.find((x) => x.id === m.id);
+    if (!msg) return true;
+    openDmReactions(m.with, m.reactions).then((list) => {
+      msg.reactions = list;
+      renderDmAreas(m.with);
+    });
+    return true;
+  }
   if (m.type === "dm_deleted") {
     const list = state.dmMessages.get(m.with);
     if (list) state.dmMessages.set(m.with, list.filter((x) => x.id !== m.id));
@@ -7581,7 +7641,9 @@ function onDmEvent(m) {
   return false;
 }
 
-function notifyDm(peer, text, from) {
+function notifyDm(peer, raw, from) {
+  // As the conversation list shows it: a picture, a forward or a reply in words, never as code.
+  const text = raw == null ? null : previewText(raw);
   const who = personFor(peer);
   if (state.me?.status === "dnd" || dmMuted(peer)) return;
   playSound("message", (who.group && from ? personFor(from).display_name + " wrote in " + who.display_name : who.display_name + " sent you a message"));
@@ -7834,6 +7896,9 @@ function renderDmView(keepScroll) {
         e.preventDefault();
         if (state.dmAttachment?.peer === peer) sendDmPicture(peer, input);
         else sendDm(peer, input);
+      } else if (e.key === "Escape" && state.dmReply) {
+        e.preventDefault();
+        setDmReply(null);
       } else if (e.key === "ArrowUp" && !input.value) {
         const mine = (state.dmMessages.get(peer) ?? []).findLast((x) => x.from_key === state.me?.key && !x.pending && dmEditable(x));
         if (mine) {
@@ -7892,7 +7957,17 @@ function renderDmView(keepScroll) {
     const tray = el("div", "attach-tray");
     tray.id = "dm-attach-tray";
     tray.hidden = true;
-    box.append(tray, row);
+    const replyBar = el("div", "reply-bar dm-reply-bar");
+    replyBar.hidden = true;
+    const replyText = el("span", "ellipsis");
+    const replyCancel = el("button", "reply-cancel");
+    replyCancel.type = "button";
+    replyCancel.dataset.tip = "Cancel reply";
+    replyCancel.setAttribute("aria-label", "Cancel reply");
+    replyCancel.append(icon("x"));
+    replyCancel.addEventListener("click", () => setDmReply(null));
+    replyBar.append(replyText, replyCancel);
+    box.append(replyBar, tray, row);
     const lock = el("p", "dm-lock");
     lock.append(icon("lock", "xs"), p.group ? "Only the people in this group can read these messages." : "Only you and " + p.display_name + " can read these messages.");
     form.append(box);
@@ -7937,11 +8012,15 @@ function renderDmView(keepScroll) {
   intro.append(el("p", "", p.group ? `This is the beginning of ${p.display_name}. ${state.groups.get(peer)?.members.length ?? 0} people are in it.` : `This is the beginning of your messages with ${p.display_name}.`), view.lock);
   items.push(intro);
   let prev = null;
-  for (const m of state.dmMessages.get(peer) ?? []) {
+  const all = state.dmMessages.get(peer) ?? [];
+  for (const raw of all) {
+    // A reply carries the id of what it answers inside its (encrypted) text.
+    const replied = raw.text?.match(DM_REPLY);
+    const m = replied ? { ...raw, text: raw.text.slice(replied[0].length), replyId: replied[1], raw } : raw;
     const day = dayLabel(m.sent_at);
     const newDay = !prev || dayLabel(prev.sent_at) !== day;
     if (newDay) items.push(el("li", "day-divider", day));
-    const grouped = !prefs.compact && !newDay && prev.from_key === m.from_key && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
+    const grouped = !prefs.compact && !m.replyId && !newDay && prev.from_key === m.from_key && m.sent_at - prev.sent_at < GROUP_WINDOW_MS;
     const li = el("li", "msg " + (grouped ? "cont" : "first") + (m.pending ? " pending" : "") + (m.failed ? " failed" : ""));
     if (grouped) li.append(el("span", "msg-gutter", clock(m.sent_at)));
     else {
@@ -7951,6 +8030,26 @@ function renderDmView(keepScroll) {
       styleName(name, m.from_key, author.display_name, false, "personal");
       headLine.append(el("span", "msg-clock", clock(m.sent_at)), name, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
       li.append(personAvatar(author, "s40", false), headLine);
+    }
+    if (m.replyId) {
+      const orig = all.find((x) => String(x.id) === m.replyId);
+      const origText = orig?.text?.replace(DM_REPLY, "") ?? null;
+      const line = el("button", "msg-reply");
+      line.type = "button";
+      if (orig) {
+        const who = personFor(orig.from_key);
+        line.append(personAvatar(who, "s16", false), el("span", "msg-reply-name", who.display_name), el("span", "msg-reply-text ellipsis", origText === null ? "This message can't be read." : previewText(origText)));
+        line.addEventListener("click", () => {
+          const at = document.querySelector(`.dm-messages [data-key="${CSS.escape(peer + "|" + orig.id)}"]`);
+          at?.scrollIntoView({ block: "center", behavior: "smooth" });
+          at?.classList.add("flash");
+          setTimeout(() => at?.classList.remove("flash"), 1200);
+        });
+      } else {
+        line.append(el("span", "msg-reply-text ellipsis", "Replying to an older message"));
+      }
+      li.append(line);
+      li.classList.add("has-reply");
     }
     if (state.dmEditing === m.id) {
       li.append(dmEditor(peer, m));
@@ -7983,6 +8082,7 @@ function renderDmView(keepScroll) {
       (li.querySelector(".msg-text") ?? li).append(tag);
     }
     if (m.failed) li.append(el("div", "msg-failed", "Not delivered."));
+    if (raw.reactions?.length) li.append(reactionRow(raw, (emoji, on) => reactDm(peer, raw, emoji, on)));
     if (!m.pending && !m.failed && m.text !== null) {
       const own = m.from_key === state.me?.key;
       const acts = dmActions(peer, m);
@@ -7995,6 +8095,8 @@ function renderDmView(keepScroll) {
         const copyText = () => navigator.clipboard.writeText(previewText(current.text)).then(() => toast("Text copied."), () => toast("Couldn't copy.", true));
         openMenu(
           [
+            { label: "Add reaction", icon: "smile", action: () => openEmojiPicker(e.currentTarget, (emoji) => reactDm(peer, current.raw ?? current, emoji, true)) },
+            { label: "Reply", icon: "reply", action: () => setDmReply({ peer, m: current }) },
             ...(canForward(current.text) ? [{ label: "Forward", icon: "forward", action: () => forwardDm(peer, current) }] : []),
             ...(own && dmEditable(current) ? [{ label: "Edit message", icon: "edit", action: () => startDmEdit(peer, current) }] : []),
             { label: "Copy text", icon: "copy", action: copyText },
@@ -8007,9 +8109,9 @@ function renderDmView(keepScroll) {
       });
     }
     li.dataset.key = `${peer}|${m.id}`;
-    li.dataset.sig = JSON.stringify([grouped, day, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews, rawNameStyle(m.from_key)]);
+    li.dataset.sig = JSON.stringify([grouped, day, JSON.stringify(raw.reactions ?? []), m.replyId ?? null, m.replyId ? all.find((x) => String(x.id) === m.replyId)?.text ?? null : null, m.text, m.edited_at, m.pending, m.failed, state.dmEditing === m.id, m.from_key, personFor(m.from_key).avatar ?? null, personFor(m.from_key).display_name, prefs.linkPreviews, rawNameStyle(m.from_key)]);
     items.push(li);
-    prev = m;
+    prev = raw;
   }
   reconcile(view.querySelector(".dm-messages"), items);
   if (keepScroll) scroller.scrollTop = scroller.scrollHeight - oldHeight + scroller.scrollTop;
@@ -8031,9 +8133,13 @@ function loadOlderDms(peer) {
 
 async function sendDm(peer, input) {
   // Hopp's own emojis work here; a server's wouldn't show for someone who isn't in it.
-  const text = encodeEmojis(input.value.trim(), false);
-  if (!text) return;
-  if (await phraseBlocked(text)) return;
+  const typed = encodeEmojis(input.value.trim(), false);
+  if (!typed) return;
+  if (await phraseBlocked(typed)) return;
+  // Answering a message: its id goes in front, inside the encrypted text.
+  const reply = state.dmReply?.peer === peer ? state.dmReply.m : null;
+  const text = reply && input.id === "dm-input" ? `hopp-reply:${reply.id}\n${typed}` : typed;
+  if (reply) setDmReply(null);
   input.value = "";
   input.style.height = "auto";
   const nonce = Math.random().toString(36).slice(2);
@@ -8107,6 +8213,7 @@ function plainText(text) {
 /** One line of plain text for previews and notifications: no formatting marks, spoilers hidden. */
 function previewText(text) {
   if (text === JOINED) return "👋 joined the server";
+  if (typeof text === "string" && text.startsWith("hopp-reply:")) text = text.replace(/^hopp-reply:[\w-]{1,40}\n/, "");
   text = emojiWords(text);
   const forwarded = forwardParts(text);
   if (forwarded) return "Forwarded: " + previewText(forwarded.text);
@@ -8706,7 +8813,7 @@ function encodeEmojis(text, withServer = true) {
   });
 }
 
-function reactionRow(m) {
+function reactionRow(m, onReact = (emoji, on) => react(m, emoji, on)) {
   const row = el("div", "reactions");
   const me = state.account?.publicKey;
   for (const r of m.reactions.filter((x) => !x.emoji.startsWith("poll:"))) {
@@ -8718,14 +8825,14 @@ function reactionRow(m) {
     chip.append(face, el("span", "reaction-count", String(r.keys.length)));
     chip.dataset.tip = reactedWords(r);
     chip.reaction = r;
-    chip.addEventListener("click", () => react(m, r.emoji, !mine));
+    chip.addEventListener("click", () => onReact(r.emoji, !mine));
     row.append(chip);
   }
   const add = el("button", "reaction add");
   add.type = "button";
   add.dataset.tip = "Add reaction";
   add.append(icon("smile", "sm"));
-  add.addEventListener("click", (e) => openEmojiPicker(e.currentTarget, (emoji) => react(m, emoji, true)));
+  add.addEventListener("click", (e) => openEmojiPicker(e.currentTarget, (emoji) => onReact(emoji, true)));
   row.append(add);
   return row;
 }
@@ -12710,6 +12817,24 @@ function dmEditable(m) {
   return m.text !== null && !DM_PICTURE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim()) && !FORWARD.test(m.text);
 }
 
+/** A DM reply: "hopp-reply:<id>" on the first line, inside the encrypted text. */
+var DM_REPLY = /^hopp-reply:([\w-]{1,40})\n/;
+
+/** Answering a message in a DM (or not): the bar above the box says whom. */
+function setDmReply(reply) {
+  state.dmReply = reply && !String(reply.m.id).startsWith("pending") ? reply : null;
+  const bar = document.querySelector(".dm-reply-bar");
+  if (bar) {
+    bar.hidden = !state.dmReply;
+    if (state.dmReply) bar.firstChild.replaceChildren("Replying to ", el("strong", "", personFor(state.dmReply.m.from_key).display_name));
+  }
+  document.querySelectorAll(".dm-messages .msg.replying").forEach((n) => n.classList.remove("replying"));
+  if (state.dmReply) {
+    document.querySelector(`.dm-messages [data-key="${CSS.escape(state.dmReply.peer + "|" + state.dmReply.m.id)}"]`)?.classList.add("replying");
+    $("dm-input")?.focus();
+  }
+}
+
 function dmActions(peer, m) {
   const actions = el("div", "msg-actions");
   const button = (iconName, tip, onClick, extra = "") => {
@@ -12721,6 +12846,9 @@ function dmActions(peer, m) {
     actions.append(b);
   };
   const own = m.from_key === state.me?.key;
+  const target = m.raw ?? m;
+  button("smile", "Add reaction", (e) => openEmojiPicker(e.currentTarget, (emoji) => reactDm(peer, target, emoji, true)));
+  button("reply", "Reply", () => setDmReply({ peer, m }));
   if (canForward(m.text)) button("forward", "Forward", () => forwardDm(peer, m));
   if (own && dmEditable(m)) button("edit", "Edit", () => startDmEdit(peer, m));
   if (own) button("trash", "Delete message", (e) => deleteDm(peer, m, e.shiftKey), "danger-hover");
@@ -12760,7 +12888,7 @@ function dmEditor(peer, m) {
     const text = box.value.trim();
     stopDmEdit();
     if (!text) return deleteDm(peer, m);
-    if (text !== m.text) saveDmEdit(peer, m, text);
+    if (text !== m.text) saveDmEdit(peer, m.raw ?? m, m.replyId ? `hopp-reply:${m.replyId}\n${text}` : text);
   };
   box.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {

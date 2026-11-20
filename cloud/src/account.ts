@@ -582,6 +582,8 @@ export class StromAccount extends DurableObject<Env> {
     if (!friendColumns.has("name_color")) this.sql.exec("ALTER TABLE friends ADD COLUMN name_color TEXT");
     const dmColumns = new Set(this.sql.exec("PRAGMA table_info(dms)").toArray().map((c) => String(c.name)));
     if (!dmColumns.has("edited_at")) this.sql.exec("ALTER TABLE dms ADD COLUMN edited_at INTEGER");
+    // Reactions, each person's sealed for whoever keeps this copy: { reactor key: sealed emoji list }.
+    if (!dmColumns.has("reactions")) this.sql.exec("ALTER TABLE dms ADD COLUMN reactions TEXT");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
   }
 
@@ -1016,6 +1018,8 @@ export class StromAccount extends DurableObject<Env> {
       }
       case "group_send":
         return this.sendGroupDm(ws, msg);
+      case "dm_react":
+        return this.reactDm(ws, msg);
       case "dm_edit":
       case "dm_delete":
         return this.changeDm(ws, msg);
@@ -1023,9 +1027,10 @@ export class StromAccount extends DurableObject<Env> {
         const peer = String(msg.with ?? "");
         const before = Number(msg.before ?? Number.MAX_SAFE_INTEGER);
         const rows = this.sql
-          .exec("SELECT id, from_key, sealed, sent_at, edited_at FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
+          .exec("SELECT id, from_key, sealed, sent_at, edited_at, reactions FROM dms WHERE peer = ? AND sent_at < ? ORDER BY sent_at DESC LIMIT ?", peer, before, DM_HISTORY)
           .toArray()
-          .reverse();
+          .reverse()
+          .map((row) => ({ ...row, reactions: row.reactions ? JSON.parse(String(row.reactions)) : null }));
         return this.send(ws, { type: "dm_history", with: peer, messages: rows, complete: rows.length < DM_HISTORY });
       }
       case "dm_read": {
@@ -1289,6 +1294,60 @@ export class StromAccount extends DurableObject<Env> {
     this.sql.exec("UPDATE dms SET sealed = ?, edited_at = ? WHERE peer = ? AND id = ?", String(sealedFor(myKey)), at, peer, id);
     await Promise.all(others.map((k) => accountOf(this.env, k).dmChanged(myKey, peer, id, String(sealedFor(k)), at).catch(() => false)));
     this.toDevices({ type: "dm_edited", with: peer, id, sealed: String(sealedFor(myKey)), edited_at: at });
+  }
+
+  /**
+   * A reaction on a message in a DM or group: the reactor's whole list of emojis on it, sealed for
+   * each person (Hopp can't see which emojis), or nothing to take them all back.
+   */
+  private async reactDm(ws: WebSocket, msg: Msg) {
+    const myKey = this.meta("key")!;
+    const error = (message: string) => this.send(ws, { type: "error", message, for: "dm_react" });
+    const peer = String(msg.with ?? "");
+    const id = String(msg.id ?? "");
+    const row = this.sql.exec("SELECT reactions FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
+    if (!row) return error("That message is gone.");
+    const now = Date.now();
+    const bucket = (this.meta("dm_bucket") ?? `${DM_BURST}:${now}`).split(":").map(Number);
+    const tokens = Math.min(DM_BURST, bucket[0] + ((now - bucket[1]) / 1000) * DM_PER_SECOND);
+    if (tokens < 1) return error("You're reacting too fast. Slow down a little.");
+    this.setMeta("dm_bucket", `${tokens - 1}:${now}`);
+    const group = this.group(peer);
+    const others = group ? group.members.filter((k) => k !== myKey) : [peer];
+    const clear = msg.sealed == null;
+    const sealedFor = (k: string) => (clear ? null : group ? (msg.sealed as Record<string, unknown> | undefined)?.[k] : msg.sealed);
+    if (!clear) {
+      for (const k of [myKey, ...others]) {
+        const one = sealedFor(k);
+        if (typeof one !== "string" || !/^[0-9a-f]+$/.test(one) || one.length > 2000) return error("That reaction can't be saved.");
+      }
+    }
+    const reactions = this.setReaction(row.reactions, myKey, sealedFor(myKey) as string | null);
+    this.sql.exec("UPDATE dms SET reactions = ? WHERE peer = ? AND id = ?", reactions, peer, id);
+    await Promise.all(others.map((k) => accountOf(this.env, k).dmReacted(myKey, peer, id, (sealedFor(k) as string | null) ?? null).catch(() => false)));
+    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: reactions ? JSON.parse(reactions) : null });
+  }
+
+  /** One person's reactions in a message's reactions (null takes them out). */
+  private setReaction(current: unknown, who: string, sealed: string | null): string | null {
+    const all: Record<string, string> = current ? JSON.parse(String(current)) : {};
+    if (sealed === null) delete all[who];
+    else all[who] = sealed;
+    // A message keeps reactions from at most 50 people.
+    const keys = Object.keys(all);
+    if (keys.length > 50) for (const k of keys.slice(0, keys.length - 50)) delete all[k];
+    return Object.keys(all).length ? JSON.stringify(all) : null;
+  }
+
+  /** Someone reacted to a message in a conversation with us. */
+  async dmReacted(fromKey: string, conversation: string, id: string, sealed: string | null): Promise<boolean> {
+    const peer = this.group(conversation) ? conversation : fromKey;
+    const row = this.sql.exec("SELECT reactions FROM dms WHERE peer = ? AND id = ?", peer, id).toArray()[0];
+    if (!row) return false;
+    const reactions = this.setReaction(row.reactions, fromKey, sealed);
+    this.sql.exec("UPDATE dms SET reactions = ? WHERE peer = ? AND id = ?", reactions, peer, id);
+    this.toDevices({ type: "dm_reactions", with: peer, id, reactions: reactions ? JSON.parse(reactions) : null });
+    return true;
   }
 
   /** Someone edited (sealed) or deleted (null) a message they sent us. */
