@@ -15706,15 +15706,19 @@ function shareRoster() {
 }
 
 async function startShare() {
-  if (!canShare() || screenShare.stream) return;
+  // Once at a time: a second click while Windows asks which screen does nothing.
+  if (!canShare() || screenShare.stream || screenShare.starting) return;
+  screenShare.starting = true;
   let stream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({ video: shareConstraints(), audio: false });
   } catch (err) {
+    screenShare.starting = false;
     // Closing the picker isn't an error.
     if (err?.name !== "NotAllowedError" && err?.name !== "AbortError") toast("Couldn't share your screen. " + (err?.message ?? ""), true);
     return;
   }
+  screenShare.starting = false;
   const track = stream.getVideoTracks()[0];
   if (!track || !canShare()) return stream.getTracks().forEach((t) => t.stop());
   // Text and windows stay sharp, or motion stays smooth: as chosen.
