@@ -7826,6 +7826,11 @@ function renderHomeBadge() {
 }
 
 function openDm(peer) {
+  // A voice message being recorded for another conversation is thrown away, never sent here.
+  if (typeof recording !== "undefined" && recording?.dm && recording.dm !== peer) {
+    stopRecording(false);
+    toast("Your voice message wasn't sent: you left that conversation.");
+  }
   state.openDm = peer;
   if (state.connectingId) disconnect();
   else if (state.activeId) state.atHome = true;
@@ -7993,7 +7998,28 @@ function renderDmView(keepScroll) {
       if (/^image\/(png|jpeg|webp|gif)$/.test(chosen.type)) attachDmPicture(peer, chosen);
       else offerFile(peer, chosen);
     });
-    row.append(attach, file, input, emoji, sendButton());
+    const mic = el("button", "composer-icon");
+    mic.type = "button";
+    mic.dataset.tip = "Voice message";
+    mic.setAttribute("aria-label", "Record a voice message");
+    mic.append(icon("mic"));
+    mic.addEventListener("mousedown", (e) => e.preventDefault());
+    mic.addEventListener("click", () => startRecording(peer));
+    const rec = el("div", "recorder");
+    rec.hidden = true;
+    const recCancel = el("button", "composer-icon");
+    recCancel.type = "button";
+    recCancel.setAttribute("aria-label", "Throw away");
+    recCancel.append(icon("trash"));
+    recCancel.addEventListener("click", () => stopRecording(false));
+    const recSend = el("button", "composer-icon recorder-send");
+    recSend.type = "button";
+    recSend.setAttribute("aria-label", "Send voice message");
+    recSend.append(icon("send"));
+    recSend.addEventListener("click", () => stopRecording(true));
+    rec.append(recCancel, el("span", "recorder-dot"), el("span", "recorder-label", "Recording"), el("span", "recorder-time", "0:00"), el("span", "recorder-max", "up to 1:00"), recSend);
+    box.append(rec);
+    row.append(attach, file, input, mic, emoji, sendButton());
     const tray = el("div", "attach-tray");
     tray.id = "dm-attach-tray";
     tray.hidden = true;
@@ -8106,6 +8132,9 @@ function renderDmView(keepScroll) {
       const caption = m.text.slice(whole.length).trim();
       if (caption) li.append(messageText(caption));
       li.append(dmPictureView(owner, id, key, Number(w), Number(h)));
+    } else if (m.text !== null && DM_VOICE.test(m.text)) {
+      const [, owner, id, key, ms] = m.text.match(DM_VOICE);
+      li.append(voiceView(id, Number(ms), () => dmVoiceUrl(owner, id, key)));
     } else if (m.text !== null && GIF_URL.test(m.text.trim())) {
       li.append(gifNode(m.text.trim()));
     } else if (m.text !== null && isInviteOnly(m.text)) {
@@ -8265,7 +8294,7 @@ function previewText(text) {
   if (ev) return "📅 " + (eventById(Number(ev[1]))?.name ?? "Event");
   const theme = themeOf(text);
   if (theme) return "🎨 Theme: " + theme.name;
-  if (VOICE_MESSAGE.test(text)) return "🎤 Voice message";
+  if (VOICE_MESSAGE.test(text) || DM_VOICE.test(text)) return "🎤 Voice message";
   if (FILE_OFFER.test(text)) return `📎 ${text.match(FILE_OFFER)[3]}`;
   if (DM_PICTURE.test(text)) return text.slice(text.match(DM_PICTURE)[0].length).trim() || "Image";
   if (PICTURE.test(text)) return text.slice(text.match(PICTURE)[0].length).trim() || "Image";
@@ -10188,7 +10217,7 @@ function forwardParts(text) {
 }
 
 function canForward(text) {
-  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text) && !EVENT_MESSAGE.test(text) && !VOICE_MESSAGE.test(text);
+  return typeof text === "string" && !!text.trim() && !PICTURE.test(text) && !DM_PICTURE.test(text) && !FILE_OFFER.test(text) && !POLL.test(text) && !EVENT_MESSAGE.test(text) && !VOICE_MESSAGE.test(text) && !DM_VOICE.test(text);
 }
 
 /** The text to send: the original's own source when forwarding something forwarded. */
@@ -11070,8 +11099,18 @@ function clockLength(ms) {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
-async function startRecording() {
-  if (recording || state.view === null || !voiceMessagesHere()) return;
+/** Where a recording shows: the channel's box, or the open DM's. */
+function recorderUi(dm) {
+  if (dm) {
+    const form = document.querySelector(".dm-composer");
+    return { bar: form?.querySelector(".recorder"), time: form?.querySelector(".recorder-time"), row: form?.querySelector(".composer-row") };
+  }
+  return { bar: $("recorder"), time: $("recorder-time"), row: document.querySelector("#composer .composer-row") };
+}
+
+async function startRecording(dm = null) {
+  if (recording) return;
+  if (!dm && (state.view === null || !voiceMessagesHere())) return;
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -11079,19 +11118,19 @@ async function startRecording() {
     return toast(err?.name === "NotAllowedError" ? "Hopp wasn't allowed to use your microphone." : "Couldn't start recording. " + (err?.message ?? ""), true);
   }
   const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 32_000 });
-  const r = { recorder, stream, chunks: [], started: Date.now(), channel: state.view, send: false, timer: null };
+  const r = { recorder, stream, chunks: [], started: Date.now(), channel: state.view, dm, ui: recorderUi(dm), send: false, timer: null };
   recording = r;
   recorder.addEventListener("dataavailable", (e) => e.data.size && r.chunks.push(e.data));
   recorder.addEventListener("stop", () => finishRecording(r));
   recorder.start(250);
   r.timer = setInterval(() => {
     const ms = Date.now() - r.started;
-    $("recorder-time").textContent = clockLength(ms);
+    if (r.ui.time) r.ui.time.textContent = clockLength(ms);
     if (ms >= VOICE_MAX_MS) stopRecording(true);
   }, 200);
-  $("recorder-time").textContent = "0:00";
-  $("recorder").hidden = false;
-  document.querySelector("#composer .composer-row").hidden = true;
+  if (r.ui.time) r.ui.time.textContent = "0:00";
+  if (r.ui.bar) r.ui.bar.hidden = false;
+  if (r.ui.row) r.ui.row.hidden = true;
 }
 
 /** Leaving the channel it was for: a recording is thrown away, never sent somewhere else. */
@@ -11109,8 +11148,8 @@ function stopRecording(send) {
   clearInterval(r.timer);
   if (r.recorder.state !== "inactive") r.recorder.stop();
   r.stream.getTracks().forEach((t) => t.stop());
-  $("recorder").hidden = true;
-  document.querySelector("#composer .composer-row").hidden = false;
+  if (r.ui.bar) r.ui.bar.hidden = true;
+  if (r.ui.row) r.ui.row.hidden = false;
   recording = null;
 }
 
@@ -11120,6 +11159,7 @@ async function finishRecording(r) {
   const bytes = new Uint8Array(await new Blob(r.chunks, { type: "audio/webm" }).arrayBuffer());
   if (bytes.length < 200) return toast("Nothing was recorded. Check your microphone in Windows sound settings.", true);
   if (bytes.length > 320_000) return toast("That voice message is too long to send.", true);
+  if (r.dm) return sendDmVoice(r.dm, bytes, Math.round(r.length));
   try {
     const id = await storePicture(bytes, "audio/webm");
     sendChat(r.channel, `hopp-voice:${id} ${Math.round(r.length)}`, null);
@@ -11128,15 +11168,44 @@ async function finishRecording(r) {
   }
 }
 
-$("voice-msg-btn").addEventListener("click", startRecording);
+$("voice-msg-btn").addEventListener("click", () => startRecording());
 $("voice-msg-btn").addEventListener("mousedown", (e) => e.preventDefault());
 $("recorder-cancel").addEventListener("click", () => stopRecording(false));
 $("recorder-send").addEventListener("click", () => stopRecording(true));
 // Escape throws a recording away.
 document.addEventListener("keydown", (e) => recording && e.key === "Escape" && stopRecording(false));
 
-/** The player in the chat: play/pause, a bar to seek, and the time. */
-function voiceView(id, length) {
+/** A DM voice message: "hopp-dm-voice:<owner>:<id>:<key> <ms>", the sound encrypted like a picture. */
+var DM_VOICE = /^hopp-dm-voice:([0-9a-f]{64}):([0-9a-f]{32}):([A-Za-z0-9_-]{43}) (\d{1,6})$/;
+
+async function sendDmVoice(peer, bytes, length) {
+  try {
+    const key = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aes = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, bytes));
+    const payload = new Uint8Array(iv.length + sealed.length);
+    payload.set(iv);
+    payload.set(sealed, iv.length);
+    const id = await invoke("upload_dm_image", { cloud: cloudHttp(), data: Array.from(payload) });
+    sendDm(peer, { value: `hopp-dm-voice:${state.me.key}:${id}:${bytesToB64url(key)} ${length}`, style: {} });
+  } catch (err) {
+    toast(friendlyError(err), true);
+  }
+}
+
+/** Fetches and opens a DM voice message, as a link the player can use. */
+async function dmVoiceUrl(owner, id, key) {
+  const res = await fetch(`${cloudHttp()}/accounts/${owner}/images/${id}`);
+  if (!res.ok) throw new Error("gone");
+  const data = new Uint8Array(await res.arrayBuffer());
+  const aes = await crypto.subtle.importKey("raw", b64urlToBytes(key), "AES-GCM", false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(0, 12) }, aes, data.slice(12));
+  return URL.createObjectURL(new Blob([plain], { type: "audio/webm" }));
+}
+
+/** The player in the chat: play/pause, a bar to seek, and the time. `source` opens a DM's. */
+function voiceView(id, length, source = null) {
   const box = el("div", "voice-msg");
   const play = el("button", "voice-msg-play");
   play.type = "button";
@@ -11157,7 +11226,8 @@ function voiceView(id, length) {
   };
   const load = () => {
     if (audio) return audio;
-    audio = new Audio(pictureUrl(id));
+    audio = new Audio(source ? undefined : pictureUrl(id));
+    audio.ready = source ? source().then((url) => (audio.src = url)) : Promise.resolve();
     audio.addEventListener("timeupdate", show);
     audio.addEventListener("play", show);
     audio.addEventListener("pause", show);
@@ -11172,15 +11242,17 @@ function voiceView(id, length) {
     const a = load();
     // One at a time, like everywhere else.
     for (const other of document.querySelectorAll(".voice-msg")) if (other !== box) other.pauseVoice?.();
-    if (a.paused) a.play().catch(() => {});
-    else a.pause();
+    if (!a.paused) return a.pause();
+    a.ready.then(() => a.play()).catch(() => toast("That voice message can't be played. It may have been removed.", true));
   });
   bar.addEventListener("click", (e) => {
     const a = load();
     const r = bar.getBoundingClientRect();
     const seek = ((e.clientX - r.left) / r.width) * (total() / 1000);
-    if (Number.isFinite(seek)) a.currentTime = Math.max(0, seek);
-    if (a.paused) a.play().catch(() => {});
+    a.ready.then(() => {
+      if (Number.isFinite(seek)) a.currentTime = Math.max(0, seek);
+      if (a.paused) a.play().catch(() => {});
+    }).catch(() => {});
   });
   box.pauseVoice = () => audio?.pause();
   box.append(play, bar, time);
@@ -12856,7 +12928,7 @@ function youtubeCard(id, start, link) {
 state.dmEditing = null;
 
 function dmEditable(m) {
-  return m.text !== null && !DM_PICTURE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim()) && !FORWARD.test(m.text);
+  return m.text !== null && !DM_PICTURE.test(m.text) && !DM_VOICE.test(m.text) && !FILE_OFFER.test(m.text) && !GIF_URL.test(m.text.trim()) && !FORWARD.test(m.text);
 }
 
 /** A DM reply: "hopp-reply:<id>" on the first line, inside the encrypted text. */
