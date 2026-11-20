@@ -39,10 +39,12 @@ pub fn valid_id(id: &str) -> bool {
 pub async fn join(id: &str) -> anyhow::Result<DuplexStream> {
     anyhow::ensure!(valid_id(id), "That isn't a Hopp server link.");
     let url = format!("{}/tunnels/{id}/join", cloud()?);
+    tracing::info!("tunnel: joining a server on someone's computer");
     let (ws, _) = match tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(&url)).await {
         Ok(Ok(ok)) => ok,
         Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) => {
             let body = response.body().as_ref().map(|b| String::from_utf8_lossy(b).to_string()).unwrap_or_default();
+            tracing::warn!("tunnel: join refused ({}): {}", response.status(), body.trim());
             anyhow::bail!(if body.trim().is_empty() { "This server can't be reached right now.".to_string() } else { body.trim().to_string() });
         }
         Ok(Err(e)) => anyhow::bail!("Couldn't reach Hopp Cloud: {e}"),
@@ -94,14 +96,20 @@ where
             match tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(&url)).await {
                 Ok(Ok((ws, _))) => {
                     pause = 1;
+                    tracing::info!("tunnel: open, friends can join");
                     online(true);
                     serve(ws, accept.clone()).await;
                     online(false);
+                    tracing::info!("tunnel: closed, opening it again");
                 }
                 // Blocked by Hopp for breaking its rules: asking every half minute changes nothing
                 // and costs the cloud; once an hour notices a lifted block.
-                Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) if response.status() == 403 => pause = 3600,
-                _ => {}
+                Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) if response.status() == 403 => {
+                    tracing::warn!("tunnel: refused by Hopp Cloud (403)");
+                    pause = 3600;
+                }
+                Ok(Err(e)) => tracing::warn!("tunnel: couldn't open: {e}"),
+                Err(_) => tracing::warn!("tunnel: Hopp Cloud didn't answer in 10 s"),
             }
         }
         tokio::time::sleep(Duration::from_secs(pause)).await;
