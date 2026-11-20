@@ -4595,7 +4595,72 @@ html.layout-taskbar .rail { overflow: hidden; }
 html.layout-taskbar .dm-peeks { display: contents; }
 /* Like Windows 11: the servers in the middle, Add and Discover at the far right. */
 html.layout-taskbar .rail { position: relative; justify-content: center; padding: 0 132px; }
-html.layout-taskbar #news-btn { position: absolute; right: 14px; top: 0; }
-html.layout-taskbar #add-server { position: absolute; right: 70px; top: 0; }
-html.layout-taskbar.rail-small #add-server { right: 60px; }
-html.layout-taskbar.rail-large #add-server { right: 82px; }
+
+
+/* The taskbar's sides: you on the left; Add, Discover and your controls on the right. */
+html.layout-taskbar .rail { padding: 0 340px; }
+html.layout-taskbar .user-panel { display: none; }
+.tb-left, .tb-right { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; gap: 6px; }
+.tb-left { left: 10px; }
+.tb-right { right: 10px; }
+.tb-left .me-card { flex: none; width: 220px; height: 46px; background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 12px; }
+.tb-right .panel-controls { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tb-right .rail-item { width: auto; }
+.tb-sep { width: 1px; height: 28px; margin: 0 6px; background: var(--border-strong); }
+
+/* The taskbar: one clear line across the whole window above it; you and your controls as one panel. */
+html.layout-taskbar .rail { border-top: 1px solid var(--border-strong); }
+html.layout-taskbar .frame { border-radius: 0; border-bottom: none; }
+.tb-left { gap: 2px; padding: 0 6px 0 0; height: 48px; top: 50%; bottom: auto; transform: translateY(-50%); border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tb-left .me-card { background: transparent; width: 190px; }
+.tb-left .panel-controls { display: flex; align-items: center; gap: 2px; }
+html.layout-taskbar .rail { padding: 0 380px; }
+
+/* Taskbar: a calm grey line, a slimmer you, settings on the right, and notices up in the top-left corner. */
+html.layout-taskbar .rail { border-top-color: color-mix(in srgb, var(--text) 14%, transparent); padding: 0 300px; }
+.tb-left .me-card { width: 150px; }
+.tb-right .open-settings { width: 44px; height: 44px; border-radius: 12px; }
+html.layout-taskbar .toast { bottom: 88px; }
+
+/* The taskbar's right side, a panel like yours on the left: Add, Discover and settings, same size. */
+.tb-right { gap: 2px; padding: 0 6px; height: 48px; top: 50%; bottom: auto; transform: translateY(-50%); border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tb-right .rail-item { width: 36px; height: 36px; }
+.tb-right .rail-item::before { display: none; }
+.tb-right .rail-icon { width: 36px; height: 36px; border-radius: 10px; background: transparent; }
+.tb-right .rail-item:hover .rail-icon { background: color-mix(in srgb, var(--text) 12%, transparent); }
+.tb-right .rail-icon .i { width: 20px; height: 20px; }
+.tb-right .open-settings { width: 36px; height: 36px; border-radius: 10px; }
+.tb-left .me-card { height: 40px; }
+
+/* Taskbar: the unread counts sit on each server's top-left corner, and you take only the room you need. */
+html.layout-taskbar .rail-badge, html.layout-taskbar #home-btn .rail-badge { top: 0; left: -8px; right: auto; bottom: auto; }
+html.layout-taskbar.rail-small .rail-badge { transform-origin: top left; }
+.tb-left .me-card { width: auto; max-width: 140px; padding-right: 4px; }
+
+/* Taskbar: unread counts on each server's bottom-left corner, inside the bar so nothing cuts them. */
+html.layout-taskbar .rail-badge, html.layout-taskbar #home-btn .rail-badge { top: auto; bottom: 4px; left: -6px; right: auto; }
+html.layout-taskbar.rail-small .rail-badge { transform-origin: bottom left; bottom: 2px; }
+html.layout-taskbar .server-list { padding: 0 10px; margin: 0; }
+
+/* Many servers: they scroll sideways (the wheel does it too) and fade at the edge that has more. */
+html.layout-taskbar .server-list { scrollbar-width: none; }
+html.layout-taskbar .server-list::-webkit-scrollbar { display: none; }
+
+/* Folders along the bottom open sideways: a tinted capsule with the folder first, then its servers. */
+html.layout-taskbar .folder-open { flex-direction: row; width: auto; height: 52px; padding: 0 8px 0 4px; gap: 4px; }
+html.layout-taskbar .folder-open .rail-item { width: auto; height: 52px; }
+html.layout-taskbar .folder-open .rail-item::before { left: 50%; bottom: -4px; }
+html.layout-taskbar .folder-open .rail-icon { width: 40px; height: 40px; }
+html.layout-taskbar .folder-glyph { height: 40px !important; width: 32px; }
+
+/* The "+N" at the end of the bar, and the panel of servers it opens above it. */
+html.layout-taskbar .server-list { overflow: hidden; mask-image: none !important; }
+.rail-more .rail-icon { font-size: 14px; font-weight: 700; color: var(--text-2); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.rail-more:hover .rail-icon { color: var(--text); background: color-mix(in srgb, var(--text) 14%, transparent); }
+.rail-more.unread .rail-icon::after { content: ""; position: absolute; left: 0; bottom: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--red); border: 3px solid var(--frame); }
+.rail-more .rail-icon { position: relative; }
+.rail-more-pop { position: fixed; z-index: 60; display: flex; flex-wrap: wrap; gap: 4px; max-width: 288px; padding: 8px; border-radius: 14px; background: var(--deep); border: 1px solid var(--border-strong); box-shadow: 0 12px 32px rgb(0 0 0 / 0.45); }
+.rail-more-pop .rail-item { width: 56px; height: 56px; }
+.rail-more-pop .rail-item::before { display: none; }
+.rail-more-pop .rail-badge { left: -2px; right: auto; bottom: 0; }
+.rail-more-pop .folder-open { flex-direction: row; width: auto; height: 56px; padding: 0 6px; }

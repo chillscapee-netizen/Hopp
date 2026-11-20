@@ -1252,7 +1252,7 @@ var railSettling = null;
  * below glide along with it instead of jumping.
  */
 function toggleFolder(f, head) {
-  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches || railAcross();
   const box = head.closest(".folder-open") ?? head;
   const from = box.getBoundingClientRect().height;
   const ease = "cubic-bezier(0.2, 0.8, 0.2, 1)";
@@ -1309,6 +1309,7 @@ function renderRail() {
   $("server-list").replaceChildren(
     ...prefs.rail.map((item) => (item.folder ? railFolder(item) : railServer(serverById(item.id)))),
   );
+  fitRailAcross();
   updateRailFade();
 }
 
@@ -1317,7 +1318,99 @@ function updateRailFade() {
   const list = $("server-list");
   list.classList.toggle("more-up", list.scrollTop > 2);
   list.classList.toggle("more-down", list.scrollTop + list.clientHeight < list.scrollHeight - 2);
+  list.classList.toggle("more-left", list.scrollLeft > 2);
+  list.classList.toggle("more-right", list.scrollLeft + list.clientWidth < list.scrollWidth - 2);
 }
+
+/** Whether the servers run along the bottom (the taskbar layout). */
+function railAcross() {
+  return prefs.layout === "taskbar";
+}
+
+/**
+ * Along the bottom, as many servers as fit are shown; the rest wait behind a "+N" button at the
+ * end (with a red dot when one of them has something unread), which opens them in a little panel
+ * above the bar. Nothing is ever half shown or cut off.
+ */
+function fitRailAcross() {
+  const list = $("server-list");
+  let more = $("rail-more");
+  let pop = $("rail-more-pop");
+  if (!pop) {
+    pop = el("div", "popover rail-more-pop");
+    pop.id = "rail-more-pop";
+    pop.hidden = true;
+    pop.addEventListener("click", (e) => e.target.closest(".rail-item") && closePopovers());
+    document.body.append(pop);
+  }
+  more?.remove();
+  pop.replaceChildren();
+  if (!railAcross()) return;
+  // The room in the middle of the bar: its width less its sides and what sits before the list.
+  const rail = list.parentElement;
+  const rs = getComputedStyle(rail);
+  const railGap = parseFloat(rs.columnGap) || 0;
+  let room = rail.clientWidth - parseFloat(rs.paddingLeft) - parseFloat(rs.paddingRight);
+  for (const kid of rail.children) {
+    if (kid === list || getComputedStyle(kid).position === "absolute" || !kid.offsetWidth) continue;
+    room -= kid.offsetWidth + railGap;
+  }
+  const ls = getComputedStyle(list);
+  const gap = parseFloat(ls.columnGap) || 0;
+  room -= parseFloat(ls.paddingLeft) + parseFloat(ls.paddingRight);
+  const kids = [...list.children];
+  const width = (n) => n.getBoundingClientRect().width;
+  const total = kids.reduce((t, n, i) => t + width(n) + (i ? gap : 0), 0);
+  if (!rail.clientWidth || total <= room + 1) return;
+  if (!more) {
+    more = el("button", "rail-item rail-more");
+    more.id = "rail-more";
+    more.type = "button";
+    more.addEventListener("click", (e) => {
+      const p = $("rail-more-pop");
+      if (!p.hidden || wasOpen(p)) return closePopovers();
+      const b = e.currentTarget.getBoundingClientRect();
+      placePopover(p, b.left + b.width / 2 - 120, 0);
+      p.style.left = `${Math.max(8, Math.min(b.left + b.width / 2 - p.offsetWidth / 2, window.innerWidth - p.offsetWidth - 8))}px`;
+      p.style.top = `${b.top - p.offsetHeight - 6}px`;
+    });
+  }
+  list.append(more);
+  // Keep servers while they and the "+N" (as wide as a server) fit.
+  const items = [];
+  let used = 48;
+  for (const n of kids) {
+    const w = width(n) + gap;
+    if (used + w > room && items.length) break;
+    used += w;
+    items.push(n);
+  }
+  const hidden = kids.slice(items.length);
+  // The server you're in stays on the bar: it swaps places with the last one shown.
+  const activeAt = hidden.findIndex((n) => n.classList.contains("active") || n.querySelector(".rail-item.active"));
+  if (activeAt >= 0 && items.length > 1) hidden.splice(activeAt, 1, items.pop());
+  pop.append(...hidden);
+  more.replaceChildren(el("span", "rail-icon", `+${hidden.length}`));
+  // Measured for real: if the "+N" still doesn't quite fit, one more goes into the panel.
+  while (list.scrollWidth > list.clientWidth + 1 && more.previousElementSibling) {
+    const last = more.previousElementSibling;
+    pop.prepend(last);
+    hidden.unshift(last);
+    more.firstChild.textContent = `+${hidden.length}`;
+  }
+  more.classList.toggle("unread", !!pop.querySelector(".rail-badge, .rail-item.unread"));
+  more.dataset.tip = `${hidden.length} more server${hidden.length === 1 ? "" : "s"}`;
+  more.setAttribute("aria-label", more.dataset.tip);
+}
+var railFitQueued = false;
+window.addEventListener("resize", () => {
+  if (!railAcross() || railFitQueued) return;
+  railFitQueued = true;
+  requestAnimationFrame(() => {
+    railFitQueued = false;
+    renderRail();
+  });
+});
 $("server-list").addEventListener("scroll", updateRailFade, { passive: true });
 window.addEventListener("resize", updateRailFade);
 
@@ -1326,11 +1419,13 @@ window.addEventListener("resize", updateRailFade);
 const railDrag = { justDropped: false };
 const DRAG_START_PX = 5;
 
-/** Where something dropped at height y would land: next to, or onto, which item. */
+/** Where something dropped at y (x along the bottom) would land: next to, or onto, which item. */
 function dropTarget(y, dragged) {
+  const across = railAcross();
   const items = [...document.querySelectorAll("#server-list [data-server], #server-list [data-folder]")];
   for (const node of items) {
-    const r = node.getBoundingClientRect();
+    const box = node.getBoundingClientRect();
+    const r = across ? { top: box.left, bottom: box.right, height: box.width } : box;
     if (y < r.top - 4 || y > r.bottom + 4) continue;
     const id = node.dataset.server ?? null;
     const folder = node.dataset.folder ?? null;
@@ -1342,7 +1437,7 @@ function dropTarget(y, dragged) {
     return { kind, node, id, folder, inFolder: node.dataset.inFolder ?? null };
   }
   const list = $("server-list").getBoundingClientRect();
-  return y > list.top ? { kind: "end" } : { kind: "start" };
+  return y > (across ? list.left : list.top) ? { kind: "end" } : { kind: "start" };
 }
 
 /** Takes the dragged server or folder out of the rail, returning it. */
@@ -1418,7 +1513,9 @@ $("server-list").addEventListener("pointerdown", (e) => {
     // Not a live pointer (synthetic events); window listeners still follow it.
   }
   const dragged = node.dataset.server ? { id: node.dataset.server } : { folder: node.dataset.folder };
-  const startY = e.clientY;
+  const across = railAcross();
+  const at = (ev) => (across ? ev.clientX : ev.clientY);
+  const startY = at(e);
   let ghost = null;
   let line = null;
   let combine = null;
@@ -1429,10 +1526,13 @@ $("server-list").addEventListener("pointerdown", (e) => {
   const rail = document.querySelector(".rail");
   // Near the top or bottom of the rail, keep scrolling so far-away servers are reachable.
   const autoScroll = () => {
-    const r = rail.getBoundingClientRect();
-    const speed = lastY < r.top + 48 ? -8 : lastY > r.bottom - 48 ? 8 : 0;
+    const list = across ? $("server-list") : rail;
+    const box = list.getBoundingClientRect();
+    const [lo, hi] = across ? [box.left, box.right] : [box.top, box.bottom];
+    const speed = lastY < lo + 48 ? -8 : lastY > hi - 48 ? 8 : 0;
     if (speed) {
-      rail.scrollTop += speed;
+      if (across) list.scrollLeft += speed;
+      else list.scrollTop += speed;
       track(lastY);
     }
   };
@@ -1455,15 +1555,23 @@ $("server-list").addEventListener("pointerdown", (e) => {
       const r = target.node.getBoundingClientRect();
       const railBox = rail.getBoundingClientRect();
       line.hidden = false;
-      line.style.left = `${railBox.left + 16}px`;
-      line.style.width = `${railBox.width - 32}px`;
-      line.style.top = `${(target.kind === "before" ? r.top - 4 : r.bottom + 4) - 1}px`;
+      if (across) {
+        // Along the bottom the line stands up between two servers.
+        line.style.top = `${railBox.top + 12}px`;
+        line.style.height = `${railBox.height - 24}px`;
+        line.style.width = "2px";
+        line.style.left = `${(target.kind === "before" ? r.left - 4 : r.right + 4) - 1}px`;
+      } else {
+        line.style.left = `${railBox.left + 16}px`;
+        line.style.width = `${railBox.width - 32}px`;
+        line.style.top = `${(target.kind === "before" ? r.top - 4 : r.bottom + 4) - 1}px`;
+      }
     }
   };
   const move = (ev) => {
-    lastY = ev.clientY;
+    lastY = at(ev);
     if (!ghost) {
-      if (Math.abs(ev.clientY - startY) < DRAG_START_PX) return;
+      if (Math.abs(lastY - startY) < DRAG_START_PX) return;
       ghost = (node.querySelector(".rail-icon") ?? node).cloneNode(true);
       ghost.classList.add("drag-ghost");
       document.body.append(ghost);
@@ -1476,7 +1584,7 @@ $("server-list").addEventListener("pointerdown", (e) => {
     }
     ghost.style.left = `${ev.clientX - 24}px`;
     ghost.style.top = `${ev.clientY - 24}px`;
-    track(ev.clientY);
+    track(lastY);
   };
   const up = (ev) => {
     window.removeEventListener("pointermove", move);
@@ -14272,6 +14380,8 @@ function applyTheme() {
   root.setProperty("--chat-space", prefs.chatSpace + "px");
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
   document.documentElement.classList.toggle("layout-taskbar", prefs.layout === "taskbar");
+  placeLayout();
+  if (typeof renderRail === "function" && prefs.rail) renderRail();
   document.documentElement.classList.toggle("rail-small", prefs.railSize === "small");
   document.documentElement.classList.toggle("rail-large", prefs.railSize === "large");
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
@@ -14772,6 +14882,40 @@ $("app-font").addEventListener("change", (e) => {
   save("appFont", prefs.appFont);
   applyTheme();
 });
+/**
+ * The taskbar, like Windows 11: you with your mic and headphones on the left, Hopp and your
+ * servers in the middle, Add, Discover and settings on the right. Classic puts them back in the panel
+ * under the channels.
+ */
+function placeLayout() {
+  const rail = document.querySelector(".rail");
+  const panel = document.querySelector(".user-panel");
+  const card = $("me-card");
+  const controls = panel?.querySelector(".panel-controls") ?? rail?.querySelector(".panel-controls");
+  if (!rail || !card || !controls) return;
+  let left = rail.querySelector(".tb-left");
+  let right = rail.querySelector(".tb-right");
+  if (prefs.layout === "taskbar") {
+    if (!left) {
+      left = el("div", "tb-left");
+      right = el("div", "tb-right");
+      rail.append(left, right);
+    }
+    // You with your mic and headphones on the left; Add, Discover and settings at the far right.
+    left.append(card, controls);
+    right.append($("add-server"), $("news-btn"), controls.querySelector(".open-settings") ?? right.querySelector(".open-settings"));
+  } else if (left) {
+    // Back where they were: Add and Discover at the rail's end, you under the channels.
+    rail.append($("add-server"), $("news-btn"));
+    panel.prepend(card);
+    panel.append(controls);
+    const gear = right.querySelector(".open-settings");
+    if (gear) controls.append(gear);
+    left.remove();
+    right.remove();
+  }
+}
+
 /** Where the servers are: down the left (classic) or along the bottom (taskbar). */
 prefs.layout = load("layout", "classic");
 $("layout-pick").value = prefs.layout;
