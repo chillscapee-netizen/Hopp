@@ -88,8 +88,8 @@ const MAX_IMAGE_STORE: i64 = 100_000_000;
 const IMAGES_PER_DAY: i64 = 40;
 pub const UPLOAD_CLOCK_SKEW_MS: u64 = 5 * 60_000;
 /// Hopp Cloud's features; a server on someone's computer has every one of them.
-const FEATURES: [&str; 20] = [
-    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms",
+const FEATURES: [&str; 22] = [
+    "search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms", "rules", "announce",
 ];
 
 static ENDPOINT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]{2,45}\]):\d{1,5}$").unwrap());
@@ -328,6 +328,7 @@ struct Ch {
     topic: Option<String>,
     category: Option<String>,
     no_pictures: bool,
+    announce: bool,
     user_limit: Option<i64>,
     afk_after: Option<i64>,
     slowmode: Option<i64>,
@@ -352,6 +353,9 @@ impl Ch {
         }
         if self.no_pictures {
             m.insert("no_pictures".into(), json!(true));
+        }
+        if self.announce {
+            m.insert("announce".into(), json!(true));
         }
         if let Some(v) = self.user_limit {
             m.insert("user_limit".into(), json!(v));
@@ -380,6 +384,12 @@ impl Ch {
         Value::Object(m)
     }
 }
+
+/// The server's rules, at most this long.
+const MAX_RULES_LEN: usize = 2000;
+/// A welcome's text: apps show "Elin joined the server".
+const JOINED: &str = "hopp-joined";
+const RULES_FIRST: &str = "Read and agree to this server's rules first. (Update Hopp if you don't see them.)";
 
 /// What a role may do, one switch each (as in Discord). Administrator is all of them.
 const PERMS: [&str; 17] = [
@@ -665,7 +675,7 @@ impl Core {
     fn channels(&self) -> Vec<Ch> {
         let Ok(mut s) = self.db.prepare_cached(
             "SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles, parent, starter, creator,
-               CASE WHEN parent IS NULL THEN NULL ELSE (SELECT max(sent_at) FROM messages m WHERE m.channel = channels.id) END AS last_at
+               CASE WHEN parent IS NULL THEN NULL ELSE (SELECT max(sent_at) FROM messages m WHERE m.channel = channels.id) END AS last_at, announce
              FROM channels ORDER BY coalesce(position, id + 100000), id",
         ) else {
             return vec![];
@@ -687,6 +697,7 @@ impl Core {
                     starter: r.get(11)?,
                     creator: r.get(12)?,
                     last_at: r.get::<_, Option<i64>>(13)?.filter(|v| *v != 0),
+                    announce: r.get::<_, Option<i64>>(14)?.unwrap_or(0) != 0,
                 })
             })
             .map(|rows| rows.flatten().collect())
@@ -1321,7 +1332,7 @@ impl Core {
         {
             let c = self.conns.get_mut(&conn).expect("open");
             c.stage = Stage::Joined;
-            c.name = name;
+            c.name = name.clone();
             c.user = Some(user.clone());
             c.tokens = CHAT_BURST;
             c.refilled = now;
@@ -1351,7 +1362,43 @@ impl Core {
         for ch in &channels {
             self.send(conn, &json!({ "type": "chat_history", "channel": ch.id, "messages": self.history(ch.id, i64::MAX, CHAT_HISTORY) }));
         }
+        self.send_rules(conn, &key);
+        // Someone new: a welcome in the channel picked for it.
+        if !known {
+            self.welcome(&key, &name);
+        }
         self.presence(&key, false);
+    }
+
+    // ---------- rules, and welcoming people ----------
+
+    /// Whether someone must agree to the server's rules before writing (those who run it needn't).
+    fn needs_rules(&self, key: &str) -> bool {
+        let at: i64 = self.meta("rules_at").and_then(|v| v.parse().ok()).unwrap_or(0);
+        if at == 0 || self.perms_of(key).contains("manage_server") {
+            return false;
+        }
+        let ok: i64 = self.db.query_row("SELECT rules_ok FROM accounts WHERE key = ?", [key], |r| r.get::<_, Option<i64>>(0)).optional().ok().flatten().flatten().unwrap_or(0);
+        ok < at
+    }
+
+    /// The rules, where welcomes go, and whether this person has agreed.
+    fn send_rules(&self, conn: ConnId, key: &str) {
+        let welcome = self.meta("welcome_channel").and_then(|v| v.parse::<i64>().ok());
+        let at: i64 = self.meta("rules_at").and_then(|v| v.parse().ok()).unwrap_or(0);
+        self.send(conn, &json!({ "type": "rules", "rules": self.meta("rules"), "at": at, "accepted": !self.needs_rules(key), "welcome_channel": welcome }));
+    }
+
+    /// "Elin joined" in the welcome channel, as a message of its own (apps show it as a welcome).
+    fn welcome(&mut self, key: &str, name: &str) {
+        let Some(ch) = self.meta("welcome_channel").and_then(|v| v.parse::<i64>().ok()).and_then(|id| self.channel(id)).filter(|c| c.kind == "text") else { return };
+        let now = now_ms();
+        let id: i64 = self
+            .db
+            .query_row("INSERT INTO messages (channel, sender, sender_name, author_key, text, sent_at) VALUES (?, 0, ?, ?, ?, ?) RETURNING id", params![ch.id, name, key, JOINED, now as i64], |r| r.get(0))
+            .unwrap_or(0);
+        let message = json!({ "id": id, "channel": ch.id, "sender": 0, "sender_name": name, "author_key": key, "text": JOINED, "sent_at": now });
+        self.broadcast_channel(ch.id, &json!({ "type": "chat", "message": message }), None);
     }
 
     // ---------- the server's own emojis ----------
@@ -1853,6 +1900,9 @@ impl Core {
                 if self.timed_out(conn) {
                     return self.error(conn, "You're timed out, so you can't join voice right now.");
                 }
+                if self.needs_rules(&key) {
+                    return self.error(conn, RULES_FIRST);
+                }
                 let limit = ch.user_limit.unwrap_or(0);
                 if limit > 0 && self.voice_members(ch.id).into_iter().filter(|&o| o != conn).count() as i64 >= limit {
                     return self.error(conn, &format!("{} is full ({limit} people).", ch.name));
@@ -1975,6 +2025,9 @@ impl Core {
             "react" => {
                 if self.timed_out(conn) {
                     return self.error(conn, "You're timed out, so you can't react right now.");
+                }
+                if self.needs_rules(&key) {
+                    return self.error(conn, RULES_FIRST);
                 }
                 let channel = int(&msg["channel"]);
                 let id = int(&msg["id"]);
@@ -2475,12 +2528,57 @@ impl Core {
                 self.send(conn, &json!({ "type": "automod", "words": words, "mention_limit": limit, "block_repeats": repeats, "invites_paused": paused }));
             }
             "get_server_settings" => {
+                // Each list for whoever may do something with it.
+                if my_perms.contains("create_invites") {
+                    self.send(conn, &json!({ "type": "invites", "invites": self.invites() }));
+                }
+                self.send(conn, &json!({ "type": "members", "members": self.member_list() }));
+                if my_perms.contains("ban") {
+                    self.send(conn, &json!({ "type": "bans", "bans": self.bans() }));
+                }
+            }
+            "set_rules" => {
                 if !allowed(self, "manage_server") {
                     return;
                 }
-                self.send(conn, &json!({ "type": "invites", "invites": self.invites() }));
-                self.send(conn, &json!({ "type": "members", "members": self.member_list() }));
-                self.send(conn, &json!({ "type": "bans", "bans": self.bans() }));
+                let rules = text(&msg["rules"]).replace('\r', "").trim().to_string();
+                if chars(&rules) > MAX_RULES_LEN {
+                    return self.error(conn, &format!("Keep the rules under {MAX_RULES_LEN} characters."));
+                }
+                let welcome = if msg["welcome_channel"].is_null() { None } else { Some(int(&msg["welcome_channel"])) };
+                if let Some(w) = welcome {
+                    if self.channel(w).is_none_or(|c| c.kind != "text") {
+                        return self.error(conn, "Pick a text channel for welcomes.");
+                    }
+                }
+                // New rules: everyone agrees again (whoever wrote them already has).
+                if rules != self.meta("rules").unwrap_or_default() {
+                    if rules.is_empty() {
+                        self.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at')", []);
+                    } else {
+                        self.set_meta("rules", &rules);
+                        self.set_meta("rules_at", &now_ms().to_string());
+                    }
+                    self.audit(&user.name, "rules", None, Some(if rules.is_empty() { "removed" } else { "changed" }));
+                }
+                match welcome {
+                    Some(w) => self.set_meta("welcome_channel", &w.to_string()),
+                    None => self.exec("DELETE FROM meta WHERE key = 'welcome_channel'", []),
+                }
+                for id in self.members() {
+                    let k = self.key_of(id);
+                    self.send_rules(id, &k);
+                }
+            }
+            "accept_rules" => {
+                let at: i64 = self.meta("rules_at").and_then(|v| v.parse().ok()).unwrap_or(0);
+                if at == 0 {
+                    return;
+                }
+                self.exec("UPDATE accounts SET rules_ok = ? WHERE key = ?", params![at, key]);
+                for id in self.conns_of(&key) {
+                    self.send_rules(id, &key);
+                }
             }
             "get_members" => self.send(conn, &json!({ "type": "members", "members": self.member_list() })),
             "set_role" => {
@@ -2582,6 +2680,15 @@ impl Core {
         let now = now_ms();
         if self.timed_out(conn) {
             return self.error(conn, "You're timed out, so you can't write right now.");
+        }
+        if self.needs_rules(key) {
+            return self.error(conn, RULES_FIRST);
+        }
+        if ch.announce {
+            let mine = self.perms_of(key);
+            if !mine.contains("manage_messages") && !mine.contains("manage_channels") {
+                return self.error(conn, &format!("Only moderators and admins can write in #{}.", ch.name));
+            }
         }
         if let Some(held) = self.automod_says(conn, &body, my_rank, true) {
             return self.error(conn, &held);
@@ -2742,6 +2849,9 @@ impl Core {
         if !msg["no_pictures"].is_null() {
             self.exec("UPDATE channels SET no_pictures = ? WHERE id = ?", params![truthy(&msg["no_pictures"]).then_some(1), ch.id]);
         }
+        if ch.kind == "text" && !msg["announce"].is_null() {
+            self.exec("UPDATE channels SET announce = ? WHERE id = ?", params![truthy(&msg["announce"]).then_some(1), ch.id]);
+        }
         if ch.kind == "voice" && !msg["user_limit"].is_null() {
             let cap = if self.mesh { MAX_VOICE_PEERS as i64 } else { MAX_RELAY_LIMIT };
             let limit = num(&msg["user_limit"]).filter(|x| x.is_finite()).map(|x| x.floor() as i64).unwrap_or(0).clamp(0, cap);
@@ -2864,8 +2974,8 @@ fn create_tables(db: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL,
            position INTEGER, topic TEXT, category TEXT, no_pictures INTEGER, user_limit INTEGER, afk_after INTEGER, slowmode INTEGER,
-           private_roles TEXT, parent INTEGER, starter INTEGER, creator TEXT);
-         CREATE TABLE IF NOT EXISTS accounts (key TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, role TEXT, nick TEXT);
+           private_roles TEXT, parent INTEGER, starter INTEGER, creator TEXT, announce INTEGER);
+         CREATE TABLE IF NOT EXISTS accounts (key TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, role TEXT, nick TEXT, rules_ok INTEGER);
          CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL, inviter TEXT);
          CREATE TABLE IF NOT EXISTS bans (key TEXT PRIMARY KEY, name TEXT NOT NULL, banned_at INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS timeouts (key TEXT PRIMARY KEY, until INTEGER NOT NULL);
@@ -2888,6 +2998,8 @@ fn create_tables(db: &Connection) -> rusqlite::Result<()> {
     )?;
     // Servers made before roles had switches: the column comes now (an error means it's there).
     let _ = db.execute("ALTER TABLE roles ADD COLUMN perms TEXT", []);
+    let _ = db.execute("ALTER TABLE channels ADD COLUMN announce INTEGER", []);
+    let _ = db.execute("ALTER TABLE accounts ADD COLUMN rules_ok INTEGER", []);
     // Hopp still has no outbox for accounts here: a server on someone's computer can't reach
     // the cloud's accounts, so news reaches people while their app is connected.
     Ok(())

@@ -119,6 +119,9 @@ pub struct Channel {
     /// A thread: when something was last said in it (ms), for showing the lively ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_at: Option<u64>,
+    /// An announcement channel: only moderators and admins write here (servers listing "announce").
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub announce: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -456,6 +459,9 @@ pub enum ClientMsg {
         /// Roles that may see the channel (`Some(empty)`: everyone); `None` leaves it.
         #[serde(default)]
         private_roles: Option<Vec<u32>>,
+        /// Text channels: `Some(true)` makes it an announcement channel; `None` leaves it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        announce: Option<bool>,
     },
     /// Admins, on servers whose welcome lists "roles": a new role.
     CreateRole {
@@ -532,6 +538,13 @@ pub enum ClientMsg {
         position: f64,
         playing: bool,
     },
+    /// Servers listing "rules": the rules people agree to, and where welcomes go (`None`: nowhere).
+    SetRules {
+        rules: String,
+        welcome_channel: Option<ChannelId>,
+    },
+    /// Agreeing to the server's rules.
+    AcceptRules,
     /// Events planned in the server.
     GetEvents,
     CreateEvent {
@@ -693,6 +706,17 @@ pub enum ServerMsg {
     },
     /// The events you may see, soonest first.
     Events { events: Vec<ServerEvent> },
+    /// The server's rules (none: `None`), from when (ms), whether you've agreed, and where welcomes go.
+    Rules {
+        #[serde(default)]
+        rules: Option<String>,
+        #[serde(default)]
+        at: u64,
+        #[serde(default)]
+        accepted: bool,
+        #[serde(default)]
+        welcome_channel: Option<ChannelId>,
+    },
     /// The event you planned is made.
     EventCreated { id: i64 },
     /// The server's AutoMod rules, and whether new people may join.

@@ -647,6 +647,9 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
                 ServerMsg::Watch { channel, video, position, playing, at_ago, by } => {
                     let _ = ui.emit("watch", serde_json::json!({ "channel": channel, "video": video, "position": position, "playing": playing, "at_ago": at_ago, "by": by }));
                 }
+                ServerMsg::Rules { rules, at, accepted, welcome_channel } => {
+                    let _ = ui.emit("rules", serde_json::json!({ "rules": rules, "at": at, "accepted": accepted, "welcome_channel": welcome_channel }));
+                }
                 ServerMsg::Events { events } => {
                     let _ = ui.emit("events", events);
                 }
@@ -1286,8 +1289,21 @@ fn update_channel(
     afk_after: Option<u16>,
     slowmode: Option<u32>,
     private_roles: Option<Vec<u32>>,
+    announce: Option<bool>,
 ) -> CmdResult {
-    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles }))
+    with_conn(&state, |c| c.control.send(ClientMsg::UpdateChannel { channel, name, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles, announce }))
+}
+
+/// The server's rules and where welcomes go (those who may manage the server).
+#[tauri::command]
+fn set_rules(state: State<'_, AppState>, rules: String, welcome_channel: Option<ChannelId>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::SetRules { rules, welcome_channel }))
+}
+
+/// Agreeing to the server's rules.
+#[tauri::command]
+fn accept_rules(state: State<'_, AppState>) -> CmdResult {
+    with_conn(&state, |c| c.control.send(ClientMsg::AcceptRules))
 }
 
 /// Admins: the server's own roles.
@@ -2144,6 +2160,8 @@ fn main() {
             get_audit_log,
             watch_set,
             get_events,
+            set_rules,
+            accept_rules,
             create_event,
             delete_event,
             rsvp,

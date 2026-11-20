@@ -155,8 +155,14 @@ function rowToMessage(r: Record<string, any>): ChatMessage {
 const MENTION = /<@([0-9a-f]{64})>/g;
 
 type ChannelKind = "text" | "voice";
-interface Channel { id: number; name: string; kind: ChannelKind; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[]; parent?: number; starter?: number; last_at?: number; creator?: string }
+interface Channel { id: number; name: string; kind: ChannelKind; announce?: boolean; topic?: string; category?: string; no_pictures?: boolean; user_limit?: number; afk_after?: number; slowmode?: number; private_roles?: number[]; parent?: number; starter?: number; last_at?: number; creator?: string }
 interface RoleInfo { id: number; name: string; color: string | null; hoist: boolean; level: "admin" | "mod" | null; position: number; mentionable: boolean; perms: Perm[] }
+
+/** The server's rules, at most this long. */
+const MAX_RULES_LEN = 2000;
+/** A welcome's text: apps show "Elin joined the server". */
+const JOINED = "hopp-joined";
+const RULES_FIRST = "Read and agree to this server's rules first. (Update Hopp if you don't see them.)";
 
 /** What a role may do, one switch each (as in Discord). Administrator is all of them. */
 const PERMS = ["manage_server", "manage_channels", "manage_roles", "manage_emojis", "view_audit_log", "create_invites", "manage_nicknames", "kick", "ban", "timeout", "manage_messages", "mention_everyone", "bypass_slowmode", "manage_events", "mute_members", "move_members", "administrator"] as const;
@@ -362,6 +368,7 @@ export class StromServer extends DurableObject<Env> {
     if (!channelColumns.has("category")) this.sql.exec("ALTER TABLE channels ADD COLUMN category TEXT");
     if (!channelColumns.has("no_pictures")) this.sql.exec("ALTER TABLE channels ADD COLUMN no_pictures INTEGER");
     if (!channelColumns.has("user_limit")) this.sql.exec("ALTER TABLE channels ADD COLUMN user_limit INTEGER");
+    if (!channelColumns.has("announce")) this.sql.exec("ALTER TABLE channels ADD COLUMN announce INTEGER");
     if (!channelColumns.has("afk_after")) this.sql.exec("ALTER TABLE channels ADD COLUMN afk_after INTEGER");
     if (!channelColumns.has("slowmode")) this.sql.exec("ALTER TABLE channels ADD COLUMN slowmode INTEGER");
     if (!channelColumns.has("private_roles")) this.sql.exec("ALTER TABLE channels ADD COLUMN private_roles TEXT");
@@ -372,8 +379,10 @@ export class StromServer extends DurableObject<Env> {
     const roleColumns = new Set(this.sql.exec("PRAGMA table_info(roles)").toArray().map((c) => String(c.name)));
     if (!roleColumns.has("mentionable")) this.sql.exec("ALTER TABLE roles ADD COLUMN mentionable INTEGER");
     if (!roleColumns.has("perms")) this.sql.exec("ALTER TABLE roles ADD COLUMN perms TEXT");
+    // Which version of the server's rules each member agreed to (ms, the rules' date).
     const accountColumns = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => String(c.name)));
     if (!accountColumns.has("role")) this.sql.exec("ALTER TABLE accounts ADD COLUMN role TEXT");
+    if (!accountColumns.has("rules_ok")) this.sql.exec("ALTER TABLE accounts ADD COLUMN rules_ok INTEGER");
     if (!accountColumns.has("nick")) this.sql.exec("ALTER TABLE accounts ADD COLUMN nick TEXT");
     const inviteColumns = new Set(this.sql.exec("PRAGMA table_info(invites)").toArray().map((c) => String(c.name)));
     if (!inviteColumns.has("inviter")) this.sql.exec("ALTER TABLE invites ADD COLUMN inviter TEXT");
@@ -657,7 +666,7 @@ export class StromServer extends DurableObject<Env> {
   private channels(): Channel[] {
     return this.sql
       .exec(
-        `SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles, parent, starter, creator,
+        `SELECT id, name, kind, topic, category, no_pictures, user_limit, afk_after, slowmode, private_roles, parent, starter, creator, announce,
            CASE WHEN parent IS NULL THEN NULL ELSE (SELECT max(sent_at) FROM messages m WHERE m.channel = channels.id) END AS last_at
          FROM channels ORDER BY coalesce(position, id + 100000), id`,
       )
@@ -667,6 +676,7 @@ export class StromServer extends DurableObject<Env> {
         if (r.topic) c.topic = String(r.topic);
         if (r.category) c.category = String(r.category);
         if (r.no_pictures) c.no_pictures = true;
+        if (r.announce) c.announce = true;
         if (r.user_limit) c.user_limit = Number(r.user_limit);
         if (r.afk_after) c.afk_after = Number(r.afk_after);
         if (r.slowmode) c.slowmode = Number(r.slowmode);
@@ -1124,13 +1134,42 @@ export class StromServer extends DurableObject<Env> {
       udp_port: 0,
       channels,
       users: this.members().map(([, m]) => m.user),
-      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms"],
+      features: ["search", "screen", "voice-chat", "voice-mod", "voice-settings", "mod-tools", "roles", "pings", "resync", "nicknames", "members", "emojis", "search-filters", "polls", "voice-messages", "threads", "automod", "events", "watch", "perms", "rules", "announce"],
       roles: this.customRoles(),
       emojis: this.emojis(),
     });
     for (const ch of channels) {
       this.send(ws, { type: "chat_history", channel: ch.id, messages: this.history(ch.id) });
     }
+    this.sendRules(ws, key);
+    // Someone new: a welcome in the channel picked for it.
+    if (!known) this.welcome(key, name);
+  }
+
+  // ---------- rules, and welcoming people ----------
+
+  /** Whether someone must agree to the server's rules before writing (those who run it needn't). */
+  private needsRules(key: string): boolean {
+    const at = Number(this.meta("rules_at") ?? 0);
+    if (!at || this.permsOf(key).has("manage_server")) return false;
+    const ok = Number(this.sql.exec("SELECT rules_ok FROM accounts WHERE key = ?", key).toArray()[0]?.rules_ok ?? 0);
+    return ok < at;
+  }
+
+  /** The rules, where welcomes go, and whether this person has agreed. */
+  private sendRules(ws: WebSocket, key: string) {
+    const welcome = this.meta("welcome_channel");
+    this.send(ws, { type: "rules", rules: this.meta("rules"), at: Number(this.meta("rules_at") ?? 0), accepted: !this.needsRules(key), welcome_channel: welcome === null ? null : Number(welcome) });
+  }
+
+  /** "Elin joined" in the welcome channel, as a message of its own (apps show it as a welcome). */
+  private welcome(key: string, name: string) {
+    const id = Number(this.meta("welcome_channel") ?? NaN);
+    const ch = Number.isFinite(id) ? this.channel(id) : undefined;
+    if (ch?.kind !== "text") return;
+    const now = Date.now();
+    const row = this.sql.exec("INSERT INTO messages (channel, sender, sender_name, author_key, text, sent_at) VALUES (?, 0, ?, ?, ?, ?) RETURNING id", ch.id, name, key, JOINED, now).one();
+    this.broadcastChannel(ch.id, { type: "chat", message: { id: Number(row.id), channel: ch.id, sender: 0, sender_name: name, author_key: key, text: JOINED, sent_at: now } });
   }
 
   // ---------- the server's own emojis ----------
@@ -1422,6 +1461,7 @@ export class StromServer extends DurableObject<Env> {
         const ch = this.channel(Number(msg.channel));
         if (ch?.kind !== "voice") return this.error(ws, "That voice channel doesn't exist.");
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't join voice right now.");
+        if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
         // The channel's own limit (moderators moving someone in aren't held to it).
         const limit = Number(this.channels().find((c) => c.id === ch.id)?.user_limit ?? 0);
         if (limit && this.voiceMembers(ch.id).filter(([o]) => o !== ws).length >= limit) return this.error(ws, `${ch.name} is full (${limit} people).`);
@@ -1509,6 +1549,10 @@ export class StromServer extends DurableObject<Env> {
         if (!text || [...text].length > MAX_CHAT_LEN) return this.error(ws, `Messages must be 1–${MAX_CHAT_LEN} characters.`);
         const now = Date.now();
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't write right now.");
+        if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
+        if (this.channels().find((c) => c.id === ch.id)?.announce && !myPerms.has("manage_messages") && !myPerms.has("manage_channels")) {
+          return this.error(ws, `Only moderators and admins can write in #${ch.name}.`);
+        }
         const held = this.automodSays(ws, s, text, myRank, true);
         if (held) return this.error(ws, held);
         // Slowmode: a pause between each person's messages here (moderators are free).
@@ -1585,6 +1629,7 @@ export class StromServer extends DurableObject<Env> {
       }
       case "react": {
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't react right now.");
+        if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
         const channel = Number(msg.channel);
         const id = Number(msg.id);
         const emoji = String(msg.emoji ?? "");
@@ -1755,6 +1800,7 @@ export class StromServer extends DurableObject<Env> {
         this.sql.exec("UPDATE channels SET name = ?, topic = ?, category = ? WHERE id = ?", name, topic || null, category || null, ch.id);
         this.audit(user.name, "update_channel", name, null);
         if (msg.no_pictures != null) this.sql.exec("UPDATE channels SET no_pictures = ? WHERE id = ?", msg.no_pictures ? 1 : null, ch.id);
+        if (ch.kind === "text" && msg.announce != null) this.sql.exec("UPDATE channels SET announce = ? WHERE id = ?", msg.announce ? 1 : null, ch.id);
         if (ch.kind === "voice" && msg.user_limit != null) {
           const limit = Math.max(0, Math.min(MAX_VOICE_PEERS, Math.floor(Number(msg.user_limit)) || 0));
           this.sql.exec("UPDATE channels SET user_limit = ? WHERE id = ?", limit || null, ch.id);
@@ -2033,10 +2079,37 @@ export class StromServer extends DurableObject<Env> {
         return this.send(ws, { type: "automod", ...rules, invites_paused: paused });
       }
       case "get_server_settings":
-        if (!allowed("manage_server")) return;
-        this.send(ws, { type: "invites", invites: this.invites() });
+        // Each list for whoever may do something with it.
+        if (myPerms.has("create_invites")) this.send(ws, { type: "invites", invites: this.invites() });
         this.send(ws, { type: "members", members: this.memberList() });
-        return this.send(ws, { type: "bans", bans: this.bans() });
+        if (myPerms.has("ban")) this.send(ws, { type: "bans", bans: this.bans() });
+        return;
+      case "set_rules": {
+        if (!allowed("manage_server")) return;
+        const rules = String(msg.rules ?? "").replace(/\r/g, "").trim();
+        if ([...rules].length > MAX_RULES_LEN) return this.error(ws, `Keep the rules under ${MAX_RULES_LEN} characters.`);
+        const welcome = msg.welcome_channel == null ? null : Number(msg.welcome_channel);
+        if (welcome !== null && this.channel(welcome)?.kind !== "text") return this.error(ws, "Pick a text channel for welcomes.");
+        // New rules: everyone agrees again (whoever wrote them already has).
+        if (rules !== (this.meta("rules") ?? "")) {
+          if (rules) {
+            this.setMeta("rules", rules);
+            this.setMeta("rules_at", String(Date.now()));
+          } else this.sql.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at')");
+          this.audit(user.name, "rules", null, rules ? "changed" : "removed");
+        }
+        if (welcome === null) this.sql.exec("DELETE FROM meta WHERE key = 'welcome_channel'");
+        else this.setMeta("welcome_channel", String(welcome));
+        for (const [mws, m] of this.members()) this.sendRules(mws, m.key!);
+        return;
+      }
+      case "accept_rules": {
+        const at = Number(this.meta("rules_at") ?? 0);
+        if (!at) return;
+        this.sql.exec("UPDATE accounts SET rules_ok = ? WHERE key = ?", at, s.key!);
+        for (const [mws, m] of this.members().filter(([, m]) => m.key === s.key)) this.sendRules(mws, m.key!);
+        return;
+      }
       case "get_members":
         // Who's a member is no secret among members: it's how people who are offline show in the list.
         return this.send(ws, { type: "members", members: this.memberList() });

@@ -992,6 +992,42 @@ test("roles: switches open just what they say, and only someone who has a switch
   for (const c of [owner, ann, bob, cat]) c.close();
 });
 
+test("rules and welcomes: newcomers agree first, a welcome appears; announcement channels are for staff", async () => {
+  const { id, owner, invite } = await newServer();
+  assert.ok(owner.welcome.features.includes("rules") && owner.welcome.features.includes("announce"));
+  const general = channelId(owner, "general");
+  owner.send({ type: "set_rules", rules: "Be kind.", welcome_channel: general });
+  const set = await owner.waitFor((m) => m.type === "rules" && m.rules === "Be kind.");
+  assert.deepEqual([set.accepted, set.welcome_channel], [true, general], "whoever runs the server needn't agree");
+
+  // Someone new: welcomed, and asked to agree before writing.
+  const ann = await join(id, "ann", { invite });
+  await owner.waitFor((m) => m.type === "chat" && m.message.text === "hopp-joined" && m.message.author_key === ann.key.pub);
+  const asked = await ann.waitFor((m) => m.type === "rules");
+  assert.deepEqual([asked.rules, asked.accepted], ["Be kind.", false]);
+  ann.send({ type: "send_chat", channel: general, text: "hi" });
+  assert.match(await errorOf(ann), /rules/);
+  ann.send({ type: "accept_rules" });
+  await ann.waitFor((m) => m.type === "rules" && m.accepted);
+  ann.send({ type: "send_chat", channel: general, text: "hi" });
+  await owner.waitFor((m) => m.type === "chat" && m.message.text === "hi");
+  // New rules: everyone agrees again.
+  owner.send({ type: "set_rules", rules: "Be kind. No spam.", welcome_channel: general });
+  await ann.waitFor((m) => m.type === "rules" && m.rules === "Be kind. No spam." && !m.accepted);
+  ann.send({ type: "accept_rules" });
+  await ann.waitFor((m) => m.type === "rules" && m.rules === "Be kind. No spam." && m.accepted);
+
+  // An announcement channel: staff write, everyone reads.
+  owner.send({ type: "update_channel", channel: general, name: "general", announce: true });
+  await owner.waitFor((m) => m.type === "channels_updated" && m.channels.find((c) => c.id === general)?.announce === true);
+  ann.send({ type: "send_chat", channel: general, text: "can I?" });
+  assert.match(await errorOf(ann), /Only moderators and admins/);
+  owner.send({ type: "send_chat", channel: general, text: "news" });
+  await ann.waitFor((m) => m.type === "chat" && m.message.text === "news");
+  owner.close();
+  ann.close();
+});
+
 test("roles: colours and levels, and private channels nobody else sees", async () => {
   const { id, owner, invite } = await newServer();
   assert.ok(owner.welcome.features.includes("roles"));
