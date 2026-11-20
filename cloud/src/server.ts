@@ -567,6 +567,18 @@ export class StromServer extends DurableObject<Env> {
 
   /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
   private dropChannel(id: number) {
+    // The #rules channel is where the rules are written: without it they go; without the
+    // welcome channel, welcomes stop. Everyone hears.
+    let rulesChanged = false;
+    if (this.meta("rules_channel") === String(id)) {
+      this.sql.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at', 'rules_channel')");
+      rulesChanged = true;
+    }
+    if (this.meta("welcome_channel") === String(id)) {
+      this.sql.exec("DELETE FROM meta WHERE key = 'welcome_channel'");
+      rulesChanged = true;
+    }
+    if (rulesChanged) for (const [mws, m] of this.members()) this.sendRules(mws, m.key!);
     // "hopp-image:" and "hopp-voice:" are the same length: the stored id follows either.
     this.sql.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", id);
     this.sql.exec("DELETE FROM messages WHERE channel = ?", id);

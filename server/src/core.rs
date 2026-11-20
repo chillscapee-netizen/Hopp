@@ -2979,6 +2979,23 @@ impl Core {
 impl Core {
     /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
     fn drop_channel(&self, id: i64) {
+        // The #rules channel is where the rules are written: without it they go; without the
+        // welcome channel, welcomes stop. Everyone hears.
+        let mut rules_changed = false;
+        if self.meta("rules_channel").as_deref() == Some(id.to_string().as_str()) {
+            self.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at', 'rules_channel')", []);
+            rules_changed = true;
+        }
+        if self.meta("welcome_channel").as_deref() == Some(id.to_string().as_str()) {
+            self.exec("DELETE FROM meta WHERE key = 'welcome_channel'", []);
+            rules_changed = true;
+        }
+        if rules_changed {
+            for conn in self.members() {
+                let k = self.key_of(conn);
+                self.send_rules(conn, &k);
+            }
+        }
         // "hopp-image:" and "hopp-voice:" are the same length: the stored id follows either.
         self.exec("DELETE FROM images WHERE id IN (SELECT substr(text, 12, 32) FROM messages WHERE channel = ? AND (text LIKE 'hopp-image:%' OR text LIKE 'hopp-voice:%'))", [id]);
         self.exec("DELETE FROM messages WHERE channel = ?", [id]);

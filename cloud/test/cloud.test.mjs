@@ -1032,6 +1032,9 @@ test("rules and welcomes: newcomers agree first, a welcome appears; announcement
   owner.send({ type: "set_rules", rules: "Be kind. No spam.", welcome_channel: general, rules_channel: rulesId });
   await ann.waitFor((m) => m.type === "channels_updated" && m.channels.find((c) => c.id === rulesId)?.announce === true);
   await ann.waitFor((m) => m.type === "rules" && m.rules_channel === rulesId);
+  // The #rules channel deleted: the rules go with it (that's where they're written).
+  owner.send({ type: "delete_channel", channel: rulesId });
+  await ann.waitFor((m) => m.type === "rules" && !m.rules && m.rules_channel === null);
   owner.close();
   ann.close();
 });
