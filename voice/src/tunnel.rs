@@ -124,15 +124,37 @@ where
 {
     let (mut sink, mut stream) = ws.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (ping_tx, mut ping_rx) = mpsc::unbounded_channel::<()>();
     let writer = tokio::spawn(async move {
-        while let Some(frame) = out_rx.recv().await {
-            if sink.send(Message::Binary(frame.into())).await.is_err() {
+        loop {
+            let msg = tokio::select! {
+                frame = out_rx.recv() => match frame { Some(f) => Message::Binary(f.into()), None => break },
+                ping = ping_rx.recv() => match ping { Some(()) => Message::Ping(Vec::new().into()), None => break },
+            };
+            if sink.send(msg).await.is_err() {
                 break;
             }
         }
     });
+    // A tunnel that went quiet may be gone without either side hearing of it (a router forgets
+    // idle connections): friends would then wait on "Connecting" for nothing. So it says hello
+    // every 25 seconds (Cloudflare answers), and with no word back for a minute it's opened again.
+    let mut tick = tokio::time::interval(Duration::from_secs(25));
+    let mut heard = tokio::time::Instant::now();
     let mut conns: HashMap<u32, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();
-    while let Some(Ok(msg)) = stream.next().await {
+    loop {
+        let msg = tokio::select! {
+            next = stream.next() => match next { Some(Ok(m)) => m, _ => break },
+            _ = tick.tick() => {
+                if heard.elapsed() > Duration::from_secs(60) {
+                    tracing::warn!("tunnel: no answer for a minute, opening it again");
+                    break;
+                }
+                let _ = ping_tx.send(());
+                continue;
+            }
+        };
+        heard = tokio::time::Instant::now();
         let Message::Binary(bytes) = msg else { continue };
         if bytes.len() < 5 {
             continue;
