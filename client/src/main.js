@@ -484,6 +484,7 @@ function endAwayVoice(sound = true) {
   state.voiceAway = null;
   state.awaySpeaking = false;
   state.latency = null;
+  if (typeof stopShare === "function") stopShare(true);
   if (sound) playSound("leave");
   setActivityFromVoice();
   renderVoicePanel();
@@ -1873,7 +1874,9 @@ function menuItems(items, inSub = false) {
       b.append(dot);
     }
     const text = el("span", "menu-text");
-    text.append(el("span", "", item.label));
+    text.append(el("span", "menu-label", item.label));
+    // A long name (a sound device, say) is cut with … and shown whole on hover.
+    if (String(item.label ?? "").length > 26) b.dataset.tip = item.label;
     if (item.sub) text.append(el("small", "ellipsis", item.sub));
     b.append(text);
     if (item.check !== undefined) {
@@ -2050,10 +2053,12 @@ async function connectTo(server, create, reconnecting) {
   // In voice here: you stay in the channel while you look at the other server (video ends,
   // it belongs to the view). Older servers can't wait in the background, so voice ends there.
   if (connected() && myVoice() !== null && state.activeId !== server.id) {
-    stopShare();
+    const stays = !!state.roster.features?.includes("resync");
+    // Your own stream goes on where your voice stays (like Discord); older servers end both.
+    if (!stays) stopShare();
     stopWatching();
     stopAllMedia();
-    if (state.roster.features?.includes("resync")) state.voiceAway = { id: state.activeId, roster: state.roster };
+    if (stays) state.voiceAway = { id: state.activeId, roster: state.roster };
   }
   // The server we leave stays connected in the background (connect parks it), so no disconnect here.
   state.activeId = null;
@@ -3193,6 +3198,8 @@ function renderUserPanel() {
 }
 
 function renderChannelView() {
+  // A stream stays in its voice channel: other chats don't get it on top.
+  if (typeof watching !== "undefined") $("screen-stage").hidden = !streamHere();
   const r = state.roster;
   const view = state.view;
   $("chat-channel").textContent = view === null ? "No text channels" : channelName(view);
@@ -15315,7 +15322,12 @@ function screenSend(to, msg) {
 }
 
 function canShare() {
-  return connected() && myVoice() !== null && !!state.roster?.features?.includes("screen");
+  if (connected() && myVoice() !== null) return !!state.roster?.features?.includes("screen");
+  return !!(awayVoice() && state.voiceAway.roster.features?.includes("screen"));
+}
+/** The server your voice (and so your stream) is in: the one in view, or the one you left it in. */
+function shareRoster() {
+  return awayVoice() ? state.voiceAway.roster : state.roster;
 }
 
 async function startShare() {
@@ -15339,13 +15351,14 @@ async function startShare() {
   tellSendingVideo();
   call("set_sharing", { on: true });
   renderVoicePanel();
-  // See what the others see.
-  watchScreen(state.roster.me);
+  // See what the others see (where the stream is: not over another server).
+  if (!state.voiceAway) watchScreen(state.roster.me);
 }
 
 function stopShare(quiet = false) {
   queueMicrotask(syncStreamerAuto);
   if (!screenShare.stream) return;
+  pageLog("screen: stopped sharing", quiet ? "(voice ended)" : "", "to", screenShare.peers.size, "viewers");
   for (const [viewer, pc] of screenShare.peers) {
     if (!quiet) screenSend(viewer, { k: "stop", s: "viewer" });
     pc.close();
@@ -15560,6 +15573,19 @@ function syncScreen() {
     skippedStreams.clear();
     return;
   }
+  const sr = shareRoster();
+  const myCh = sr.users.find((u) => u.session_id === sr.me)?.voice_channel ?? null;
+  for (const [viewer, pc] of screenShare.peers) {
+    if (!sr.users.some((u) => u.session_id === viewer && u.voice_channel === myCh)) {
+      pc.close();
+      screenShare.peers.delete(viewer);
+    }
+  }
+  // Away: only your own stream goes on; what you watch belongs to the server in view.
+  if (state.voiceAway) {
+    if (watching && !watching.local) stopWatching(false);
+    return;
+  }
   for (const id of skippedStreams) if (!state.roster.users.some((u) => u.session_id === id && u.sharing && u.voice_channel === myVoice())) skippedStreams.delete(id);
   // Your own stays while you share (the server may not have said so yet).
   if (watching && !watching.local) {
@@ -15569,17 +15595,17 @@ function syncScreen() {
       stopWatching(false);
     }
   }
-  for (const [viewer, pc] of screenShare.peers) {
-    if (!state.roster.users.some((u) => u.session_id === viewer && u.voice_channel === myVoice())) {
-      pc.close();
-      screenShare.peers.delete(viewer);
-    }
-  }
 }
 
+/** Where a stream shows: in the voice channel it's in, nowhere else. */
+function streamHere() {
+  if (!watching || !online() || state.atHome) return false;
+  // Older servers have no voice channel to open: there it shows above the chat, as before.
+  return !voiceChat() || (state.view !== null && state.view === myVoice());
+}
 function renderScreenStage() {
   const stage = $("screen-stage");
-  stage.hidden = !watching;
+  stage.hidden = !streamHere();
   const video = $("screen-video");
   if (!watching) {
     video.srcObject = null;
@@ -15603,7 +15629,10 @@ function screenInfo() {
     const n = [...screenShare.peers.values()].filter((pc) => pc.connectionState === "connected").length;
     $("screen-info").textContent = shareQualityText() + (n ? " · " + n + " watching" : "") + (videoBudget() < 1 ? " · making room for voice" : "");
   } else {
-    $("screen-info").textContent = video.videoHeight ? Math.min(video.videoWidth, video.videoHeight) + "p" : "";
+    // A shared window is a bit smaller than its screen (1920×1032 beside the taskbar): named by its class, exact size on hover.
+    const tall = Math.min(video.videoWidth, video.videoHeight);
+    $("screen-info").textContent = tall ? (tall >= 2000 ? "4K" : tall >= 1350 ? "1440p" : tall >= 1000 ? "1080p" : tall >= 680 ? "720p" : tall + "p") : "";
+    $("screen-info").dataset.tip = tall ? video.videoWidth + " × " + video.videoHeight : "";
   }
 }
 for (const ev of ["loadedmetadata", "resize"]) $("screen-video").addEventListener(ev, screenInfo);
@@ -16272,6 +16301,10 @@ function voiceControls() {
   if (canShare()) {
     add("cam", "video-off", "Turn on camera", () => $("cam-btn").click());
     add("share", "monitor", "Share your screen", () => $("share-btn").click());
+    add("quality", "settings", "Stream settings", (e) => {
+      const b = e.currentTarget.getBoundingClientRect();
+      openShareQuality(b.left, b.top, true);
+    });
   }
   if (state.roster?.features?.includes("watch")) add("watch", "play", "Watch together", () => (watchHere() ? watchMenu() : startWatching()));
   add("invite", "user-plus", "Invite friends", () => openInvite());

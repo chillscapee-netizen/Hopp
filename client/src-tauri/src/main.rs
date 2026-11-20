@@ -835,8 +835,16 @@ fn background(ui: &AppHandle, address: &str, generation: u64, roster: &Arc<Mutex
         ServerMsg::Watch { channel, video, position, playing, at_ago, by } => {
             let _ = ui.emit("background-watch", serde_json::json!({ "address": address, "channel": channel, "video": video, "position": position, "playing": playing, "at_ago": at_ago, "by": by }));
         }
-        // Voice, typing, screens and answers are for the server in view.
-        ServerMsg::VoiceSession { .. } | ServerMsg::VoicePeer { .. } | ServerMsg::Typing { .. } | ServerMsg::ScreenSignal { .. } => {}
+        // Your stream goes on in the voice channel you stayed in: who wants to watch it, and
+        // the handshakes, still reach you while another server is in view.
+        ServerMsg::ScreenSignal { from, data } => {
+            let here = { let r = roster.lock().unwrap(); r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some()) };
+            if here {
+                let _ = ui.emit("screen-signal", serde_json::json!({ "from": from, "data": data }));
+            }
+        }
+        // Voice, typing and answers are for the server in view.
+        ServerMsg::VoiceSession { .. } | ServerMsg::VoicePeer { .. } | ServerMsg::Typing { .. } => {}
         _ => {
             let in_voice = |r: &Roster| r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some());
             let (was, snapshot) = {
@@ -1237,11 +1245,19 @@ fn server_mute(state: State<'_, AppState>, session_id: SessionId, muted: bool, d
 
 #[tauri::command]
 fn set_sharing(state: State<'_, AppState>, on: bool) -> CmdResult {
+    // Where your voice is, also when another server is in view.
+    if let Some(sent) = with_voice(&state, |c| c.control.send(ClientMsg::SetSharing { on })) {
+        return Ok(sent);
+    }
     with_conn(&state, |c| c.control.send(ClientMsg::SetSharing { on }))
 }
 
 #[tauri::command]
 fn screen_signal(state: State<'_, AppState>, to: SessionId, data: String) -> CmdResult {
+    // Streams live in voice: their handshakes go to the server your voice is in.
+    if let Some(sent) = with_voice(&state, |c| c.control.send(ClientMsg::ScreenSignal { to, data: data.clone() })) {
+        return Ok(sent);
+    }
     with_conn(&state, |c| c.control.send(ClientMsg::ScreenSignal { to, data }))
 }
 

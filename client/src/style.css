@@ -4664,3 +4664,9 @@ html.layout-taskbar .server-list { overflow: hidden; mask-image: none !important
 .rail-more-pop .rail-item::before { display: none; }
 .rail-more-pop .rail-badge { left: -2px; right: auto; bottom: 0; }
 .rail-more-pop .folder-open { flex-direction: row; width: auto; height: 56px; padding: 0 6px; }
+
+/* Menus never scroll sideways: a long name is cut with … (whole on hover), the round or tick stays at the right. */
+.menu, #server-menu, #server-submenu { overflow-x: hidden; }
+.menu-item { min-width: 0; }
+.menu-text { flex: 1; }
+.menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
