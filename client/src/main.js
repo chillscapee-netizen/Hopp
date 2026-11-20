@@ -8048,7 +8048,8 @@ function renderDmView(keepScroll) {
       } else {
         line.append(el("span", "msg-reply-text ellipsis", "Replying to an older message"));
       }
-      li.append(line);
+      // Above the name, as in a server.
+      li.prepend(line);
       li.classList.add("has-reply");
     }
     if (state.dmEditing === m.id) {
