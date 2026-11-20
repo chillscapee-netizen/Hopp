@@ -3631,13 +3631,7 @@ function renderMessages(keepScrollUnlessAtBottom) {
       continue;
     }
     if (m.text === JOINED) {
-      const line = el("li", "msg join-msg");
-      line.dataset.id = m.id;
-      line.msg = m;
-      const who = el("strong", "join-name", nameHere(m.author_key) ?? m.sender_name);
-      styleName(who, m.author_key, m.sender_name);
-      line.append(el("span", "join-wave", "👋"), who, " joined the server.", el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
-      items.push(line);
+      items.push(joinRow(m, day));
       prev = null;
       continue;
     }
@@ -4339,6 +4333,44 @@ listen("rules", (e) => {
   if ($("server-settings").open) renderRulesSettings();
 });
 
+/** A few ways of saying someone arrived; each welcome keeps its own. */
+var JOIN_LINES = ["{} just showed up!", "Welcome, {}. Say hi!", "{} hopped into the server.", "Glad you're here, {}.", "{} just landed.", "Everyone, welcome {}!", "{} joined the party."];
+var wavedAt = new Set();
+
+/** "Sara just showed up!", with a wave to say hi. */
+function joinRow(m, day) {
+  const line = el("li", "msg join-msg");
+  line.dataset.id = m.id;
+  line.msg = m;
+  const mark = el("span", "join-mark");
+  mark.append(icon("arrow-in"));
+  const body = el("div", "join-body");
+  const words = el("div", "join-words");
+  const [before, after] = JOIN_LINES[m.id % JOIN_LINES.length].split("{}");
+  const who = el("strong", "join-name", nameHere(m.author_key) ?? m.sender_name);
+  styleName(who, m.author_key, m.sender_name);
+  words.append(before, who, after, el("span", "msg-time", `${day} at ${clock(m.sent_at)}`));
+  body.append(words);
+  // Saying hi is a reply with a wave (not to yourself, and only where you may write).
+  const key = `${activeServer()?.address}|${m.id}`;
+  if (m.author_key !== state.account?.publicKey && !rulesNeeded() && !announceLocked(m.channel) && !timedOutUntil(meUser())) {
+    const wave = el("button", "join-wave", "");
+    wave.type = "button";
+    const done = wavedAt.has(key);
+    wave.append(el("span", "join-wave-hand", "👋"), done ? "Waved" : "Wave to say hi");
+    wave.disabled = done;
+    wave.addEventListener("click", () => {
+      wavedAt.add(key);
+      sendChat(m.channel, "👋", m.id);
+      wave.disabled = true;
+      wave.lastChild.textContent = "Waved";
+    });
+    body.append(wave);
+  }
+  line.append(mark, body);
+  return line;
+}
+
 /** Whether I must agree to this server's rules before joining in. */
 function rulesNeeded() {
   const r = state.rules;
@@ -4352,11 +4384,27 @@ function announceLocked(view) {
 
 function openRules() {
   if (!state.rules?.rules) return;
-  $("rules-server").textContent = (connectingServer() ?? activeServer())?.label ?? state.roster?.server_name ?? "";
-  $("rules-body").replaceChildren(messageText(state.rules.rules));
-  $("rules-agree").hidden = !rulesNeeded();
-  $("rules-later").textContent = rulesNeeded() ? "Later" : "Close";
+  const name = (connectingServer() ?? activeServer())?.label ?? state.roster?.server_name ?? "";
+  $("rules-server").textContent = name;
+  $("rules-icon").replaceChildren(serverIcon("rules-server-icon server-tint", name, state.roster?.server_icon));
+  $("rules-body").replaceChildren(...rulesList(state.rules.rules).map((t, i) => {
+    const li = el("li", "rules-item");
+    li.append(el("span", "rules-num", String(i + 1)), messageText(t));
+    return li;
+  }));
+  const need = rulesNeeded();
+  $("rules-check-row").hidden = !need;
+  $("rules-check").checked = false;
+  $("rules-agree").hidden = !need;
+  $("rules-agree").disabled = true;
+  $("rules-later").textContent = need ? "Later" : "Close";
   openModal($("rules-dialog"));
+}
+$("rules-check").addEventListener("change", () => ($("rules-agree").disabled = !$("rules-check").checked));
+
+/** The rules, one per line (numbers or dashes people typed before them are left off). */
+function rulesList(text) {
+  return String(text ?? "").split(/\n+/).map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
 $("rules-open").addEventListener("click", openRules);
 $("rules-later").addEventListener("click", () => $("rules-dialog").close());
@@ -4370,15 +4418,57 @@ function renderRulesSettings() {
   const on = !!state.roster?.features?.includes("rules") && may("manage_server");
   $("rules-settings").hidden = !on;
   if (!on) return;
-  if (document.activeElement !== $("rules-text-input")) $("rules-text-input").value = state.rules?.rules ?? "";
+  if (!$("rules-settings").contains(document.activeElement)) {
+    rulesDraft = rulesList(state.rules?.rules);
+    if (!rulesDraft.length) rulesDraft = [""];
+    renderRulesEdit();
+  }
   const pick = $("welcome-channel");
   const texts = (state.roster?.channels ?? []).filter((c) => c.kind === "text" && c.parent == null);
   pick.replaceChildren(new Option("Nowhere (no welcomes)", ""), ...texts.map((c) => new Option("#" + c.name, String(c.id))));
   pick.value = state.rules?.welcome_channel != null ? String(state.rules.welcome_channel) : "";
 }
+/** The rules being written in the overview, one per row. */
+var rulesDraft = [""];
+var MAX_RULES = 12;
+function renderRulesEdit(focus) {
+  $("rules-edit").replaceChildren(...rulesDraft.map((text, i) => {
+    const li = el("li", "rules-edit-row");
+    const input = el("input");
+    input.maxLength = 160;
+    input.value = text;
+    input.placeholder = i === 0 ? "Be kind to each other." : "Another rule";
+    input.addEventListener("input", () => (rulesDraft[i] = input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (rulesDraft.length < MAX_RULES) {
+        rulesDraft.splice(i + 1, 0, "");
+        renderRulesEdit(i + 1);
+      }
+    });
+    const remove = el("button", "icon-btn rules-remove", "");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove this rule");
+    remove.append(icon("x"));
+    remove.addEventListener("click", () => {
+      rulesDraft.splice(i, 1);
+      if (!rulesDraft.length) rulesDraft = [""];
+      renderRulesEdit();
+    });
+    li.append(el("span", "rules-num", String(i + 1)), input, remove);
+    return li;
+  }));
+  $("rules-add").hidden = rulesDraft.length >= MAX_RULES;
+  if (focus !== undefined) $("rules-edit").querySelectorAll("input")[focus]?.focus();
+}
+$("rules-add").addEventListener("click", () => {
+  rulesDraft.push("");
+  renderRulesEdit(rulesDraft.length - 1);
+});
 $("rules-save").addEventListener("click", () => {
   const welcome = $("welcome-channel").value;
-  invoke("set_rules", { rules: $("rules-text-input").value.trim(), welcomeChannel: welcome ? Number(welcome) : null })
+  invoke("set_rules", { rules: rulesDraft.map((r) => r.trim()).filter(Boolean).join("\n"), welcomeChannel: welcome ? Number(welcome) : null })
     .then(() => {
       $("rules-saved").hidden = false;
       setTimeout(() => ($("rules-saved").hidden = true), 2000);

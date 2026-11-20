@@ -4413,3 +4413,42 @@ body:has(dialog[open]) .topbar-nav { opacity: 0.35; pointer-events: none; }
 .rules-settings textarea { width: 100%; resize: vertical; }
 .rules-settings-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .saved-note { color: var(--green); font-size: 13px; font-weight: 600; }
+
+/* ---------- rules and welcomes, in the manner of Discord ---------- */
+.rules-bar { align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--layer-2); border: 1px solid var(--border); }
+.rules-bar-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.rules-bar-icon .i { width: 18px; height: 18px; }
+.rules-bar-words { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.rules-bar-words strong { color: var(--text); font-size: 14px; }
+.rules-bar-words span { color: var(--muted); font-size: 13px; }
+.rules-dialog { width: min(480px, 92vw); }
+.rules-head { display: grid; justify-items: center; gap: 4px; margin-bottom: 18px; text-align: center; }
+.rules-icon .server-icon, .rules-icon > * { width: 64px; height: 64px; border-radius: 20px; font-size: 22px; }
+.rules-head h2 { margin: 10px 0 0; }
+.rules-list { display: grid; gap: 8px; max-height: 46vh; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.rules-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: var(--layer-2); }
+.rules-item .msg-text { flex: 1; min-width: 0; color: var(--text); font-size: 14.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.rules-num { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); font-size: 12.5px; font-weight: 700; }
+.rules-check { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer; font-size: 14px; font-weight: 600; }
+.rules-check[hidden] { display: none; }
+.rules-check input { width: 18px; height: 18px; accent-color: var(--green); }
+.join-msg { display: flex; align-items: flex-start; gap: 0; padding: 8px 16px; color: var(--text-2); font-size: 14.5px; }
+.join-mark { display: grid; place-items: center; flex: none; width: 40px; margin-right: 16px; padding-top: 2px; color: var(--green); }
+.join-mark .i { width: 18px; height: 18px; }
+.join-body { display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.join-words .join-name { color: var(--text); font-weight: 600; }
+.join-words .msg-time { margin-left: 8px; color: var(--muted); font-size: 12px; }
+.join-wave { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: none; border-radius: 8px; background: var(--layer-2); color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.join-wave:hover:not(:disabled) { background: var(--hover); }
+.join-wave:disabled { color: var(--muted); cursor: default; }
+.join-wave-hand { font-size: 18px; }
+.rules-edit { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.rules-edit-row { display: flex; align-items: center; gap: 10px; }
+.rules-edit-row input { flex: 1; min-width: 0; }
+.rules-remove .i { width: 16px; height: 16px; }
+.rules-add { justify-self: start; margin-top: 4px; }
+.rules-server-icon { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 20px; font-size: 22px; font-weight: 700; overflow: hidden; }
+.rules-server-icon img { width: 100%; height: 100%; object-fit: cover; }
+.rules-bar > .rules-bar-icon { flex: 0 0 36px; }
+.rules-bar > .rules-bar-words { flex: 1 1 auto; }
+.rules-settings .field { margin: 0; }

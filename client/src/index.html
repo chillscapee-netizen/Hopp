@@ -24,6 +24,7 @@
     <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></symbol>
     <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
     <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+    <symbol id="i-arrow-in" viewBox="0 0 24 24"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></symbol>
     <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8.5a4 4 0 0 1 0 7"/><path d="M18 6a8 8 0 0 1 0 12"/></symbol>
     <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></symbol>
     <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></symbol>
@@ -359,8 +360,8 @@
             </button>
             <form id="composer" class="composer">
               <div id="rules-bar" class="rules-bar" hidden>
-                <svg class="i"><use href="#i-shield"/></svg>
-                <span>This server has rules to agree to before you join in.</span>
+                <span class="rules-bar-icon"><svg class="i"><use href="#i-shield"/></svg></span>
+                <span class="rules-bar-words"><strong>Agree to the rules to start talking</strong><span>This server asks everyone to read its rules first.</span></span>
                 <button id="rules-open" type="button" class="btn primary sm">Read the rules</button>
               </div>
               <div class="composer-box">
@@ -916,13 +917,17 @@
     <form method="dialog">
       <div class="modal-body">
         <button type="button" class="modal-close close-dialog" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
-        <h2>Server rules</h2>
-        <p id="rules-server" class="modal-sub"></p>
-        <div id="rules-body" class="rules-body"></div>
+        <div class="rules-head">
+          <div id="rules-icon" class="rules-icon"></div>
+          <h2 id="rules-server"></h2>
+          <p class="modal-sub">Read and agree to the rules before you join in.</p>
+        </div>
+        <ol id="rules-body" class="rules-list"></ol>
+        <label id="rules-check-row" class="rules-check"><input id="rules-check" type="checkbox"><span>I've read and agree to the rules</span></label>
       </div>
       <div class="modal-foot">
         <button type="button" id="rules-later" class="btn-link">Later</button>
-        <button type="button" id="rules-agree" class="btn primary">I agree</button>
+        <button type="button" id="rules-agree" class="btn primary" disabled>Agree</button>
       </div>
     </form>
   </dialog>
@@ -1017,11 +1022,12 @@
           </label>
           <div id="rules-settings" class="rules-settings" hidden>
             <h3 class="rules-settings-title">Rules and welcomes</h3>
-            <label class="field">
+            <div class="field">
               <span class="field-label">Rules</span>
-              <textarea id="rules-text-input" rows="5" maxlength="2000" placeholder="Be kind. No spam. Keep it friendly."></textarea>
-              <span class="hint">New members read these and press I agree before they can write. Changing them asks everyone again. Leave empty for none.</span>
-            </label>
+              <ol id="rules-edit" class="rules-edit"></ol>
+              <button id="rules-add" type="button" class="btn sm rules-add"><svg class="i"><use href="#i-plus"/></svg>Add a rule</button>
+              <span class="hint">New members read these and agree before they can write, react or join voice. Changing them asks everyone again.</span>
+            </div>
             <label class="field">
               <span class="field-label">Welcome new members in</span>
               <select id="welcome-channel"></select>
