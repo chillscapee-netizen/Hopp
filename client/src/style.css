@@ -4718,3 +4718,9 @@ html.layout-taskbar.rail-large .folder-open .rail-icon { width: 46px; height: 46
 html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34px; }
 .rail-more-pop .folder-open { flex-wrap: wrap; height: auto; max-width: 100%; padding: 4px; }
 .rail-more-pop .folder-open .rail-item { width: 48px; height: 48px; }
+
+/* "LIVE" on the stream you watch: green with dark letters, readable in every theme. */
+.live-pill.watching { color: #08130c; }
+
+/* First start: restoring an account you already have is seen at once, above the form, not below it. */
+.auth-top-switch { margin: -6px 0 18px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 6%, transparent); text-align: center; }

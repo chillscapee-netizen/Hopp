@@ -144,6 +144,7 @@
           <div class="auth-logo"><svg class="i"><use href="#i-logo"/></svg></div>
           <h1>Create your Hopp ID</h1>
           <p class="auth-sub">One account for every server. No email, no tracking.</p>
+          <p class="auth-switch auth-top-switch">Already have a Hopp ID? <button type="button" class="link" data-auth="recover">Restore it with your recovery phrase</button></p>
           <label class="field">
             <span class="field-label">Display name</span>
             <input id="create-name" maxlength="32" autocomplete="nickname" required>
@@ -167,7 +168,6 @@
             <svg class="i"><use href="#i-lock"/></svg>
             <span>Your Hopp ID is an encrypted key on this computer. Your password never leaves it. Next, you'll get a recovery phrase that lets you reset your password or move to another computer.</span>
           </div>
-          <p class="auth-switch">Already have a Hopp ID? <button type="button" class="link" data-auth="recover">Restore it</button></p>
           <p id="to-login-row" class="auth-switch">Or <button type="button" id="to-login" class="link">log in</button> with the account on this computer.</p>
         </form>
 

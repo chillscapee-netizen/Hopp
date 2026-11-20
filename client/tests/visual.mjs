@@ -66,6 +66,11 @@ const scenes = {
   keybinds: `prefs.keybinds = { mute: { key: 5, mods: 7, label: "Ctrl + Shift + Alt + Mouse 4" } }; renderKeybinds(); openSettings("keys"); await wait(200);`,
   streamer: `$("streamer-mode").checked = true; $("streamer-mode").dispatchEvent(new Event("change")); $("update-btn").hidden = false; openSettings("privacy"); await wait(200);`,
   threads: `const r3 = structuredClone(state.roster); r3.features = [...(r3.features ?? []), "threads"]; r3.channels.push({ id: 77, name: "A thread with a really quite long name about the raid on Saturday", kind: "text", parent: 0, starter: 9601, creator: ME, last_at: Date.now() }); emit("roster", r3); await wait(60); emit("chat", { id: 9601, channel: 0, sender: 2, sender_name: "Elin", author_key: KEYS.elin, text: "Raid on Saturday? Who is in, and who brings what, and when do we start", sent_at: Date.now() }); await wait(80); openTextChannel(77); await wait(200);`,
+  // The taskbar layout: plain, with many servers, a folder open and "+N" open; the sound menus; sharing in voice.
+  taskbar: `prefs.layout = "taskbar"; applyTheme(); await wait(150);`,
+  taskbarmany: `prefs.layout = "taskbar"; const b0 = prefs.servers[0]; for (let i = 0; i < 24; i++) prefs.servers.push({ ...b0, id: "vx" + i, label: "Server number " + i }); const [a1, a2] = prefs.servers; prefs.rail = [{ folder: "fv", name: "Games", color: "#6e56cf", open: true, ids: [a1.id, a2.id] }, ...prefs.servers.slice(2).map((s) => ({ id: s.id }))]; applyTheme(); await wait(150); $("rail-more")?.click(); await wait(200);`,
+  devicemenu: `renderDeviceMenu("output", $("output-menu-btn"), { inputs: [], outputs: ["Headphones (streamplify Mic.)", "CU34G2XP (NVIDIA High Definition Audio)", "KG251Q (NVIDIA High Definition Audio)"], default_input: null, default_output: "Hörlurar (Realtek(R) Audio)" }); await wait(200);`,
+  voiceshare: `const vs = structuredClone(state.roster); vs.features = [...(vs.features ?? []), "screen", "voice-chat"]; vs.users.find((u) => u.session_id === vs.me).voice_channel = 1; emit("roster", vs); emit("voice-state", { ready: true }); await wait(60); const cv = document.createElement("canvas"); cv.width = 1280; cv.height = 720; cv.getContext("2d").fillRect(0, 0, 1280, 720); navigator.mediaDevices.getDisplayMedia = async () => cv.captureStream(5); openTextChannel(1); await wait(100); $("share-btn").click(); await wait(400);`,
   calloffer: `$("home-btn").click(); await wait(100); openDm(KEYS.elin); await wait(150); await startCall(KEYS.elin); state.call.status = "live"; state.call.startedAt = Date.now() - 60000; state.call.engineReady = true; callRoom.send = () => {}; await handleMedia(KEYS.elin, { v: "m", t: "screen", d: "r", k: "live" }, callRoom); await wait(250);`,
 };
 const themes = ["dusk", "light", "mid"];
@@ -135,6 +140,14 @@ for (const b of document.querySelectorAll("button, a[href], [role=button]")) {
   const r = b.getBoundingClientRect();
   const x = r.left + r.width / 2, y = r.top + r.height / 2;
   if (x < 0 || y < 0 || x > W || y > H) continue;
+  // Scrolled out of its list (below the fold, reachable by scrolling): not covered, just not shown.
+  let clipped = false;
+  for (let p = b.parentElement; p && !clipped; p = p.parentElement) {
+    if (!/(auto|scroll|hidden)/.test(getComputedStyle(p).overflowY)) continue;
+    const pr = p.getBoundingClientRect();
+    clipped = y < pr.top || y > pr.bottom || x < pr.left || x > pr.right;
+  }
+  if (clipped) continue;
   const top = document.elementFromPoint(x, y);
   if (top && !b.contains(top) && !top.contains(b) && top.closest("button, a[href], [role=button], input") && !top.closest(".popover, .menu, dialog[open], .modal, #server-submenu") === !b.closest(".popover, .menu, dialog[open], .modal, #server-submenu")) out.push("covered by another control: " + label(b) + " under " + label(top));
 }
