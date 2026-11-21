@@ -129,6 +129,13 @@ pub async fn host_start(app: AppHandle, host: State<'_, Host>, name: String) -> 
 /// Stops the server (friends' connections end; its data stays on this computer).
 #[tauri::command]
 pub async fn host_stop(host: State<'_, Host>) -> CmdResult {
+    // A start still under way finishes first, then stops: never left running behind your back.
+    let _after_start = host.starting.lock().await;
+    stop_now(&host);
+    Ok(())
+}
+
+fn stop_now(host: &Host) {
     *host.status.lock().unwrap() = HostStatus::default();
     for t in host.tasks.lock().unwrap().drain(..) {
         t.abort();
@@ -137,14 +144,14 @@ pub async fn host_stop(host: State<'_, Host>) -> CmdResult {
     if let Some(server) = host.server.lock().unwrap().take() {
         server.shutdown();
     }
-    Ok(())
 }
 
 /// The owner deleted the server: it stops, and its channels, messages, pictures and key go.
 /// (A new server made later gets a new key and a new tunnel.)
 #[tauri::command]
 pub async fn host_delete(app: AppHandle, host: State<'_, Host>) -> CmdResult {
-    host_stop(host).await?;
+    let _after_start = host.starting.lock().await;
+    stop_now(&host);
     let dir = folder(&app)?;
     // The database may still be closing.
     for _ in 0..20 {

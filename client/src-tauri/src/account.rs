@@ -52,10 +52,13 @@ const ALLOWED: &[&str] = &[
 pub struct Account {
     link: Mutex<Option<AccountLink>>,
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Bumped on every stop: a task from before never puts its link back.
+    epoch: std::sync::atomic::AtomicU64,
 }
 
 impl Account {
     pub fn stop(&self) {
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(task) = self.task.lock().unwrap().take() {
             task.abort();
         }
@@ -73,25 +76,45 @@ pub fn start_account(app: AppHandle, state: State<'_, AppState>, account: State<
     strom_voice::tunnel::set_cloud(&cloud);
     account.stop();
     let handle = app.clone();
-    let task = tauri::async_runtime::spawn(async move { run(handle, identity, cloud).await });
+    let epoch = account.epoch.load(std::sync::atomic::Ordering::SeqCst);
+    let task = tauri::async_runtime::spawn(async move { run(handle, identity, cloud, epoch).await });
     *account.task.lock().unwrap() = Some(task);
     Ok(())
 }
 
-async fn run(app: AppHandle, identity: Identity, cloud: String) {
+async fn run(app: AppHandle, identity: Identity, cloud: String, epoch: u64) {
     let mut pause = 1;
+    let current = |app: &AppHandle| app.state::<Account>().epoch.load(std::sync::atomic::Ordering::SeqCst) == epoch;
     loop {
         match strom_voice::connect_account(&cloud, &identity).await {
             Ok((link, welcome, mut events)) => {
-                pause = 1;
-                *app.state::<Account>().link.lock().unwrap() = Some(link);
+                // Stopped meanwhile (logged out, another cloud): this link isn't ours to keep.
+                if !current(&app) {
+                    return;
+                }
+                let since = std::time::Instant::now();
+                {
+                    let account = app.state::<Account>();
+                    let mut slot = account.link.lock().unwrap();
+                    if !current(&app) {
+                        return;
+                    }
+                    *slot = Some(link);
+                }
                 let _ = app.emit("account-state", json!({ "connected": true }));
                 let _ = app.emit("account", welcome);
                 while let Some(msg) = events.recv().await {
                     let _ = app.emit("account", msg);
                 }
-                *app.state::<Account>().link.lock().unwrap() = None;
+                if current(&app) {
+                    *app.state::<Account>().link.lock().unwrap() = None;
+                }
                 let _ = app.emit("account-state", json!({ "connected": false }));
+                // Only a link that stayed up a while counts as working: one closed at once (a full
+                // or refusing cloud) keeps the waits growing instead of knocking every second.
+                if since.elapsed() >= Duration::from_secs(30) {
+                    pause = 1;
+                }
             }
             Err(e) => {
                 tracing::info!("account connection failed: {e:#}");

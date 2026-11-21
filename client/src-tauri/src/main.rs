@@ -55,6 +55,8 @@ struct Connection {
 
 #[derive(Default)]
 pub struct AppState {
+    /// When a server last said no to something (milliseconds since 1970).
+    last_server_error: std::sync::atomic::AtomicU64,
     identity_path: OnceLock<PathBuf>,
     pub identity: Mutex<Option<Identity>>,
     conn: Mutex<Option<Connection>>,
@@ -439,6 +441,9 @@ async fn recover_account(
     let (identity, mut stored) = blocking(move || Identity::restore(&name, &phrase, &password)).await?;
     // They just typed the whole phrase, so they evidently have it.
     stored.backed_up = true;
+    // The same account: still saved to Hopp Cloud under its email (the page saves it again under
+    // the new password).
+    stored.backup_email = existing.as_ref().filter(|s| s.public_key == key).and_then(|s| s.backup_email.clone());
     logout(app, state.clone());
     if existing.is_some_and(|s| s.public_key != key) {
         back_up_account(&state)?;
@@ -690,6 +695,7 @@ fn start_connection(app: &AppHandle, mut session: Session, address: String, gene
             }
             match &msg {
                 ServerMsg::Error { message } => {
+                    ui.state::<AppState>().last_server_error.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
                     let _ = ui.emit("server-error", message);
                 }
                 ServerMsg::Chat { message } => {
@@ -879,15 +885,17 @@ async fn server_picture(app: &AppHandle, path: &str) -> tauri::http::Response<Ve
             found
         }
     };
+    // Only pictures and voice messages, whatever a server says it sends.
+    const KINDS: [&str; 6] = ["image/webp", "image/jpeg", "image/png", "image/gif", "audio/webm", "audio/ogg"];
     match picture {
-        Some((kind, bytes)) => tauri::http::Response::builder()
+        Some((kind, bytes)) if KINDS.contains(&kind.as_str()) => tauri::http::Response::builder()
             .status(200)
-            .header("content-type", kind)
+            .header("content-type", kind.as_str())
             .header("cache-control", "private, max-age=31536000, immutable")
             .header("x-content-type-options", "nosniff")
             .body(bytes.to_vec())
-            .unwrap(),
-        None => gone(),
+            .unwrap_or_else(|_| gone()),
+        _ => gone(),
     }
 }
 
@@ -999,8 +1007,10 @@ async fn warm(app: AppHandle, state: State<'_, AppState>, address: String) -> Cm
     let identity = state.identity.lock().unwrap().clone().ok_or("You are not logged in.")?;
     let session = strom_voice::connect(&address, &identity, None, None).await.map_err(|e| e.to_string())?;
     remember_pin(&app, &address, &session);
+    // Logged out (or another account logged in) meanwhile: this connection is the old account's.
+    let still_me = state.identity.lock().unwrap().as_ref().is_some_and(|i| i.public_key() == identity.public_key());
     // Older servers can't resend their channels; and maybe you opened it meanwhile.
-    if !session.roster.features.iter().any(|f| f == "resync") || known(&state) {
+    if !still_me || !session.roster.features.iter().any(|f| f == "resync") || known(&state) {
         return Ok(());
     }
     session.control.send(ClientMsg::SetState { muted: state.audio.muted(), deafened: state.audio.deafened() });
@@ -1009,6 +1019,10 @@ async fn warm(app: AppHandle, state: State<'_, AppState>, address: String) -> Cm
     let c = start_connection(&app, session, address.clone(), generation);
     state.parked.lock().unwrap().insert(address, c);
     Ok(())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 static WARM_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 48);
@@ -1045,10 +1059,13 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
         // Cloud server: the answer brings the channel's key and peers, and voice starts then.
         c.control.send(ClientMsg::JoinVoice { channel });
         let (generation, attempt) = (c.generation, c.voice_attempt);
+        let asked = now_ms();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_secs(6)).await;
             let state = app.state::<AppState>();
-            let unanswered = with_generation(&state, generation, |c| c.voice_attempt == attempt).unwrap_or(false);
+            // Said no (full, not allowed): it did answer, and that was already shown.
+            let refused = state.last_server_error.load(std::sync::atomic::Ordering::Relaxed) >= asked;
+            let unanswered = !refused && with_generation(&state, generation, |c| c.voice_attempt == attempt).unwrap_or(false);
             if unanswered {
                 let _ = app.emit("voice-state", serde_json::json!({ "ready": false, "error": "Hopp Cloud didn't answer. It may be running an older version without voice." }));
             }
@@ -1077,8 +1094,14 @@ async fn join_voice(app: AppHandle, state: State<'_, AppState>, channel: Channel
 
 #[tauri::command]
 fn leave_voice(state: State<'_, AppState>) -> CmdResult {
-    // Voice in a server you aren't looking at: that's the one to leave.
-    if end_voice_elsewhere(&state) {
+    // Voice in a server you aren't looking at ends; and the one in view too, if you're in voice
+    // there (a background server's roster may not have caught up yet).
+    let elsewhere = end_voice_elsewhere(&state);
+    let here = state.conn.lock().unwrap().as_ref().is_some_and(|c| {
+        let r = c.roster.lock().unwrap();
+        c.engine.is_some() || r.users.iter().any(|u| u.session_id == r.me && u.voice_channel.is_some())
+    });
+    if elsewhere && !here {
         return Ok(());
     }
     with_conn(&state, |c| {
@@ -1597,7 +1620,7 @@ fn get_server_settings(state: State<'_, AppState>) -> CmdResult {
 #[tauri::command]
 async fn start_mic_test(app: AppHandle, state: State<'_, AppState>) -> CmdResult {
     // In voice the microphone is already open: the engine plays it back instead.
-    if in_server_voice(&state) {
+    if in_server_voice(&state) || state.call.lock().unwrap().is_some() {
         state.audio.set_monitor(true);
         return Ok(());
     }
