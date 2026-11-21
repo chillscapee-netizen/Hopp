@@ -2,8 +2,9 @@
 
 (async () => {
   await inServer();
-  const warned = () => !$("toast").hidden && $("toast").textContent.startsWith("You're muted");
-  const hide = () => ($("toast").hidden = true);
+  // Said in the line under the message box (nothing covered).
+  const warned = () => !!document.querySelector(".notice-line")?.textContent.startsWith("You're muted");
+  const hide = () => document.querySelectorAll(".notice-line").forEach((n) => n.remove());
   const talkMuted = () => emit("voice", { type: "speaking_while_muted" });
 
   await setMuted(true);

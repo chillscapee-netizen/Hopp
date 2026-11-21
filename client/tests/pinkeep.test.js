@@ -12,7 +12,7 @@
   addAndConnect(address, "NEWCODE1", undefined, "b".repeat(64));
   await wait(30);
   check("a different key for a known server isn't taken", known.pin === "a".repeat(64));
-  check("and says why", [...document.querySelectorAll(".toast")].some((t) => /different key/.test(t.textContent)));
+  check("and says why", [...document.querySelectorAll(".toast, .notice-line")].some((t) => /different key/.test(t.textContent)));
   addAndConnect(address, "NEWCODE2", undefined, "a".repeat(64));
   check("the same key: the new invite is used", known.invite === "NEWCODE2");
   window.connectTo = connect;

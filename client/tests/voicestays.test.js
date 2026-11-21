@@ -71,6 +71,6 @@
   check("away in voice once more", !!state.voiceAway);
   emit("voice-away", { address: endpoint(first), roster: null, lost: true });
   await wait(30);
-  check("a lost connection over there ends voice, and says so", !state.voiceAway && $("voice-panel").hidden && /lost/.test(document.querySelector(".toast")?.textContent ?? ""), document.querySelector(".toast")?.textContent);
+  check("a lost connection over there ends voice, and says so", !state.voiceAway && $("voice-panel").hidden && /lost/.test([...document.querySelectorAll(".toast, .notice-line")].map((t) => t.textContent).join(" ")));
   report();
 })();

@@ -40,7 +40,7 @@
   await wait(80);
   const r = reports[0];
   check("sent with what's reported", r && r.kind === "message" && r.reason === "spam" && r.details === "sells fake coins" && r.user_key === KEYS.elin && r.message === theirs.text && r.server === activeServer().address, JSON.stringify(r));
-  check("closed, with thanks", !$("report-dialog").open && [...document.querySelectorAll(".toast")].some((t) => /report was sent/.test(t.textContent)));
+  check("closed, with thanks", !$("report-dialog").open && [...document.querySelectorAll(".toast, .notice-line")].some((t) => /report was sent/.test(t.textContent)));
 
   // Turned down: the dialog stays and says why.
   reply = { type: "error", for: "report", message: "You've sent a lot of reports today. Try again tomorrow." };

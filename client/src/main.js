@@ -249,13 +249,49 @@ function serverChip(server) {
 }
 
 let toastTimer = null;
+/**
+ * A short notice, where it covers nothing: in the line under the message box (where "typing…"
+ * shows), or, without a message box, in the line under your name. Before logging in (no such
+ * places yet) it pops up in the middle as before.
+ */
 function toast(text, isError) {
+  const strip = [...document.querySelectorAll("#typing, .dm-typing")].find((n) => n.offsetParent);
+  const status = $("me-status");
+  const inApp = !$("shell").classList.contains("locked");
+  if (inApp && (strip || status?.offsetParent)) return showNotice(strip, text, !!isError);
   const t = $("toast");
   t.textContent = text;
   t.classList.toggle("error", !!isError);
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (t.hidden = true), 4500);
+}
+
+var noticeTimer = 0;
+/** Shows a notice in the line under the box (or under your name) for a few seconds. */
+function showNotice(strip, text, isError) {
+  clearTimeout(noticeTimer);
+  for (const n of document.querySelectorAll(".notice-line")) n.remove();
+  const line = el("div", "notice-line" + (isError ? " error" : ""));
+  line.append(icon(isError ? "alert" : "info", "xs"), el("span", "notice-text", text));
+  line.dataset.tip = text;
+  line.setAttribute("role", "status");
+  if (strip) {
+    // Over the typing line, which steps aside meanwhile.
+    strip.classList.add("has-notice");
+    strip.append(line);
+  } else {
+    const status = $("me-status");
+    status.parentElement.classList.add("has-notice");
+    status.parentElement.append(line);
+  }
+  noticeTimer = setTimeout(
+    () => {
+      line.remove();
+      for (const n of document.querySelectorAll(".has-notice")) n.classList.remove("has-notice");
+    },
+    isError ? 8000 : 4500,
+  );
 }
 
 /** Turns OS and protocol errors into something a person can act on. */
@@ -4082,7 +4118,7 @@ function renderTyping() {
   }
   const box = $("typing");
   const said = names.join("\n");
-  if (box.dataset.said === said) return;
+  if (box.dataset.said === said || box.classList.contains("has-notice")) return;
   box.dataset.said = said;
   if (names.length === 0) {
     box.replaceChildren();
@@ -13156,10 +13192,17 @@ var drawnUpTo = new Map();
 var FILE_OFFER = /^hopp-file:([0-9a-f]{32}) (\d{1,13}) ([^\n]{1,200})$/;
 const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|cpl|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|jar|lnk|url|reg|dll|sys|inf|iso|img|vhd|vhdx|msc|application|gadget|apk|sh)$/i;
 const FILE_MAX = 4 * 1024 ** 3;
-const FILE_CHUNK = 64 * 1024;
+/** One piece of a file (with an 8-byte place in front when sent over several lanes). */
+const FILE_CHUNK = 128 * 1024;
+/** Lanes (data channels) side by side: through the relay, one lane waits on every round trip;
+ *  several keep the line full. Older apps ask for none and get one, as before. */
+const FILE_LANES = 4;
+/** How much each lane may hold before waiting. */
+const FILE_HIGH = 8 * 1024 * 1024;
+const FILE_LOW = 2 * 1024 * 1024;
 const FILE_CONNECT_MS = 25_000;
 /** How far the sender may run ahead of what the receiver has written to disk. */
-const FILE_WINDOW = 16 * 1024 * 1024;
+const FILE_WINDOW = 32 * 1024 * 1024;
 /** The receiver says how far it has got about this often. */
 const FILE_ACK_EVERY = 1024 * 1024;
 const FILE_ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
@@ -13168,6 +13211,41 @@ state.incomingFiles = new Map(); // transfer -> { peer, name, size, status, rece
 
 function transferId() {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A file's kind from its ending: a colour for its tile (null: grey). */
+function fileKind(ext) {
+  const kinds = [
+    [/^(MP4|MOV|MKV|WEBM|AVI|WMV|M4V)$/, 275],
+    [/^(PNG|JPE?G|GIF|WEBP|BMP|HEIC|SVG|PSD)$/, 195],
+    [/^(MP3|WAV|FLAC|OGG|M4A|AAC|OPUS)$/, 330],
+    [/^(ZIP|RAR|7Z|TAR|GZ|XZ|BZ2)$/, 35],
+    [/^(PDF|DOCX?|ODT|TXT|MD|RTF|PPTX?|XLSX?|CSV)$/, 215],
+    [/^(EXE|MSI|BAT|CMD|PS1|SH|APK|JAR|DLL)$/, 0],
+  ];
+  const hit = kinds.find(([re]) => re.test(ext));
+  return { hue: hit ? hit[1] : null };
+}
+
+/** " · 12 MB/s · 38 s left", from how fast the last few seconds went. */
+var fileRates = new Map();
+function fileSpeed(transfer, done, size) {
+  const now = Date.now();
+  const r = fileRates.get(transfer);
+  if (!r || done < r.bytes) {
+    fileRates.set(transfer, { bytes: done, at: now, rate: 0 });
+    return "";
+  }
+  if (now - r.at >= 500) {
+    const rate = ((done - r.bytes) / (now - r.at)) * 1000;
+    r.rate = r.rate ? r.rate * 0.7 + rate * 0.3 : rate;
+    r.bytes = done;
+    r.at = now;
+  }
+  if (!r.rate) return "";
+  const left = Math.max(0, (size - done) / r.rate);
+  const time = left < 60 ? `${Math.ceil(left)} s left` : left < 3600 ? `${Math.ceil(left / 60)} min left` : `${(left / 3600).toFixed(1)} h left`;
+  return ` · ${formatSize(r.rate)}/s · ${time}`;
 }
 
 function formatSize(n) {
@@ -13262,6 +13340,7 @@ async function onFileSignal(m) {
   const inc = state.incomingFiles.get(transfer);
   if (signal.kind === "request") {
     if (!out || out.peer !== m.from || out.status === "cancelled") return fileSignal(m.from, transfer, { kind: "gone" }).catch(() => {});
+    out.lanes = Math.max(1, Math.min(FILE_LANES, Number(signal.lanes) || 1));
     return startSending(transfer, out);
   }
   if (signal.kind === "answer" && out?.pc && out.peer === m.from) {
@@ -13288,30 +13367,37 @@ async function startSending(transfer, out) {
   out.acked = null;
   out.error = null;
   refreshFileCards(transfer, true);
-  const channel = pc.createDataChannel("file", { ordered: true });
-  channel.binaryType = "arraybuffer";
-  channel.bufferedAmountLowThreshold = 1024 * 1024;
+  // One lane for an older app ("file", plain pieces); several for one that asked ("file-0"…,
+  // each piece with its place in the file in front).
+  const lanes = out.lanes ?? 1;
+  const channels = lanes === 1 ? [pc.createDataChannel("file", { ordered: true })] : Array.from({ length: lanes }, (_, i) => pc.createDataChannel("file-" + i, { ordered: true }));
+  let opened = 0;
   const timer = setTimeout(() => {
     if (out.status === "connecting") failOutgoing(transfer, "Couldn't connect directly to your friend.");
   }, FILE_CONNECT_MS);
-  channel.addEventListener("open", () => {
-    clearTimeout(timer);
-    pump(transfer, out, channel);
-  });
-  channel.addEventListener("message", (e) => {
-    if (e.data === "ok") {
-      out.status = "sent";
-      refreshFileCards(transfer, true);
-      setTimeout(() => pc.close(), 500);
-    } else if (typeof e.data === "string" && e.data.startsWith("ack ")) {
-      // How much the other side has saved: we never run far ahead of a slow disk.
-      out.acked = Number(e.data.slice(4)) || 0;
-      out.onAck?.();
-    }
-  });
-  channel.addEventListener("close", () => {
-    if (out.status === "sending") failOutgoing(transfer, "The connection was lost.");
-  });
+  for (const channel of channels) {
+    channel.binaryType = "arraybuffer";
+    channel.bufferedAmountLowThreshold = FILE_LOW;
+    channel.addEventListener("open", () => {
+      if (++opened < channels.length) return;
+      clearTimeout(timer);
+      pump(transfer, out, channels);
+    });
+    channel.addEventListener("message", (e) => {
+      if (e.data === "ok") {
+        out.status = "sent";
+        refreshFileCards(transfer, true);
+        setTimeout(() => pc.close(), 500);
+      } else if (typeof e.data === "string" && e.data.startsWith("ack ")) {
+        // How much the other side has saved: we never run far ahead of a slow disk.
+        out.acked = Number(e.data.slice(4)) || 0;
+        out.onAck?.();
+      }
+    });
+    channel.addEventListener("close", () => {
+      if (out.status === "sending") failOutgoing(transfer, "The connection was lost.");
+    });
+  }
   try {
     await pc.setLocalDescription(await pc.createOffer());
     await addressesReady(pc);
@@ -13321,26 +13407,41 @@ async function startSending(transfer, out) {
   }
 }
 
-async function pump(transfer, out, channel) {
+async function pump(transfer, out, channels) {
   out.status = "sending";
+  out.startedAt = Date.now();
   const size = out.file.size;
+  const framed = channels.length > 1;
+  // The lane with the least waiting in it takes the next piece.
+  const pick = () => channels.reduce((a, b) => (b.bufferedAmount < a.bufferedAmount ? b : a));
   try {
+    // The next piece is read from disk while this one goes out.
+    let next = out.file.slice(0, FILE_CHUNK).arrayBuffer();
     while (out.sent < size) {
       if (out.status !== "sending") return;
-      if (channel.bufferedAmount > 4 * 1024 * 1024) {
+      let channel = pick();
+      if (channel.bufferedAmount > FILE_HIGH) {
         await new Promise((done) => channel.addEventListener("bufferedamountlow", done, { once: true }));
+        channel = pick();
       }
       // (Older versions never say how far they've got; they get it all as before.)
       while (out.acked !== null && out.sent - out.acked > FILE_WINDOW && out.status === "sending") {
         await new Promise((done) => (out.onAck = done));
       }
       if (out.status !== "sending") return;
-      const piece = await out.file.slice(out.sent, out.sent + FILE_CHUNK).arrayBuffer();
-      channel.send(piece);
+      const piece = await next;
+      const at = out.sent;
+      next = at + piece.byteLength < size ? out.file.slice(at + piece.byteLength, at + piece.byteLength + FILE_CHUNK).arrayBuffer() : null;
+      if (framed) {
+        const framedPiece = new Uint8Array(8 + piece.byteLength);
+        new DataView(framedPiece.buffer).setFloat64(0, at);
+        framedPiece.set(new Uint8Array(piece), 8);
+        channel.send(framedPiece);
+      } else channel.send(piece);
       out.sent += piece.byteLength;
       refreshFileCards(transfer);
     }
-    channel.send("done");
+    channels[0].send("done");
   } catch (err) {
     failOutgoing(transfer, "The connection was lost.");
   }
@@ -13364,7 +13465,7 @@ async function downloadFile(transfer, peer, name, size) {
   setTimeout(() => {
     if (inc.status === "connecting") failIncoming(transfer, `Couldn't reach ${personFor(peer).display_name}. They need to be online with Hopp open.`);
   }, FILE_CONNECT_MS);
-  fileSignal(peer, transfer, { kind: "request" }).catch((err) => failIncoming(transfer, friendlyError(err)));
+  fileSignal(peer, transfer, { kind: "request", lanes: FILE_LANES }).catch((err) => failIncoming(transfer, friendlyError(err)));
 }
 
 async function startReceiving(transfer, inc, sdp) {
@@ -13383,28 +13484,43 @@ async function startReceiving(transfer, inc, sdp) {
 
 function receive(transfer, inc, channel) {
   channel.binaryType = "arraybuffer";
-  let writing = Promise.resolve();
-  let started = null;
-  let written = 0;
-  let told = 0;
+  // Everything about this download, shared by its lanes.
+  const rx = (inc.rx ??= { channels: [], pending: new Map(), next: 0, rawAt: 0, writing: Promise.resolve(), started: null, written: 0, told: 0, finished: false });
+  rx.channels.push(channel);
+  const framed = channel.label !== "file";
+  const lane0 = () => rx.channels.find((c) => c.label === "file" || c.label === "file-0") ?? rx.channels[0];
   const tell = () => {
-    told = written;
+    rx.told = rx.written;
     try {
-      channel.send("ack " + written);
+      lane0().send("ack " + rx.written);
     } catch {
       // Closing; the transfer ends by itself.
     }
   };
+  const finish = () => {
+    if (rx.finished) return;
+    rx.finished = true;
+    rx.writing
+      .then(async () => {
+        inc.path = await invoke("download_finish", { id: inc.download });
+        inc.download = null;
+        inc.status = "done";
+        lane0().send("ok");
+        refreshFileCards(transfer, true);
+      })
+      .catch(() => failIncoming(transfer, "The file didn't arrive whole. Try again."));
+  };
   // The channel may already be open when it arrives.
   const begin = () => {
-    if (started) return;
+    if (rx.started) return;
     inc.status = "receiving";
-    started = invoke("download_start", { name: inc.name }).then((d) => {
+    inc.startedAt = Date.now();
+    rx.started = invoke("download_start", { name: inc.name }).then((d) => {
       inc.download = d.id;
       inc.path = d.path;
       return d.id;
     });
-    writing = started;
+    rx.writing = rx.started;
     tell();
     refreshFileCards(transfer, true);
   };
@@ -13413,34 +13529,43 @@ function receive(transfer, inc, channel) {
   channel.addEventListener("message", (e) => {
     begin();
     if (typeof e.data === "string") {
-      if (e.data !== "done") return;
-      writing
-        .then(async () => {
-          if (inc.received !== inc.size) throw new Error("incomplete");
-          inc.path = await invoke("download_finish", { id: inc.download });
-          inc.download = null;
-          inc.status = "done";
-          channel.send("ok");
-          refreshFileCards(transfer, true);
-        })
-        .catch(() => failIncoming(transfer, "The file didn't arrive whole. Try again."));
+      // (An empty file has nothing to line up: "done" ends it.)
+      if (e.data === "done" && inc.size === 0) finish();
       return;
     }
-    const piece = new Uint8Array(e.data);
+    if (inc.status !== "receiving") return;
+    let at;
+    let piece;
+    if (framed) {
+      at = new DataView(e.data).getFloat64(0);
+      piece = new Uint8Array(e.data, 8);
+    } else {
+      at = rx.rawAt;
+      piece = new Uint8Array(e.data);
+      rx.rawAt += piece.byteLength;
+    }
     inc.received += piece.byteLength;
-    if (inc.received > inc.size) return failIncoming(transfer, "The file was bigger than announced, so it was stopped.");
-    writing = writing.then((id) =>
-      invoke("download_chunk", piece, { headers: { "x-download": inc.download ?? id } }).then(() => {
-        written += piece.byteLength;
-        if (written - told >= FILE_ACK_EVERY) tell();
-        return id;
-      }),
-    );
-    writing.catch((err) => failIncoming(transfer, friendlyError(err)));
+    if (inc.received > inc.size || at < rx.next || rx.pending.has(at)) return failIncoming(transfer, "The file was bigger than announced, so it was stopped.");
+    rx.pending.set(at, piece);
+    // Written in order, as soon as the next piece is here.
+    while (rx.pending.has(rx.next)) {
+      const p = rx.pending.get(rx.next);
+      rx.pending.delete(rx.next);
+      rx.next += p.byteLength;
+      rx.writing = rx.writing.then((id) =>
+        invoke("download_chunk", p, { headers: { "x-download": inc.download ?? id } }).then(() => {
+          rx.written += p.byteLength;
+          if (rx.written - rx.told >= FILE_ACK_EVERY) tell();
+          return id;
+        }),
+      );
+      rx.writing.catch((err) => failIncoming(transfer, friendlyError(err)));
+    }
+    if (rx.next === inc.size) finish();
     refreshFileCards(transfer);
   });
   channel.addEventListener("close", () => {
-    if (inc.status === "receiving") failIncoming(transfer, "The connection was lost.");
+    if (inc.status === "receiving" && !rx.finished) failIncoming(transfer, "The connection was lost.");
   });
 }
 
@@ -13455,8 +13580,14 @@ function fileCard(peer, m) {
   card.peer = peer;
   card.message = m;
   const risky = RISKY_FILE.test(name);
+  // The kind of file at a glance: its ending on a tile in the kind's colour.
+  const ext = (name.match(/\.([a-z0-9]{1,5})$/i)?.[1] ?? "").toUpperCase();
+  const kind = fileKind(ext);
   const badge = el("span", "file-icon" + (risky ? " risky" : ""));
-  badge.append(icon(risky ? "shield" : "download"));
+  badge.style.setProperty("--file-hue", String(kind.hue));
+  badge.style.setProperty("--file-sat", kind.hue === null ? "0%" : "60%");
+  if (risky) badge.append(icon("shield"));
+  else badge.append(el("span", "file-ext", ext.slice(0, 4) || "FILE"));
   const info = el("div", "file-info");
   const title = el("strong", "ellipsis", name);
   const sub = el("span", "file-sub");
@@ -13488,7 +13619,7 @@ function fileCard(peer, m) {
       });
     } else if (out.status === "connecting") sub.textContent = `Connecting to ${who}…`;
     else if (out.status === "sending") {
-      sub.textContent = `Sending · ${formatSize(out.sent)} of ${formatSize(size)}`;
+      sub.textContent = `Sending · ${formatSize(out.sent)} of ${formatSize(size)}${fileSpeed(transfer, out.sent, size)}`;
       bar(out.sent);
       button("Stop", () => {
         fileSignal(peer, transfer, { kind: "cancel" }).catch(() => {});
@@ -13506,7 +13637,7 @@ function fileCard(peer, m) {
   } else if (inc.status === "connecting") {
     sub.textContent = `Connecting to ${who}…`;
   } else if (inc.status === "receiving") {
-    sub.textContent = `Downloading · ${formatSize(inc.received)} of ${formatSize(size)}`;
+    sub.textContent = `Downloading · ${formatSize(inc.received)} of ${formatSize(size)}${fileSpeed(transfer, inc.received, size)}`;
     bar(inc.received);
     button("Stop", () => {
       fileSignal(peer, transfer, { kind: "cancel" }).catch(() => {});

@@ -4828,3 +4828,30 @@ html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 19px !im
 
 /* "up to 1:00" while recording: readable in every theme. */
 .recorder-max { color: var(--muted); }
+
+/* Files: a soft card in the theme's tint, the file's ending on a tile in its kind's colour, and a
+   slim progress bar. */
+.file-card { width: min(460px, 100%); padding: 12px 14px; border: none; border-radius: 14px; background: color-mix(in srgb, var(--text) 5%, transparent); }
+.file-icon { width: 46px; height: 46px; border-radius: 12px; background: hsl(var(--file-hue, 0) var(--file-sat, 0%) 50% / 0.2); color: hsl(var(--file-hue, 0) var(--file-sat, 0%) 75%); }
+.file-icon.risky { background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
+.file-ext { font-size: 11px; font-weight: 800; letter-spacing: 0.03em; }
+.file-info strong { font-size: 14.5px; }
+.file-sub { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.file-bar { height: 6px; margin-top: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.file-bar span { border-radius: 3px; background: var(--green); }
+.file-action .btn:not(.primary) { background: color-mix(in srgb, var(--text) 8%, transparent); border: none; }
+
+/* The ending on the tile: the kind's colour blended toward the theme's text, readable in light and dark. */
+.file-icon { color: color-mix(in srgb, hsl(var(--file-hue, 0) var(--file-sat, 0%) 60%) 55%, var(--text)); }
+
+/* A notice just above you, out of the way of the message box. */
+
+/* Notices in the line under the message box (or under your name): nothing is covered. */
+.notice-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12.5px; animation: notice-in 160ms ease-out; }
+.notice-line .i { flex: none; width: 13px; height: 13px; }
+.notice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notice-line.error { color: var(--red); }
+@keyframes notice-in { from { opacity: 0; transform: translateY(3px); } }
+.typing.has-notice > :not(.notice-line) { display: none; }
+.me-text.has-notice > :not(.notice-line):not(.me-name) { display: none; }
+.me-text .notice-line { font-size: 11.5px; }
