@@ -4866,3 +4866,8 @@ html.layout-taskbar.rail-small .folder-open { padding: 2px 6px 2px 2px; border-r
 html.layout-taskbar.rail-small .folder-open .rail-item { height: 38px; }
 html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34px; }
 html.layout-taskbar.rail-large .folder-open .rail-item { height: 56px; }
+
+/* Taskbar: nothing on the bar shrinks (what doesn't fit goes behind +N), and the row starts at a fixed
+   place so Hopp and your servers stay put when a folder opens; it grows to the right. */
+html.layout-taskbar #server-list > *, html.layout-taskbar .rail > .rail-item { flex-shrink: 0; }
+html.layout-taskbar .rail { justify-content: flex-start; }

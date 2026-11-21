@@ -1402,7 +1402,14 @@ function toggleFolder(f, head) {
     // Closing, in two steps: its servers slide up and fade while it folds up (its tint and
     // folder icon fading too); then the closed folder grows in, in the same place.
     f.open = false;
-    if (still || across) return done();
+    if (still) return done();
+    if (across) {
+      // Along the bottom: it folds in sideways to a closed folder's width, its servers fading.
+      const w = box.getBoundingClientRect().width;
+      box.style.overflow = "hidden";
+      for (const s of box.querySelectorAll(":scope > .rail-item:not(.folder-head)")) s.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: "forwards" });
+      return box.animate([{ width: w + "px" }, { width: head.getBoundingClientRect().width + "px" }], { duration: 200, easing: ease, fill: "forwards" }).finished.then(done, done);
+    }
     head.dataset.moving = "1";
     box.style.overflow = "hidden";
     const servers = [...box.querySelectorAll(":scope > .rail-item:not(.folder-head)")].reverse();
@@ -1429,8 +1436,14 @@ function toggleFolder(f, head) {
   f.open = true;
   railOpening = still ? null : f;
   done();
-  if (still || across) {
-    setTimeout(() => (railOpening = null), 300);
+  if (still) return;
+  if (across) {
+    // Along the bottom: it grows out sideways from a closed folder's width to its own.
+    const open = $("server-list").querySelector(`.folder-head[data-folder="${f.folder}"]`)?.closest(".folder-open");
+    if (!open) return;
+    const to = open.getBoundingClientRect().width;
+    open.style.overflow = "hidden";
+    open.animate([{ width: "48px" }, { width: to + "px" }], { duration: 220, easing: ease }).finished.then(() => (open.style.overflow = ""), () => {});
     return;
   }
   const open = $("server-list").querySelector(`.folder-head[data-folder="${f.folder}"]`)?.closest(".folder-open");
