@@ -4873,3 +4873,12 @@ html.layout-taskbar .rail { justify-content: flex-start; }
 /* A row with several buttons side by side (they wrap on a narrow window). */
 .row-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; max-width: 55%; }
 .row-buttons { flex-wrap: nowrap; max-width: none; }
+
+/* Settings: calm buttons in the theme's own tint (only the main action has colour), a quiet red
+   for taking something away, and small headings over each group. */
+.settings-page .btn:not(.primary):not(.danger) { border: none; background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.settings-page .btn:not(.primary):not(.danger):hover { background: color-mix(in srgb, var(--text) 15%, transparent); }
+.settings-page .btn.danger { border: none; background: transparent; color: var(--red); }
+.settings-page .btn.danger:hover { background: color-mix(in srgb, var(--red) 14%, transparent); }
+.card-heading { margin: 22px 0 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.page-title + .card-heading { margin-top: 4px; }

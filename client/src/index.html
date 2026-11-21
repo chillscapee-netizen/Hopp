@@ -1525,6 +1525,7 @@
 
         <section data-panel="security" class="settings-page" hidden>
           <h2 class="page-title">Password &amp; security</h2>
+          <h3 class="card-heading">Get back in on any computer</h3>
           <div class="card">
             <div class="row">
               <span class="row-label">
@@ -1557,7 +1558,19 @@
                 <button id="cb-save" type="submit" class="btn primary sm">Save to Hopp Cloud</button>
               </div>
             </form>
+            <div class="row">
+              <span class="row-label">
+                <span class="row-title">Recovery phrase <span id="backup-badge" class="status-badge"></span></span>
+                <span class="row-sub">Lets you reset your password or get your account back on any computer. Keep a copy where you can always find it.</span>
+              </span>
+              <span class="row-buttons">
+                <button id="phrase-mail-btn" type="button" class="btn sm">Email to myself</button>
+                <button id="phrase-onedrive-btn" type="button" class="btn sm">Save to OneDrive</button>
+                <button id="backup-btn" type="button" class="btn sm"></button>
+              </span>
+            </div>
           </div>
+          <h3 class="card-heading">This computer</h3>
           <div class="card">
             <div class="row">
               <span class="row-label">
@@ -1595,17 +1608,6 @@
                 <button id="cp-save" type="submit" class="btn primary sm">Save password</button>
               </div>
             </form>
-            <div class="row">
-              <span class="row-label">
-                <span class="row-title">Recovery phrase <span id="backup-badge" class="status-badge"></span></span>
-                <span class="row-sub">Lets you reset your password or get your account back on any computer. Keep a copy where you can always find it.</span>
-              </span>
-              <span class="row-buttons">
-                <button id="phrase-mail-btn" type="button" class="btn sm">Email to myself</button>
-                <button id="phrase-onedrive-btn" type="button" class="btn sm">Save to OneDrive</button>
-                <button id="backup-btn" type="button" class="btn sm"></button>
-              </span>
-            </div>
             <label class="row">
               <span class="row-label">
                 <span class="row-title">Stay logged in</span>
