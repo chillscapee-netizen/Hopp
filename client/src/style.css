@@ -4779,9 +4779,9 @@ html.rail-small .folder-closed { padding: 6px; gap: 2px; }
 html.rail-small .folder-mini { font-size: 8.5px; }
 html.rail-large .folder-closed { padding: 9px; gap: 4px; }
 html.rail-large .folder-mini { font-size: 12px; }
-html.rail-small .folder-open, html.rail-small .folder-open .rail-item { width: 50px; }
-html.rail-large .folder-open, html.rail-large .folder-open .rail-item { width: 76px; }
-html.rail-small .folder-open { gap: 6px; padding: 4px 0 6px; border-radius: 14px; }
+html.rail-small:not(.layout-taskbar) .folder-open, html.rail-small:not(.layout-taskbar) .folder-open .rail-item { width: 50px; }
+html.rail-large:not(.layout-taskbar) .folder-open, html.rail-large:not(.layout-taskbar) .folder-open .rail-item { width: 76px; }
+html.rail-small:not(.layout-taskbar) .folder-open { gap: 6px; padding: 4px 0 6px; border-radius: 14px; }
 .folder-closed { padding: 5px; gap: 3px; }
 html.rail-small .folder-closed { padding: 4px; gap: 2px; }
 html.rail-large .folder-closed { padding: 7px; gap: 3px; }
@@ -4855,3 +4855,7 @@ html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 19px !im
 .typing.has-notice > :not(.notice-line) { display: none; }
 .me-text.has-notice > :not(.notice-line):not(.me-name) { display: none; }
 .me-text .notice-line { font-size: 11.5px; }
+
+/* Taskbar: Add and Discover stay the right panel's size at every server-list size. */
+html.layout-taskbar .tb-right .rail-item, html.layout-taskbar.rail-small .tb-right .rail-item, html.layout-taskbar.rail-large .tb-right .rail-item { width: 36px; height: 36px; }
+html.layout-taskbar .tb-right .rail-icon { width: 36px; height: 36px; }
