@@ -9,16 +9,26 @@
 //
 //   --register   instead installs the unpacked folder for a test (needs Windows' developer mode).
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, existsSync, readdirSync , statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const conf = JSON.parse(readFileSync(join(root, "client", "src-tauri", "tauri.conf.json"), "utf8"));
-const target = process.env.CARGO_TARGET_DIR ?? join(root, "target-release");
-const exe = join(target, "release", "strom-client.exe");
-if (!existsSync(exe)) throw new Error("No release build at " + exe + " (build first).");
+// The build may land in either place (CARGO_TARGET_DIR is taken from where it ran): the newest
+// one is used, and only if it really is this version, so an old program is never packed again.
+const builds = [process.env.CARGO_TARGET_DIR, join(root, "client", "src-tauri", "target-release"), join(root, "target-release")]
+  .filter(Boolean)
+  .map((dir) => ({ dir, exe: join(dir, "release", "strom-client.exe") }))
+  .filter((b) => existsSync(b.exe))
+  .sort((x, y) => statSync(y.exe).mtimeMs - statSync(x.exe).mtimeMs);
+if (!builds.length) throw new Error("No release build found (build first).");
+const exe = builds[0].exe;
+const target = join(root, "target-release");
+const built = execFileSync("powershell.exe", ["-NoProfile", "-Command", `(Get-Item '${exe}').VersionInfo.ProductVersion`], { encoding: "utf8" }).trim();
+if (!built.startsWith(conf.version)) throw new Error(`The newest build (${exe}) is ${built}, not ${conf.version}: build this version first.`);
+console.log(`Packing ${exe} (${built})`);
 
 // The identity Partner Center gave HoppChat (Product management → Product identity).
 const IDENTITY = {
