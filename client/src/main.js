@@ -3594,7 +3594,8 @@ function messageTextInto(out, text) {
  * Whole lines with a meaning of their own: "# ", "## ", "### " headings, "-# " small print,
  * "- " or "* " bullet lists, "1. " numbered lists and "> " quotes. The rest is inline text.
  */
-var HEADING = /^(#{1,3}) (\S.*)$/;
+// (One space or more after the #s: the format bar and people both put extra ones.)
+var HEADING = /^(#{1,3}) +(\S.*)$/;
 var SUBTEXT = /^-# (\S.*)$/;
 var BULLET = /^ {0,3}[-*] (\S.*)$/;
 var NUMBERED = /^ {0,3}(\d{1,3})\. (\S.*)$/;
@@ -5333,7 +5334,7 @@ function prefixLines(box, prefix) {
   if (end < 0) end = value.length;
   const lines = value.slice(start, end).split("\n");
   const all = lines.every((l) => l.startsWith(prefix));
-  const plain = (l) => l.replace(/^(?:#{1,3} |-# |- |> )/, "");
+  const plain = (l) => l.replace(/^(?:#{1,3} +|-# |- |> )/, "");
   box.setRangeText(lines.map((l) => (all ? l.slice(prefix.length) : prefix + plain(l))).join("\n"), start, end, "select");
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -5440,7 +5441,7 @@ function markupPreview(text) {
   return text
     .split("\n")
     .map((line) => {
-      const head = line.match(/^(#{1,3} |-# |- |> )(.*)$/);
+      const head = line.match(/^(#{1,3} +|-# |- |> )(.*)$/);
       if (!head) return inline(line);
       const cls = head[1].startsWith("#") ? "md-heading" : head[1] === "-# " ? "md-small" : head[1] === "> " ? "md-quote" : "md-list";
       return mark(head[1]) + `<span class="${cls}">${inline(head[2])}</span>`;
@@ -8398,7 +8399,7 @@ function previewText(text) {
     .replace(/\|\|[\s\S]+?\|\|/g, "(spoiler)")
     .replace(/```[a-z0-9+#-]*\n?/gi, "")
     .replace(/^> ?/gm, "")
-    .replace(/^(?:#{1,3}|-#) /gm, "")
+    .replace(/^(?:#{1,3}|-#) +/gm, "")
     .replace(/\[([^\]\n]{1,100})\]\((https?:\/\/[^\s)]{1,500})\)/g, "$1")
     .replace(/\*\*|~~|__|`|\*|\b_|_\b/g, "")
     .replace(/\s+/g, " ")

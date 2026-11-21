@@ -4882,3 +4882,8 @@ html.layout-taskbar .rail { justify-content: flex-start; }
 .settings-page .btn.danger:hover { background: color-mix(in srgb, var(--red) 14%, transparent); }
 .card-heading { margin: 22px 0 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .page-title + .card-heading { margin-top: 4px; }
+
+/* Writing: the marks (**, ###, >) step almost out of sight, and italics lean without changing a
+   letter's width (a real italic face is narrower, which put the caret in the wrong place). */
+.composer-mirror .md-mark { opacity: 0.22; }
+.composer-mirror .md-italic { font-style: normal; font-synthesis: none; color: var(--text-2); text-decoration: underline dotted color-mix(in srgb, var(--text) 35%, transparent); text-underline-offset: 3px; }
