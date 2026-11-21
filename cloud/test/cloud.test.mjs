@@ -1041,6 +1041,21 @@ test("rules and welcomes: newcomers agree first, a welcome appears; announcement
   owner.send({ type: "set_rules", rules: "Be kind. No spam.", welcome_channel: general, rules_channel: rulesId });
   await ann.waitFor((m) => m.type === "channels_updated" && m.channels.find((c) => c.id === rulesId)?.announce === true);
   await ann.waitFor((m) => m.type === "rules" && m.rules_channel === rulesId);
+  // Nobody but staff writes there through a thread or an event either.
+  ann.send({ type: "create_thread", channel: rulesId, name: "spam" });
+  assert.match(await errorOf(ann), /Only moderators and admins can start threads/);
+  ann.send({ type: "create_event", channel: rulesId, name: "spam", starts_at: Date.now() + 3_600_000 });
+  assert.match(await errorOf(ann), /Only moderators and admins can post/);
+  // A thread can't be the rules channel (it could be pruned or deleted by whoever started it).
+  owner.send({ type: "create_thread", channel: general, name: "side" });
+  const side = (await owner.waitFor((m) => m.type === "channels_updated" && m.channels.some((c) => c.name === "side"))).channels.find((c) => c.name === "side");
+  owner.send({ type: "set_rules", rules: "Be kind. No spam.", welcome_channel: general, rules_channel: side.id });
+  assert.match(await errorOf(owner), /everyone can see/);
+  // Someone who hasn't agreed yet can't start threads or events.
+  owner.send({ type: "set_rules", rules: "Be kind. No spam. Have fun.", welcome_channel: general, rules_channel: rulesId });
+  await ann.waitFor((m) => m.type === "rules" && m.rules === "Be kind. No spam. Have fun." && !m.accepted);
+  ann.send({ type: "create_thread", channel: general, name: "early" });
+  assert.match(await errorOf(ann), /rules/);
   // The #rules channel deleted: the rules go with it (that's where they're written).
   owner.send({ type: "delete_channel", channel: rulesId });
   await ann.waitFor((m) => m.type === "rules" && !m.rules && m.rules_channel === null);

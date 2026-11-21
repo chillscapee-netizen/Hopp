@@ -566,12 +566,20 @@ export class StromServer extends DurableObject<Env> {
   }
 
   /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
+  /** May write in a read-only channel (announcements, #rules, #welcome): staff who look after
+   *  messages, channels or the server. */
+  private writesReadOnly(key: string | undefined): boolean {
+    const mine = key ? this.permsOf(key) : new Set<string>();
+    return mine.has("manage_messages") || mine.has("manage_channels") || mine.has("manage_server");
+  }
+
   private dropChannel(id: number) {
     // The #rules channel is where the rules are written: without it they go; without the
     // welcome channel, welcomes stop. Everyone hears.
     let rulesChanged = false;
     if (this.meta("rules_channel") === String(id)) {
       this.sql.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at', 'rules_channel')");
+      this.audit("Hopp", "rules", null, "removed with their channel");
       rulesChanged = true;
     }
     if (this.meta("welcome_channel") === String(id)) {
@@ -1340,8 +1348,11 @@ export class StromServer extends DurableObject<Env> {
         if (!role) return fail("That role doesn't exist anymore.");
         if (role.perms.includes("administrator") && !owner) return fail("Only the owner can change admin roles.");
         // An app from before switches sends only a level: what it doesn't know stays as it was.
-        const perms = Array.isArray(msg.perms) || msg.level !== undefined ? wanted() : role.perms;
-        if (typeof perms === "string") return fail(perms);
+        const asked = Array.isArray(msg.perms) || msg.level !== undefined ? wanted() : role.perms;
+        if (typeof asked === "string") return fail(asked);
+        // A level alone (an older app) keeps the switches a level doesn't describe.
+        const byLevel = [...permsOfLevel("mod"), ...permsOfLevel("admin")];
+        const perms = Array.isArray(msg.perms) ? asked : [...asked, ...role.perms.filter((p) => !byLevel.includes(p) && !asked.includes(p))];
         // Taking a switch away is giving it in reverse: only someone who has it.
         if (role.perms.some((p) => !perms.includes(p) && !mine.has(p))) return fail("You can only change what a role may do within what you may do yourself.");
         const n = name(msg.name) || role.name;
@@ -1350,6 +1361,9 @@ export class StromServer extends DurableObject<Env> {
         changed();
         // Its level decides what its people may do.
         this.rolesChanged();
+        // Who sees every private channel changed: their channel lists follow at once.
+        const seesAll = (p: string[]) => p.includes("view_private") || p.includes("administrator");
+        if (seesAll(role.perms) !== seesAll(perms)) this.channelsChanged(true);
         return true;
       }
       case "create_emoji": {
@@ -1565,7 +1579,7 @@ export class StromServer extends DurableObject<Env> {
         const now = Date.now();
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't write right now.");
         if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
-        if (this.channels().find((c) => c.id === ch.id)?.announce && !myPerms.has("manage_messages") && !myPerms.has("manage_channels")) {
+        if (this.channels().find((c) => c.id === ch.id)?.announce && !this.writesReadOnly(s.key)) {
           return this.error(ws, `Only moderators and admins can write in #${ch.name}.`);
         }
         const held = this.automodSays(ws, s, text, myRank, true);
@@ -1785,8 +1799,10 @@ export class StromServer extends DurableObject<Env> {
       }
       case "create_thread": {
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't start a thread right now.");
+        if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
         const parent = this.channel(Number(msg.channel));
         if (!parent || parent.kind !== "text" || parent.parent !== undefined || !this.canSee(s.key, parent)) return this.error(ws, "Threads start in a text channel.");
+        if (this.channels().find((c) => c.id === parent.id)?.announce && !this.writesReadOnly(s.key)) return this.error(ws, `Only moderators and admins can start threads in #${parent.name}.`);
         const fromId = msg.message === null || msg.message === undefined ? null : Number(msg.message);
         const from = fromId === null ? null : this.message(parent.id, fromId);
         if (fromId !== null && !from) return this.error(ws, "That message no longer exists.");
@@ -1799,7 +1815,14 @@ export class StromServer extends DurableObject<Env> {
           const quietest = threads.sort((a, b) => (a.last_at ?? 0) - (b.last_at ?? 0))[0];
           this.dropChannel(quietest.id);
         }
-        this.sql.exec("INSERT INTO channels (name, kind, parent, starter, creator) VALUES (?, 'text', ?, ?, ?)", name, parent.id, from?.id ?? null, s.key!);
+        this.sql.exec(
+          "INSERT INTO channels (name, kind, parent, starter, creator, announce) VALUES (?, 'text', ?, ?, ?, ?)",
+          name,
+          parent.id,
+          from?.id ?? null,
+          s.key!,
+          this.channels().find((c) => c.id === parent.id)?.announce ? 1 : null,
+        );
         return this.channelsChanged();
       }
       case "update_channel": {
@@ -2040,6 +2063,7 @@ export class StromServer extends DurableObject<Env> {
         return this.send(ws, { type: "events", events: this.eventsFor(s.key) });
       case "create_event": {
         if (this.timedOut(s)) return this.error(ws, "You're timed out, so you can't plan events right now.");
+        if (this.needsRules(s.key!)) return this.error(ws, RULES_FIRST);
         const name = String(msg.name ?? "").replace(/\s+/g, " ").trim();
         const description = String(msg.description ?? "").trim();
         const ch = this.channel(Number(msg.channel));
@@ -2048,6 +2072,7 @@ export class StromServer extends DurableObject<Env> {
         if (!name || [...name].length > 80) return this.error(ws, "Give the event a name (up to 80 characters).");
         if ([...description].length > 500) return this.error(ws, "Keep the description under 500 characters.");
         if (!ch || ch.parent !== undefined || !this.canSee(s.key, ch)) return this.error(ws, "Pick a channel for the event.");
+        if (this.channels().find((c) => c.id === ch.id)?.announce && !this.writesReadOnly(s.key)) return this.error(ws, `Only moderators and admins can post in #${ch.name}.`);
         // The server's AutoMod words apply to an event's name and description too.
         const held = this.automodSays(ws, s, name + "\n" + description, myRank, false);
         if (held) return this.error(ws, held.replace("That message has", "That event has"));
@@ -2104,10 +2129,15 @@ export class StromServer extends DurableObject<Env> {
         const rules = String(msg.rules ?? "").replace(/\r/g, "").trim();
         if ([...rules].length > MAX_RULES_LEN) return this.error(ws, `Keep the rules under ${MAX_RULES_LEN} characters.`);
         const welcome = msg.welcome_channel == null ? null : Number(msg.welcome_channel);
-        if (welcome !== null && this.channel(welcome)?.kind !== "text") return this.error(ws, "Pick a text channel for welcomes.");
+        // A channel everyone sees (not a thread, not private), so nobody gets a link to nothing.
+        const publicText = (id: number) => {
+          const c = this.channels().find((x) => x.id === id);
+          return !!c && c.kind === "text" && c.parent === undefined && !c.private_roles?.length;
+        };
+        if (welcome !== null && !publicText(welcome)) return this.error(ws, "Pick a text channel everyone can see for welcomes.");
         // A #rules channel showing them (left as it is by apps that don't send it).
         const rulesChannel = msg.rules_channel === undefined ? undefined : msg.rules_channel === null ? null : Number(msg.rules_channel);
-        if (rulesChannel != null && this.channel(rulesChannel)?.kind !== "text") return this.error(ws, "Pick a text channel for the rules.");
+        if (rulesChannel != null && !publicText(rulesChannel)) return this.error(ws, "Pick a text channel everyone can see for the rules.");
         // New rules: everyone agrees again (whoever wrote them already has).
         if (rules !== (this.meta("rules") ?? "")) {
           if (rules) {
@@ -2115,6 +2145,12 @@ export class StromServer extends DurableObject<Env> {
             this.setMeta("rules_at", String(Date.now()));
           } else this.sql.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at')");
           this.audit(user.name, "rules", null, rules ? "changed" : "removed");
+        }
+        // Moving or clearing the rules channel: the old one opens up again.
+        const oldRulesChannel = this.meta("rules_channel");
+        if (oldRulesChannel && rulesChannel !== undefined && rulesChannel !== Number(oldRulesChannel)) {
+          this.sql.exec("UPDATE channels SET announce = NULL WHERE id = ?", Number(oldRulesChannel));
+          this.channelsChanged();
         }
         if (rulesChannel === null) this.sql.exec("DELETE FROM meta WHERE key = 'rules_channel'");
         else if (rulesChannel !== undefined) {
@@ -2151,6 +2187,8 @@ export class StromServer extends DurableObject<Env> {
         if (!owner && (role === "admin" || rank(target.role) >= myRank)) return this.error(ws, "Only the owner can name or remove admins.");
         this.sql.exec("UPDATE accounts SET role = ? WHERE key = ?", role, key);
         this.rolesChanged();
+        // An admin sees every private channel: their list changes with the role.
+        this.channelsChanged(true);
         this.audit(user.name, "role", target.name, role ?? "member");
         return;
       }

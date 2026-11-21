@@ -1701,7 +1701,17 @@ impl Core {
                 // An app from before switches sends only a level: what it doesn't know stays as it was.
                 let perms = if msg["perms"].is_array() || !msg["level"].is_null() || msg.get("level").is_some() {
                     match wanted(msg) {
-                        Ok(p) => p,
+                        Ok(mut p) => {
+                            if !msg["perms"].is_array() {
+                                let by_level: Vec<String> = [perms_of_level(Some("mod")), perms_of_level(Some("admin"))].concat();
+                                for extra in role.perms.iter().filter(|x| !by_level.contains(x)) {
+                                    if !p.contains(extra) {
+                                        p.push(extra.clone());
+                                    }
+                                }
+                            }
+                            p
+                        }
                         Err(e) => return fail(self, e),
                     }
                 } else {
@@ -1719,6 +1729,10 @@ impl Core {
                 self.audit(&user.name, "update_role", Some(&n), None);
                 changed(self);
                 self.roles_changed();
+                let sees_all = |p: &Vec<String>| p.iter().any(|x| x == "view_private" || x == "administrator");
+                if sees_all(&role.perms) != sees_all(&perms) {
+                    self.channels_changed(true);
+                }
                 true
             }
             "create_emoji" => {
@@ -2169,10 +2183,16 @@ impl Core {
                 if self.timed_out(conn) {
                     return self.error(conn, "You're timed out, so you can't start a thread right now.");
                 }
+                if self.needs_rules(&key) {
+                    return self.error(conn, RULES_FIRST);
+                }
                 let parent = self.channel(int(&msg["channel"]));
                 let Some(parent) = parent.filter(|p| p.kind == "text" && p.parent.is_none() && self.can_see(&key, Some(p))) else {
                     return self.error(conn, "Threads start in a text channel.");
                 };
+                if parent.announce && !self.writes_read_only(&key) {
+                    return self.error(conn, &format!("Only moderators and admins can start threads in #{}.", parent.name));
+                }
                 let from_id = if msg["message"].is_null() { None } else { Some(int(&msg["message"])) };
                 let from = from_id.and_then(|id| self.message(parent.id, id));
                 if from_id.is_some() && from.is_none() {
@@ -2199,7 +2219,10 @@ impl Core {
                     let quietest = threads[0].id;
                     self.drop_channel(quietest);
                 }
-                self.exec("INSERT INTO channels (name, kind, parent, starter, creator) VALUES (?, 'text', ?, ?, ?)", params![name, parent.id, from.map(|f| f.id as i64), key]);
+                self.exec(
+                    "INSERT INTO channels (name, kind, parent, starter, creator, announce) VALUES (?, 'text', ?, ?, ?, ?)",
+                    params![name, parent.id, from.map(|f| f.id as i64), key, parent.announce.then_some(1)],
+                );
                 self.channels_changed(false);
             }
             "update_channel" => self.update_channel(conn, msg, &user, my_rank),
@@ -2439,6 +2462,9 @@ impl Core {
                 if self.timed_out(conn) {
                     return self.error(conn, "You're timed out, so you can't plan events right now.");
                 }
+                if self.needs_rules(&key) {
+                    return self.error(conn, RULES_FIRST);
+                }
                 let name = text(&msg["name"]).split_whitespace().collect::<Vec<_>>().join(" ");
                 let description = text(&msg["description"]).trim().to_string();
                 let ch = self.channel(int(&msg["channel"]));
@@ -2451,6 +2477,9 @@ impl Core {
                     return self.error(conn, "Keep the description under 500 characters.");
                 }
                 let Some(ch) = ch.filter(|c| c.parent.is_none() && self.can_see(&key, Some(c))) else { return self.error(conn, "Pick a channel for the event.") };
+                if ch.announce && !self.writes_read_only(&key) {
+                    return self.error(conn, &format!("Only moderators and admins can post in #{}.", ch.name));
+                }
                 // The server's AutoMod words apply to an event's name and description too.
                 if let Some(held) = self.automod_says(conn, &format!("{name}\n{description}"), my_rank, false) {
                     return self.error(conn, &held.replace("That message has", "That event has"));
@@ -2549,9 +2578,11 @@ impl Core {
                     return self.error(conn, &format!("Keep the rules under {MAX_RULES_LEN} characters."));
                 }
                 let welcome = if msg["welcome_channel"].is_null() { None } else { Some(int(&msg["welcome_channel"])) };
+                // A channel everyone sees (not a thread, not private), so nobody gets a link to nothing.
+                let public_text = |c: &Ch| c.kind == "text" && c.parent.is_none() && c.private_roles.as_ref().is_none_or(|v| v.is_empty());
                 if let Some(w) = welcome {
-                    if self.channel(w).is_none_or(|c| c.kind != "text") {
-                        return self.error(conn, "Pick a text channel for welcomes.");
+                    if self.channel(w).is_none_or(|c| !public_text(&c)) {
+                        return self.error(conn, "Pick a text channel everyone can see for welcomes.");
                     }
                 }
                 // A #rules channel showing them (left as it is by apps that don't send it).
@@ -2561,8 +2592,8 @@ impl Core {
                     Some(v) => Some(Some(int(v))),
                 };
                 if let Some(Some(c)) = rules_channel {
-                    if self.channel(c).is_none_or(|ch| ch.kind != "text") {
-                        return self.error(conn, "Pick a text channel for the rules.");
+                    if self.channel(c).is_none_or(|ch| !public_text(&ch)) {
+                        return self.error(conn, "Pick a text channel everyone can see for the rules.");
                     }
                 }
                 // New rules: everyone agrees again (whoever wrote them already has).
@@ -2574,6 +2605,13 @@ impl Core {
                         self.set_meta("rules_at", &now_ms().to_string());
                     }
                     self.audit(&user.name, "rules", None, Some(if rules.is_empty() { "removed" } else { "changed" }));
+                }
+                let old_rules_channel: Option<i64> = self.meta("rules_channel").and_then(|v| v.parse().ok());
+                if let (Some(old), Some(new)) = (old_rules_channel, rules_channel) {
+                    if new != Some(old) {
+                        self.exec("UPDATE channels SET announce = NULL WHERE id = ?", [old]);
+                        self.channels_changed(false);
+                    }
                 }
                 match rules_channel {
                     Some(None) => self.exec("DELETE FROM meta WHERE key = 'rules_channel'", []),
@@ -2629,6 +2667,8 @@ impl Core {
                 }
                 self.exec("UPDATE accounts SET role = ? WHERE key = ?", params![role, target_key]);
                 self.roles_changed();
+                // An admin sees every private channel: their list changes with the role.
+                self.channels_changed(true);
                 self.audit(&user.name, "role", target["name"].as_str(), Some(role.unwrap_or("member")));
             }
             "transfer_ownership" => {
@@ -2708,11 +2748,8 @@ impl Core {
         if self.needs_rules(key) {
             return self.error(conn, RULES_FIRST);
         }
-        if ch.announce {
-            let mine = self.perms_of(key);
-            if !mine.contains("manage_messages") && !mine.contains("manage_channels") {
-                return self.error(conn, &format!("Only moderators and admins can write in #{}.", ch.name));
-            }
+        if ch.announce && !self.writes_read_only(key) {
+            return self.error(conn, &format!("Only moderators and admins can write in #{}.", ch.name));
         }
         if let Some(held) = self.automod_says(conn, &body, my_rank, true) {
             return self.error(conn, &held);
@@ -2980,12 +3017,20 @@ impl Core {
 
 impl Core {
     /** A channel or thread deleted: its messages go, with their pictures and voice messages. */
+    /// May write in a read-only channel (announcements, #rules, #welcome): staff who look after
+    /// messages, channels or the server.
+    fn writes_read_only(&self, key: &str) -> bool {
+        let mine = self.perms_of(key);
+        ["manage_messages", "manage_channels", "manage_server"].iter().any(|p| mine.contains(*p))
+    }
+
     fn drop_channel(&self, id: i64) {
         // The #rules channel is where the rules are written: without it they go; without the
         // welcome channel, welcomes stop. Everyone hears.
         let mut rules_changed = false;
         if self.meta("rules_channel").as_deref() == Some(id.to_string().as_str()) {
             self.exec("DELETE FROM meta WHERE key IN ('rules', 'rules_at', 'rules_channel')", []);
+            self.audit("Hopp", "rules", None, Some("removed with their channel"));
             rules_changed = true;
         }
         if self.meta("welcome_channel").as_deref() == Some(id.to_string().as_str()) {
