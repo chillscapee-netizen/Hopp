@@ -1505,18 +1505,12 @@ function fitRailAcross() {
   // The servers stay centred between the two sides, whatever their width (a narrow window too).
   const sides = Math.max(bar.querySelector(".tb-left")?.offsetWidth ?? 0, bar.querySelector(".tb-right")?.offsetWidth ?? 0);
   if (sides) bar.style.paddingInline = sides + 20 + "px";
-  // The room in the middle of the bar: its width less its sides and what sits before the list.
+  // The room in the middle of the bar: the list takes what's left between everything else
+  // (DM pictures too), so its own width is the room.
   const rail = list.parentElement;
-  const rs = getComputedStyle(rail);
-  const railGap = parseFloat(rs.columnGap) || 0;
-  let room = rail.clientWidth - parseFloat(rs.paddingLeft) - parseFloat(rs.paddingRight);
-  for (const kid of rail.children) {
-    if (kid === list || getComputedStyle(kid).position === "absolute" || !kid.offsetWidth) continue;
-    room -= kid.offsetWidth + railGap;
-  }
   const ls = getComputedStyle(list);
   const gap = parseFloat(ls.columnGap) || 0;
-  room -= parseFloat(ls.paddingLeft) + parseFloat(ls.paddingRight);
+  const room = list.clientWidth - parseFloat(ls.paddingLeft) - parseFloat(ls.paddingRight);
   const kids = [...list.children];
   const width = (n) => n.getBoundingClientRect().width;
   const total = kids.reduce((t, n, i) => t + width(n) + (i ? gap : 0), 0);
@@ -14950,9 +14944,10 @@ function applyTheme() {
   document.documentElement.classList.toggle("compact-chat", !!prefs.compact);
   document.documentElement.classList.toggle("layout-taskbar", prefs.layout === "taskbar");
   placeLayout();
-  if (typeof renderRail === "function" && prefs.rail) renderRail();
   document.documentElement.classList.toggle("rail-small", prefs.railSize === "small");
   document.documentElement.classList.toggle("rail-large", prefs.railSize === "large");
+  // Drawn (and measured for the bar) once the sizes above are in place.
+  if (typeof renderRail === "function" && prefs.rail) renderRail();
   // A fade between two colours: one wallpaper under the whole window, nothing layered on it.
   document.documentElement.classList.toggle("wallpaper", !!(prefs.theme !== "mid" && prefs.theme && specTokens(themeSpec())["app-bg"]));
   // Hopp's logo takes the theme's colours (Hero: red into blue), bright and clear.
@@ -15469,6 +15464,10 @@ function placeLayout() {
       left = el("div", "tb-left");
       right = el("div", "tb-right");
       rail.append(left, right);
+      // Your card or the right panel changing size (a name loading, say): the bar is measured again.
+      const again = new ResizeObserver(() => railAcross() && requestAnimationFrame(() => renderRail()));
+      again.observe(left);
+      again.observe(right);
     }
     // You with your mic and headphones on the left; Add, Discover and settings at the far right.
     left.append(card, controls);
