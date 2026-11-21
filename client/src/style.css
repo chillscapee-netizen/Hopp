@@ -4859,3 +4859,10 @@ html.rail-large .folder-closed { padding: 5px; gap: 3px; border-radius: 19px !im
 /* Taskbar: Add and Discover stay the right panel's size at every server-list size. */
 html.layout-taskbar .tb-right .rail-item, html.layout-taskbar.rail-small .tb-right .rail-item, html.layout-taskbar.rail-large .tb-right .rail-item { width: 36px; height: 36px; }
 html.layout-taskbar .tb-right .rail-icon { width: 36px; height: 36px; }
+
+/* Taskbar: a folder's capsule just hugs its icons at every size. */
+html.layout-taskbar .folder-open .rail-item { height: 48px; }
+html.layout-taskbar.rail-small .folder-open { padding: 2px 6px 2px 2px; border-radius: 13px; }
+html.layout-taskbar.rail-small .folder-open .rail-item { height: 38px; }
+html.layout-taskbar.rail-small .folder-open .rail-icon { width: 34px; height: 34px; }
+html.layout-taskbar.rail-large .folder-open .rail-item { height: 56px; }
