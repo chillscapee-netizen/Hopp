@@ -1499,12 +1499,13 @@ function fitRailAcross() {
   pop.replaceChildren();
   const bar = list.parentElement;
   if (!railAcross()) {
-    bar.style.paddingInline = "";
+    bar.style.paddingLeft = bar.style.paddingRight = "";
     return;
   }
   // The servers stay centred between the two sides, whatever their width (a narrow window too).
-  const sides = Math.max(bar.querySelector(".tb-left")?.offsetWidth ?? 0, bar.querySelector(".tb-right")?.offsetWidth ?? 0);
-  if (sides) bar.style.paddingInline = sides + 20 + "px";
+  // Hopp at the bar's left edge; the right panel keeps its room.
+  bar.style.paddingLeft = "12px";
+  bar.style.paddingRight = (bar.querySelector(".tb-right")?.offsetWidth ?? 0) + 24 + "px";
   // The room in the middle of the bar: the list takes what's left between everything else
   // (DM pictures too), so its own width is the room.
   const rail = list.parentElement;
@@ -15457,31 +15458,28 @@ function placeLayout() {
   const card = $("me-card");
   const controls = panel?.querySelector(".panel-controls") ?? rail?.querySelector(".panel-controls");
   if (!rail || !card || !controls) return;
-  let left = rail.querySelector(".tb-left");
   let right = rail.querySelector(".tb-right");
   if (prefs.layout === "taskbar") {
-    if (!left) {
-      left = el("div", "tb-left");
+    if (!right) {
       right = el("div", "tb-right");
-      rail.append(left, right);
-      // Your card or the right panel changing size (a name loading, say): the bar is measured again.
-      const again = new ResizeObserver(() => railAcross() && requestAnimationFrame(() => renderRail()));
-      again.observe(left);
-      again.observe(right);
+      rail.append(right);
+      // The right panel changing size: the bar is measured again.
+      new ResizeObserver(() => railAcross() && requestAnimationFrame(() => renderRail())).observe(right);
     }
-    // You with your mic and headphones on the left; Add, Discover and settings at the far right.
-    left.append(card, controls);
+    // You stay above the bar, under the channels (as in Classic), so the bar starts with Hopp at
+    // its left edge; Add, Discover and settings at the far right.
     right.append($("add-server"), $("news-btn"), controls.querySelector(".open-settings") ?? right.querySelector(".open-settings"));
-  } else if (left) {
-    // Back where they were: Add and Discover at the rail's end, you under the channels.
+  } else if (right) {
+    // Back where they were: Add and Discover at the rail's end, settings with your mic.
     rail.append($("add-server"), $("news-btn"));
-    panel.prepend(card);
-    panel.append(controls);
     const gear = right.querySelector(".open-settings");
     if (gear) controls.append(gear);
-    left.remove();
     right.remove();
   }
+  // (An older layout put you in the bar: back under the channels.)
+  rail.querySelector(".tb-left")?.remove();
+  if (card.parentElement !== panel) panel.prepend(card);
+  if (controls.parentElement !== panel) panel.append(controls);
 }
 
 /** Where the servers are: down the left (classic) or along the bottom (taskbar). */

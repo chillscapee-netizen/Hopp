@@ -9,9 +9,9 @@
     applyTheme();
     applyTheme();
     await wait(50);
-    check("taskbar: you on the left, with your controls", !!document.querySelector(".rail .tb-left #me-card") && !!document.querySelector(".rail .tb-left .panel-controls"));
+    check("taskbar: you stay above the bar with your mic and headphones, Hopp starts the bar", !!document.querySelector(".user-panel #me-card") && !!document.querySelector(".user-panel .panel-controls") && !document.querySelector(".tb-left") && $("home-btn").getBoundingClientRect().left < 40);
     check("Add, Discover and settings on the right", !!document.querySelector(".tb-right #add-server") && !!document.querySelector(".tb-right #news-btn") && !!document.querySelector(".tb-right .open-settings"));
-    check("drawn again, nothing doubles", document.querySelectorAll(".tb-left").length === 1 && document.querySelectorAll("#me-card").length === 1);
+    check("drawn again, nothing doubles", document.querySelectorAll(".tb-right").length === 1 && document.querySelectorAll("#me-card").length === 1);
     // Along the bottom, dragging goes sideways: dropped past the last server, it ends up last.
     renderRail();
     await wait(30);
@@ -40,7 +40,7 @@
     prefs.layout = "classic";
     applyTheme();
     await wait(50);
-    check("classic: everything back under the channels", !!document.querySelector(".user-panel #me-card") && !!document.querySelector(".user-panel .panel-controls") && !document.querySelector(".tb-left") && !!document.querySelector(".user-panel .panel-controls .open-settings"));
+    check("classic: everything back under the channels", !!document.querySelector(".user-panel #me-card") && !!document.querySelector(".user-panel .panel-controls") && !document.querySelector(".tb-right") && !!document.querySelector(".user-panel .panel-controls .open-settings"));
     check("classic: no +N, every server back in the list", !$("rail-more") && $("server-list").querySelectorAll("[data-server]").length === prefs.rail.filter((x) => x.id).length);
     check("Add and Discover back in the server list",$("add-server").parentElement.classList.contains("rail") && $("news-btn").parentElement.classList.contains("rail"));
   } catch (e) {

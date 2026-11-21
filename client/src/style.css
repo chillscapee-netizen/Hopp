@@ -4599,7 +4599,6 @@ html.layout-taskbar .rail { position: relative; justify-content: center; padding
 
 /* The taskbar's sides: you on the left; Add, Discover and your controls on the right. */
 html.layout-taskbar .rail { padding: 0 340px; }
-html.layout-taskbar .user-panel { display: none; }
 .tb-left, .tb-right { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; gap: 6px; }
 .tb-left { left: 10px; }
 .tb-right { right: 10px; }
@@ -4698,7 +4697,6 @@ html.layout-taskbar .server-list { overflow: hidden; mask-image: none !important
 /* Taskbar motion: servers lift a little on hover, the line under the one you're in grows in,
    "+N" opens with a short rise, and a folder's servers slide out sideways. */
 html.layout-taskbar .rail-item .rail-icon { transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), border-radius 160ms, background 160ms; }
-html.layout-taskbar #server-list .rail-item:hover .rail-icon, html.layout-taskbar #home-btn:hover .rail-icon { transform: translateY(-2px); }
 html.layout-taskbar .rail-item::before { transition: width 200ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms; }
 .rail-more-pop:not([hidden]) { animation: tb-rise 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes tb-rise { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
