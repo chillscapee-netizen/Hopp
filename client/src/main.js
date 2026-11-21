@@ -4695,6 +4695,8 @@ listen("rules", (e) => {
     openRules();
   }
   if (state.rules.accepted && $("rules-dialog").open) $("rules-dialog").close();
+  // The channel list too: #rules and #welcome get their own icons (not the read-only megaphone).
+  if (online()) renderSidebar();
   renderChannelView();
   // The #rules and #welcome channels show them: drawn again with what changed.
   if (online() && state.view !== null) renderMessages(true);
