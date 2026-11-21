@@ -111,7 +111,12 @@ pub fn parse_invite(input: &str) -> anyhow::Result<(String, Option<String>)> {
         None => (s, None),
     };
     anyhow::ensure!(!host.is_empty() && !s.contains(char::is_whitespace), "That doesn't look like a server address.");
-    let host = if host.contains(':') { host.to_string() } else { format!("{host}:{DEFAULT_PORT}") };
+    // A port is there after "host:" or after "[ipv6]:"; an IPv6 address alone gets the default too.
+    let has_port = match host.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').is_some_and(|(_, after)| after.starts_with(':')),
+        None => host.contains(':'),
+    };
+    let host = if has_port { host.to_string() } else { format!("{host}:{DEFAULT_PORT}") };
     // (A tunnel, "pin@tunnel:<id>", already has its colon and no port.)
     Ok((host, code.map(str::to_uppercase)))
 }
@@ -135,10 +140,14 @@ impl Reader {
     async fn next(&mut self) -> anyhow::Result<Option<ServerMsg>> {
         match self {
             Reader::Tcp(reader) => {
+                // A server can't make one endless line and fill the memory: 16 MB at most.
+                const MAX_LINE: u64 = 16 * 1024 * 1024;
                 let mut line = String::new();
-                if reader.read_line(&mut line).await? == 0 {
+                let n = tokio::io::AsyncBufReadExt::read_line(&mut tokio::io::AsyncReadExt::take(&mut *reader, MAX_LINE), &mut line).await?;
+                if n == 0 {
                     return Ok(None);
                 }
+                anyhow::ensure!(line.ends_with('\n') || (n as u64) < MAX_LINE, "The server sent a message that's far too long.");
                 Ok(Some(serde_json::from_str(&line)?))
             }
             Reader::Ws(stream) => loop {

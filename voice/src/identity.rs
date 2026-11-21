@@ -136,7 +136,9 @@ impl Identity {
     pub fn check_phrase_words(&self, answers: &[(usize, String)]) -> bool {
         let phrase = self.recovery_phrase();
         let words: Vec<&str> = phrase.split(' ').collect();
-        answers.len() >= 3
+        // Three different words: the same one three times proves nothing.
+        let positions: std::collections::HashSet<usize> = answers.iter().map(|(p, _)| *p).collect();
+        positions.len() >= 3
             && answers.iter().all(|(position, word)| {
                 (1..=words.len()).contains(position) && words[position - 1] == word.trim().to_lowercase()
             })
@@ -188,7 +190,6 @@ impl Identity {
         }
     }
 
-    /// Signs a server's login challenge.
     /// Signs a request about this account's copy in Hopp Cloud. Its own prefix, so no server's
     /// login challenge can ever be turned into one (and the other way round).
     pub fn sign_backup(&self, text: &str) -> String {
@@ -197,6 +198,7 @@ impl Identity {
         hex::encode(self.key.sign(&msg).to_bytes())
     }
 
+    /// Signs a server's login challenge.
     pub fn sign_challenge(&self, nonce: &[u8]) -> String {
         hex::encode(self.key.sign(&strom_shared::auth_message(nonce)).to_bytes())
     }

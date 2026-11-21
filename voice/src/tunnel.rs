@@ -95,12 +95,17 @@ where
             let url = format!("{url}/tunnels/{id}/host?secret={secret}");
             match tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::connect_async(&url)).await {
                 Ok(Ok((ws, _))) => {
-                    pause = 1;
                     tracing::info!("tunnel: open, friends can join");
+                    let since = std::time::Instant::now();
                     online(true);
                     serve(ws, accept.clone()).await;
                     online(false);
                     tracing::info!("tunnel: closed, opening it again");
+                    // Only a tunnel that stayed open a while starts the waits over; one closed at
+                    // once (another copy of this server, say) keeps them growing.
+                    if since.elapsed() >= Duration::from_secs(30) {
+                        pause = 1;
+                    }
                 }
                 // Blocked by Hopp for breaking its rules: asking every half minute changes nothing
                 // and costs the cloud; once an hour notices a lifted block.
@@ -131,7 +136,12 @@ where
                 frame = out_rx.recv() => match frame { Some(f) => Message::Binary(f.into()), None => break },
                 ping = ping_rx.recv() => match ping { Some(()) => Message::Text("hopp-ping".into()), None => break },
             };
+            // A plain WebSocket ping goes along: whichever answer comes, the tunnel is alive.
+            let ping_too = matches!(&msg, Message::Text(t) if t.as_str() == "hopp-ping");
             if sink.send(msg).await.is_err() {
+                break;
+            }
+            if ping_too && sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                 break;
             }
         }
@@ -157,7 +167,7 @@ where
             }
         };
         heard = tokio::time::Instant::now();
-        if matches!(&msg, Message::Text(t) if t.as_str() == "hopp-pong") {
+        if matches!(&msg, Message::Pong(_)) || matches!(&msg, Message::Text(t) if t.as_str() == "hopp-pong") {
             answers = true;
         }
         let Message::Binary(bytes) = msg else { continue };
