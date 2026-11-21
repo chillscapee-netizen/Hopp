@@ -1082,6 +1082,9 @@ function setBackupPhrase(phrase) {
   backup.phrase = phrase;
   fillPhrase($("backup-words"), phrase);
   backupStep("phrase");
+  const then = backup.then;
+  backup.then = null;
+  if (then) $(then).click();
 }
 
 $("backup-verify").addEventListener("submit", async (e) => {
@@ -1248,6 +1251,13 @@ $("cloud-backup-form").addEventListener("submit", async (e) => {
   }
 });
 $("backup-btn").addEventListener("click", () => openBackup({ viewOnly: !!state.account?.backedUp }));
+// Straight from settings: confirm it's you, then the phrase goes to your email or OneDrive at once.
+for (const [id, button] of [["phrase-mail-btn", "backup-mail"], ["phrase-onedrive-btn", "backup-onedrive"]]) {
+  $(id).addEventListener("click", async () => {
+    backup.then = button;
+    await openBackup({ viewOnly: !!state.account?.backedUp });
+  });
+}
 
 // ---------- server rail ----------
 
